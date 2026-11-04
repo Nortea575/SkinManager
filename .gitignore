@@ -4,22 +4,11 @@
 **/obj/
 *.user
 *.suo
-*.pdb
-*.dll
-*.exe
-*.deps.json
-*.runtimeconfig.json
-*.cache
+*.userosscache
+*.sln.docstates
 
-# Generated release, tools and test output
-/发布/
-/开发/构建/发布/
-/开发/构建/工具/
-/开发/测试/日志/
-/开发/测试/临时/
-/开发/测试/预览验收/
-/开发/测试/安装器验收/
-/开发/测试/图标验收/
+# Generated publish, release and test output
+/artifacts/
 *.log
 
 # Local browser / scratch data
@@ -29,7 +18,7 @@
 **/WebView2Data/
 **/test-results/
 **/playwright-report/
-*.tmp
 *.temp
+*.tmp
 Thumbs.db
 Desktop.ini

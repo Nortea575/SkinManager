@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SkinManager.Market.Tests</AssemblyName>
+    <RootNamespace>SkinManager.Market.Tests</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SkinManager.Core\SkinManager.Core.csproj" />
+    <ProjectReference Include="..\..\src\SkinManager.Market\SkinManager.Market.csproj" />
+    <EmbeddedResource Include="..\fixtures\skins\Ayanami.zip"
+                       LogicalName="SkinManager.Market.Tests.Resources.Ayanami.zip" />
+  </ItemGroup>
+</Project>

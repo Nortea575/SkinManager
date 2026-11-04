@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="开发/资源/图标/SkinManager.svg" width="88" alt="SkinManager 图标" />
+  <img src="assets/icons/SkinManager.svg" width="88" alt="SkinManager 图标" />
 </p>
 
 <h1 align="center">SkinManager</h1>
@@ -97,6 +97,17 @@ SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在�
 皮肤连接由独立后台维持，关闭管理器后可继续使用已应用的皮肤。需要移除皮肤时，请使用“恢复原生 / 断开”。
 
 在“版本与更新”中查看更新状态。下载完成不会立即安装，点击“安装更新”后才会开始；安装后需重新应用皮肤。
+
+## 从源代码构建
+
+在 Windows 安装 .NET 9 SDK 后，从仓库根目录运行：
+
+```powershell
+dotnet restore .\SkinManager.sln
+dotnet build .\SkinManager.sln -c Release --no-restore
+```
+
+构建安装包时使用 [build/Build-Installer.ps1](build/Build-Installer.ps1)。
 
 ## 反馈与贡献
 

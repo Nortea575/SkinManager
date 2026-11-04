@@ -1,0 +1,3 @@
+src/SkinManager.Rendering/SkinFillEngine.js text eol=lf
+src/SkinManager.Rendering/SkinRuntimeCompiler.cs text eol=lf
+tests/fixtures/skins/**/*.json text eol=lf
