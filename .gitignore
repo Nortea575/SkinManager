@@ -1,0 +1,35 @@
+# .NET / IDE output
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
+*.pdb
+*.dll
+*.exe
+*.deps.json
+*.runtimeconfig.json
+*.cache
+
+# Generated release, tools and test output
+/发布/
+/开发/构建/发布/
+/开发/构建/工具/
+/开发/测试/日志/
+/开发/测试/临时/
+/开发/测试/预览验收/
+/开发/测试/安装器验收/
+/开发/测试/图标验收/
+*.log
+
+# Local browser / scratch data
+**/PreviewBrowser/
+**/renderer-data/
+**/browser-data/
+**/WebView2Data/
+**/test-results/
+**/playwright-report/
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini

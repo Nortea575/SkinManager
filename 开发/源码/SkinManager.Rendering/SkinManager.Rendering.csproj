@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
+    <Compile Include="..\SkinManager.Runtime\CodexHostContract.cs" Link="CodexHostContract.cs" />
+    <EmbeddedResource Include="SkinFillEngine.js" LogicalName="SkinManager.Rendering.SkinFillEngine.js" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,533 @@
+<Window x:Class="SkinManager.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:desktop="clr-namespace:SkinManager.Desktop"
+        Title="ChatGPT 皮肤管理器"
+        Width="1240" Height="840" MinWidth="960" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource WindowSurface}"
+        FontFamily="Segoe UI, Microsoft YaHei UI"
+        Foreground="{StaticResource PrimaryText}">
+    <Window.Resources>
+        <Style x:Key="SkinListItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <EventSetter Event="MouseEnter" Handler="SkinListItem_MouseEnter" />
+            <EventSetter Event="MouseLeave" Handler="SkinListItem_MouseLeave" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="RowSurface" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8" Padding="9">
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="RowSurface" Property="Background" Value="{StaticResource SelectedSurface}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Foreground" Value="{StaticResource DangerText}" />
+            <Setter Property="BorderBrush" Value="{StaticResource DangerBorder}" />
+            <Setter Property="Background" Value="{StaticResource DangerSurface}" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="8" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="8" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource PanelSurface}"
+                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12"
+                Padding="10,6">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Image Source="/SkinManager;component/SkinManager.ico" Width="28" Height="28"
+                       Margin="0,0,9,0" Stretch="Uniform" />
+                <TextBlock Text="SkinManager" FontSize="17" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                  <TextBlock Text="1.0.0" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                           VerticalAlignment="Center" Margin="8,2,0,0" />
+                <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
+                       Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
+                       VerticalAlignment="Center" Margin="14,0,0,0" MaxWidth="190"
+                       TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <Button x:Name="MarketEntryButton" Margin="0,0,6,0" Padding="9,5"
+                        Click="MarketEntryButton_Click"
+                        ToolTip="浏览、预览并下载市场皮肤。"
+                        AutomationProperties.Name="打开皮肤市场">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="M2,3 L4,3 L5,5 L17,5 L15.5,12 L7,12 L5,5 M8,15 A1.2,1.2 0 1 0 8,17.4 A1.2,1.2 0 1 0 8,15 M14,15 A1.2,1.2 0 1 0 14,17.4 A1.2,1.2 0 1 0 14,15"
+                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" Fill="Transparent"
+                              Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
+                        <TextBlock Text="皮肤市场" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="UpdateEntryButton" Padding="9,5" MaxWidth="164"
+                        Margin="0,0,6,0" Click="UpdateEntryButton_Click"
+                        ToolTip="{Binding Content, RelativeSource={RelativeSource Self}}"
+                        AutomationProperties.Name="版本与更新">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="M3,7 A6,6 0 0 1 14,4 L16,6 M16,6 L16,2 M16,6 L12,6 M17,11 A6,6 0 0 1 6,14 L4,12 M4,12 L4,16 M4,12 L8,12"
+                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round" Fill="Transparent" Width="18" Height="18" Stretch="Uniform"
+                              Margin="0,0,6,0" />
+                        <TextBlock x:Name="UpdateEntryLabel" Text="版本与更新" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="ManageInstancesButton" Margin="0,0,0,0" Padding="9,5"
+                        Click="ManageInstancesButton_Click"
+                        ToolTip="查看 Codex 主实例并选择连接目标。"
+                        AutomationProperties.Name="管理实例">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="M3,3 H10 V10 H3 Z M14,3 H21 V10 H14 Z M3,14 H10 V21 H3 Z M14,14 H21 V21 H14 Z"
+                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.35" Fill="Transparent"
+                              Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
+                        <TextBlock Text="管理实例" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+        </Border>
+
+        <Border x:Name="LibraryWarning" Grid.Row="2" Margin="0,0,0,0" Padding="10,7"
+                Background="{StaticResource WarningSurface}" BorderBrush="{StaticResource WarningText}" BorderThickness="1"
+                CornerRadius="8" Visibility="Collapsed">
+            <TextBlock x:Name="LibraryWarningText" FontSize="12" Foreground="{StaticResource WarningText}"
+                       TextWrapping="Wrap" />
+        </Border>
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="276" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource SidebarSurface}"
+                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12">
+                <Grid>
+                    <Grid x:Name="LibraryPanel" Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="36" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Height="28">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="{StaticResource Accent}" Margin="1,0,8,0" />
+                            <TextBlock Text="皮肤库" FontSize="14" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <TextBlock x:Name="SkinCountText" Text="本地皮肤" FontSize="11"
+                                   Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid Grid.Row="2" Height="36">
+                        <TextBox x:Name="SearchBox" VerticalContentAlignment="Center"
+                                 TextChanged="SearchBox_TextChanged"
+                                 AutomationProperties.Name="搜索皮肤" />
+                        <TextBlock x:Name="SearchHint" Text="搜索名称或 ID" FontSize="12"
+                                   Foreground="{StaticResource SecondaryText}" Margin="13,0,0,0"
+                                   VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Grid>
+                    <Grid Grid.Row="4">
+                        <ListBox x:Name="SkinList" BorderThickness="0" Background="Transparent"
+                                 Foreground="{StaticResource PrimaryText}"
+                                 Padding="0" ItemContainerStyle="{StaticResource SkinListItemStyle}"
+                                 SelectionChanged="SkinList_SelectionChanged"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.VirtualizationMode="Recycling"
+                                 VirtualizingPanel.ScrollUnit="Pixel"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 KeyboardNavigation.TabNavigation="Continue"
+                                 AutomationProperties.Name="皮肤列表">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="68" />
+                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="68" Height="52" CornerRadius="7"
+                                                Background="{StaticResource NoImageSurface}" ClipToBounds="True">
+                                            <Grid>
+                                                <Image x:Name="ThumbnailImage" Source="{Binding Thumbnail}"
+                                                       Stretch="UniformToFill" />
+                                                <TextBlock x:Name="ThumbnailPlaceholder" Text="无背景图" Visibility="Collapsed"
+                                                           FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" MinWidth="0">
+                                            <TextBlock Text="{Binding Entry.Name}" FontSize="13"
+                                                       Foreground="{StaticResource PrimaryText}"
+                                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Entry.Name}" />
+                                            <TextBlock Text="{Binding Entry.Id}" FontSize="11"
+                                                       Foreground="{StaticResource SecondaryText}"
+                                                       Margin="0,3,0,0" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Entry.Id}" />
+                                            <TextBlock x:Name="RowAppearanceLabel" Text="{Binding AppearanceLabel}" FontSize="11"
+                                                       Foreground="{StaticResource SecondaryText}"
+                                                       Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Thumbnail}" Value="{x:Null}">
+                                            <Setter TargetName="ThumbnailImage" Property="Visibility" Value="Collapsed" />
+                                            <Setter TargetName="ThumbnailPlaceholder" Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <StackPanel x:Name="ListEmptyState" Visibility="Collapsed"
+                                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Margin="8" MaxWidth="230">
+                            <TextBlock x:Name="ListEmptyTitle" Text="暂无本地皮肤" FontSize="12"
+                                       Foreground="{StaticResource SecondaryText}" TextAlignment="Center" />
+                            <TextBlock x:Name="ListEmptyText" Text="从市场浏览并下载皮肤，或导入 ZIP 包和皮肤文件夹。"
+                                       FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                       TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,12" />
+                            <Button x:Name="ListEmptyMarketButton" Content="浏览皮肤市场"
+                                    Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center"
+                                    Margin="0,0,0,6" Click="MarketEntryButton_Click" />
+                            <Button x:Name="ListEmptyImportButton" Content="导入皮肤"
+                                    HorizontalAlignment="Center" Click="ImportButton_Click" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid Grid.Row="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="NewSkinButton" Grid.Column="0" Content="新建皮肤"
+                                Click="NewSkinButton_Click" AutomationProperties.Name="新建皮肤" />
+                        <Button x:Name="ImportButton" Grid.Column="2" Content="导入皮肤"
+                                Style="{StaticResource PrimaryButton}" Click="ImportButton_Click"
+                                AutomationProperties.Name="导入皮肤" />
+                    </Grid>
+                </Grid>
+                    <desktop:SkinEditorView x:Name="SkinEditor" Visibility="Collapsed" />
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="2">
+                <Border x:Name="DetailsEmptyState" Background="{StaticResource PanelSurface}"
+                        BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12"
+                        Visibility="Collapsed">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400" Margin="24">
+                        <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="20"
+                                   FontWeight="SemiBold" TextAlignment="Center" />
+                        <TextBlock x:Name="DetailsEmptyMessage" Text="浏览市场皮肤或导入本地皮肤包，查看背景图、配色和聊天布局预览。"
+                                   FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,14" />
+                        <Button Content="打开皮肤市场" Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Center" Margin="0,0,0,6" Click="MarketEntryButton_Click" />
+                        <Button Content="导入皮肤" HorizontalAlignment="Center" Click="ImportButton_Click" />
+                    </StackPanel>
+                </Border>
+
+                <Grid x:Name="DetailsScroll" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="150" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid x:Name="SelectedSummary" Grid.Row="0" Margin="0,0,0,7">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" MinWidth="0">
+                            <TextBlock x:Name="SelectedName" FontSize="20" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="SelectedId" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                       Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="EditSkinButton" Content="编辑" Margin="0,0,5,0" Padding="9,5"
+                                    Click="EditSkinButton_Click" AutomationProperties.Name="编辑皮肤" />
+                            <Button x:Name="OriginalButton" Content="原图" Margin="0,0,5,0" Padding="9,5"
+                                    Click="OriginalButton_Click" ToolTip="查看原始背景图" />
+                            <Button x:Name="ExportButton" Content="导出" Margin="0,0,5,0" Padding="9,5"
+                                    Click="ExportButton_Click" />
+                            <Button x:Name="DeleteButton" Content="删除" Style="{StaticResource DangerButton}" Padding="9,5"
+                                    Click="DeleteButton_Click" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="1" Margin="0,0,0,7" Padding="8,7"
+                            Background="{StaticResource SoftSurface}" BorderBrush="{StaticResource Line}"
+                            BorderThickness="1" CornerRadius="9">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <WrapPanel Grid.Row="0" VerticalAlignment="Center">
+                                <TextBlock Text="页面" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <ComboBox x:Name="PreviewSceneBox" Width="84" SelectedIndex="0"
+                                          SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="预览页面">
+                                    <ComboBoxItem Content="首页" Tag="home" />
+                                    <ComboBoxItem Content="对话" Tag="conversation" />
+                                </ComboBox>
+                                <TextBlock Text="外观" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="12,0,6,0" />
+                                <ComboBox x:Name="PreviewAppearanceBox" Width="104" Margin="0,0,10,0"
+                                          SelectedIndex="0" SelectionChanged="PreviewOptions_SelectionChanged"
+                                          AutomationProperties.Name="预览明暗">
+                                    <ComboBoxItem Content="跟随皮肤" Tag="skin" />
+                                    <ComboBoxItem Content="浅色" Tag="light" />
+                                    <ComboBoxItem Content="深色" Tag="dark" />
+                                    <ComboBoxItem Content="跟随系统" Tag="system" />
+                                </ComboBox>
+                                <CheckBox x:Name="PreviewSidebarCheckBox" Content="侧栏" IsChecked="True"
+                                          Margin="0,0,12,0" VerticalAlignment="Center"
+                                          Checked="PreviewOptions_ToggleChanged" Unchecked="PreviewOptions_ToggleChanged"
+                                          AutomationProperties.Name="显示侧栏" />
+                                <CheckBox x:Name="PreviewOriginalBaseCheckBox" Content="原版对照"
+                                          VerticalAlignment="Center" Checked="PreviewOptions_ToggleChanged"
+                                          Unchecked="PreviewOptions_ToggleChanged" AutomationProperties.Name="原版对照" />
+                            </WrapPanel>
+                            <WrapPanel Grid.Row="1" Margin="0,6,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="透明度" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <CheckBox x:Name="PreviewTransparencyFollowCheckBox" Content="跟随主题" IsChecked="True"
+                                          VerticalAlignment="Center" Margin="0,0,7,0"
+                                          Checked="PreviewOptions_ToggleChanged" Unchecked="PreviewOptions_ToggleChanged"
+                                          AutomationProperties.Name="面板透明度跟随主题" />
+                                <TextBox x:Name="PreviewTransparencyInput" Text="30" Width="50" Height="32"
+                                         Padding="6,0" TextAlignment="Right" IsEnabled="False"
+                                         LostKeyboardFocus="PreviewTransparencyInput_LostKeyboardFocus"
+                                         PreviewKeyDown="PreviewTransparencyInput_KeyDown"
+                                         TextChanged="PreviewTransparencyInput_TextChanged"
+                                         ToolTip="输入 0 到 100 的整数；不改变壁纸或遮罩。0% 不透明，100% 全透明。"
+                                         AutomationProperties.Name="面板透明度百分比" />
+                                <TextBlock Text="%" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="4,0,8,0" />
+                                <TextBlock x:Name="PreviewTransparencyValue" Text="主题值" FontSize="11"
+                                           Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="PreviewTransparencyError" FontSize="11" Foreground="{StaticResource ErrorText}"
+                                           Margin="9,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
+                                           AutomationProperties.Name="面板透明度输入错误" />
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2" Margin="1,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="PreviewHeading" Text="预览" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PreviewStatus" Grid.Column="1" FontSize="11"
+                                   Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" Margin="10,0,8,0" Visibility="Visible"
+                                   AutomationProperties.Name="预览状态" />
+                        <TextBlock x:Name="PreviewBaseVersion" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   FontSize="10" Foreground="{StaticResource SecondaryText}"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="185" Margin="6,0,8,0"
+                                   ToolTip="依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。" />
+                        <Button x:Name="PreviewPowerButton" Grid.Column="3" Content="关闭预览"
+                                HorizontalAlignment="Right" Padding="8,4" MinHeight="30"
+                                Click="PreviewPowerButton_Click" ToolTip="释放本地预览浏览器内存" />
+                    </Grid>
+
+                    <Border Grid.Row="3" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="11"
+                            Background="{StaticResource PanelSurface}" ClipToBounds="True">
+                        <Grid x:Name="PreviewViewport" MinHeight="150" ClipToBounds="True"
+                              Background="{StaticResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
+                              AutomationProperties.Name="皮肤实时预览视口">
+                            <Grid x:Name="PreviewBrowserHost">
+                                <wv2:WebView2 x:Name="PreviewBrowser" HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch" Visibility="Collapsed" />
+                                <StackPanel x:Name="PreviewClosedPanel" Visibility="Collapsed"
+                                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                                            Margin="16" MaxWidth="320">
+                                    <TextBlock Text="本地预览已关闭" FontSize="15" FontWeight="SemiBold"
+                                               TextAlignment="Center" />
+                                    <TextBlock Text="重新打开后会恢复当前皮肤或草稿预览。"
+                                               FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                               TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,10" />
+                                    <Button Content="打开预览" HorizontalAlignment="Center"
+                                            Click="PreviewPowerButton_Click" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid x:Name="OriginalImageLayer" Visibility="Collapsed" Background="{StaticResource PanelSurface}">
+                                <Image x:Name="OriginalImageSource" Stretch="Uniform" Margin="12" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="RuntimeControlsBorder" Grid.Row="4" Margin="0,7,0,0" Padding="8,7"
+                            Background="{StaticResource SoftSurface}" BorderBrush="{StaticResource Line}"
+                            BorderThickness="1" CornerRadius="9">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <WrapPanel Grid.Row="0" VerticalAlignment="Center">
+                                <TextBlock Text="端口" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox x:Name="RuntimePortInput" Text="9335" Width="64" Height="32"
+                                         Padding="6,0" TextAlignment="Right" MaxLength="5"
+                                         ToolTip="本地调试端口，默认 9335。" AutomationProperties.Name="桌面应用连接端口"
+                                         TextChanged="RuntimePortInput_TextChanged" />
+                                <Button x:Name="LaunchDebugButton" Content="启动调试版" Margin="7,0,5,0" Padding="8,5"
+                                        Click="LaunchDebugButton_Click"
+                                        ToolTip="按需启动独立的调试会话；不会自动关闭已运行的桌面应用。" />
+                                <Button x:Name="ApplyRuntimeButton" Content="连接并应用 / 更新"
+                                        Style="{StaticResource PrimaryButton}" Margin="0,0,5,0" Padding="9,5"
+                                        Click="ApplyRuntimeButton_Click" AutomationProperties.Name="连接并应用或更新皮肤" />
+                                <Button x:Name="RemoveRuntimeButton" Content="恢复原生 / 断开"
+                                        Style="{StaticResource DangerButton}" Padding="8,5"
+                                        Click="RemoveRuntimeButton_Click" AutomationProperties.Name="恢复原生并断开连接" />
+                            </WrapPanel>
+                            <Grid Grid.Row="1" Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,14,0">
+                                    <TextBlock Text="连接目标" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                                    <TextBlock x:Name="RuntimeTargetText" Text="手动端口 · 9335" FontSize="12"
+                                               FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
+                                               ToolTip="手动端口 · 9335" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                    <TextBlock Text="当前连接" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                                    <TextBlock x:Name="RuntimeConnectedTargetText" Text="未连接" FontSize="12"
+                                               FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
+                                               ToolTip="未连接" AutomationProperties.Name="当前连接的桌面应用实例" />
+                                </StackPanel>
+                                <Button x:Name="LocateConnectedWindowButton" Grid.Column="2" Content="定位已连接窗口"
+                                        Padding="8,4" MinHeight="30" VerticalAlignment="Center"
+                                        Click="LocateConnectedWindowButton_Click" ToolTip="根据运行状态中的进程身份定位窗口。" />
+                            </Grid>
+                            <Grid Grid.Row="2" Margin="0,5,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
+                                         Fill="{StaticResource SecondaryText}" VerticalAlignment="Top" Margin="0,4,0,0" />
+                                <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="等待用户测试" FontSize="11"
+                                           FontWeight="SemiBold" Margin="7,0,8,0" VerticalAlignment="Top"
+                                           AutomationProperties.Name="桌面应用连接状态" />
+                                <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
+                                           Text="等待用户点击连接并应用。" FontSize="11"
+                                           Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
+                                           VerticalAlignment="Top" ToolTip="等待用户点击连接并应用。" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="5" Margin="0,6,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid x:Name="SelectedMetadata" Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="皮肤信息" FontSize="12" FontWeight="SemiBold" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBlock x:Name="SelectedAppearance" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="SelectedImageDimensions" FontSize="11"
+                                           Foreground="{StaticResource SecondaryText}" Margin="10,0,0,0"
+                                           TextTrimming="CharacterEllipsis" ToolTip="背景图片像素尺寸；未提供背景图时显示“无背景图”" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid x:Name="ColorSection" Grid.Row="1" Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="配色" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       Margin="0,0,8,0" />
+                            <ScrollViewer x:Name="ColorItemsScrollViewer" Grid.Column="1"
+                                          VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
+                                          VerticalAlignment="Center" MaxHeight="48" MinWidth="0"
+                                          AutomationProperties.Name="皮肤配色">
+                                <ItemsControl x:Name="ColorItems">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="140" Height="38" Margin="0,0,6,0" Padding="6,4"
+                                                    CornerRadius="7" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                                                    Background="{StaticResource PanelSurface}" ToolTip="{Binding RawName}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="18" Height="18" CornerRadius="4" Background="{Binding Brush}"
+                                                            BorderBrush="{StaticResource ControlLine}" BorderThickness="1" VerticalAlignment="Center" />
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0">
+                                                        <TextBlock Text="{Binding DisplayName}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Value}" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

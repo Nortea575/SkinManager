@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "native",
+  "name": "原生外观",
+  "version": "1.0.1",
+  "author": "Ancimen",
+  "appearance": "system"
+}

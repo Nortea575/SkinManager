@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SkinManager.Preview.Tests</AssemblyName>
+    <RootNamespace>SkinManager.Preview.Tests</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\源码\SkinManager.Core\SkinManager.Core.csproj" />
+    <ProjectReference Include="..\..\源码\SkinManager.Market\SkinManager.Market.csproj" />
+    <ProjectReference Include="..\..\源码\SkinManager.Desktop\SkinManager.Desktop.csproj" />
+    <Using Include="SkinManager.Rendering" />
+    <EmbeddedResource Include="..\..\资源\皮肤样例\Ayanami.zip" LogicalName="SkinManager.Preview.Tests.Resources.Ayanami.zip" />
+    <EmbeddedResource Include="..\..\资源\皮肤样例\Saya.zip" LogicalName="SkinManager.Preview.Tests.Resources.Saya.zip" />
+    <EmbeddedResource Include="..\..\资源\皮肤样例\Native.zip" LogicalName="SkinManager.Preview.Tests.Resources.Native.zip" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\源码\SkinManager.Core\SkinManager.Core.csproj" />
+    <ProjectReference Include="..\..\源码\SkinManager.Rendering\SkinManager.Rendering.csproj" />
+    <Content Include="..\..\资源\皮肤样例\Ayanami\**\*"
+             Link="skin\ayanami\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\资源\皮肤样例\Saya\**\*"
+             Link="skin\saya\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\资源\皮肤样例\Native\**\*"
+             Link="skin\native\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="..\..\资源\CodexBase-26.1027.3384.0.zip"
+                       LogicalName="SkinManager.Tests.Resources.CodexBase-26.1027.3384.0.zip" />
+    <EmbeddedResource Include="..\..\资源\皮肤样例\Ayanami.zip"
+                       LogicalName="SkinManager.Tests.Resources.Ayanami.zip" />
+    <EmbeddedResource Include="..\..\资源\皮肤样例\Saya.zip"
+                       LogicalName="SkinManager.Tests.Resources.Saya.zip" />
+  </ItemGroup>
+</Project>

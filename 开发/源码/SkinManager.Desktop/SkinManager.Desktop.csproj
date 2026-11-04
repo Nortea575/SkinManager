@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SkinManager</AssemblyName>
+    <RootNamespace>SkinManager.Desktop</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\资源\图标\SkinManager.ico</ApplicationIcon>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
+    <ProjectReference Include="..\SkinManager.Market\SkinManager.Market.csproj" />
+    <ProjectReference Include="..\SkinManager.Rendering\SkinManager.Rendering.csproj" />
+    <ProjectReference Include="..\SkinManager.Runtime\SkinManager.Runtime.csproj" />
+    <ProjectReference Include="..\SkinManager.Updating\SkinManager.Updating.csproj" />
+    <ProjectReference Include="..\SkinManager.Agent\SkinManager.Agent.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <Using Include="SkinManager.Rendering" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <InternalsVisibleTo Include="SkinManager.Preview.Tests" />
+    <EmbeddedResource Include="..\..\资源\CodexBase-26.1027.3384.0.zip" LogicalName="SkinManager.Desktop.Resources.CodexBase-26.1027.3384.0.zip" />
+    <Resource Include="..\..\资源\图标\SkinManager.ico" Link="SkinManager.ico" />
+  </ItemGroup>
+  <Target Name="CopySkinAgentForLocalBuild" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="..\SkinManager.Agent\SkinManager.Agent.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=net9.0-windows;RuntimeIdentifier=$(RuntimeIdentifier)">
+      <Output TaskParameter="TargetOutputs" ItemName="SkinAgentTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <SkinAgentLocalFiles Include="@(SkinAgentTarget)" />
+      <SkinAgentLocalFiles Include="@(SkinAgentTarget-&gt;'%(RootDir)%(Directory)SkinManager.Agent.exe')" />
+      <SkinAgentLocalFiles Include="@(SkinAgentTarget-&gt;'%(RootDir)%(Directory)SkinManager.Agent.runtimeconfig.json')" />
+      <SkinAgentLocalFiles Include="@(SkinAgentTarget-&gt;'%(RootDir)%(Directory)SkinManager.Agent.deps.json')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SkinAgentLocalFiles)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="RemoveWebView2ReferenceDocumentationFromPublish" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)Microsoft.Web.WebView2.Core.xml;$(PublishDir)Microsoft.Web.WebView2.Wpf.xml;$(PublishDir)Microsoft.Web.WebView2.WinForms.xml" />
+  </Target>
+</Project>

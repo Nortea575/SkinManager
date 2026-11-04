@@ -1,0 +1,83 @@
+{
+  "formatVersion": 1,
+  "id": "ayanami",
+  "name": "Ayanami",
+  "version": "1.0.3",
+  "author": "Ancimen",
+  "appearance": "light",
+  "tokens": {
+    "color.surface.window": "#f5f7fb",
+    "color.surface.sidebar": "#f9fbff",
+    "color.surface.input": "#e7eef8",
+    "color.text.primary": "#202b3e",
+    "color.text.secondary": "#61708b",
+    "color.border.default": "#c8d2e5",
+    "color.border.focus": "{color.accent}",
+    "color.accent": "#5875a7",
+    "radius.control": 12,
+    "border.width": 1,
+    "material.fillOpacity": 0.25
+  },
+  "components": {
+    "window": {
+      "background": "{color.surface.window}",
+      "color": "{color.text.primary}"
+    },
+    "content": {
+      "background": "none"
+    },
+    "sidebar": {
+      "background": "{color.surface.sidebar}",
+      "borderRightColor": "{color.border.default}",
+      "borderRightWidth": "{border.width}"
+    },
+    "composer": {
+      "background": "{color.surface.input}",
+      "fillOpacity": "{material.fillOpacity}",
+      "borderColor": "{color.border.default}",
+      "borderWidth": "{border.width}",
+      "radius": "{radius.control}",
+      "states": {
+        "focused": {
+          "borderColor": "{color.border.focus}"
+        }
+      }
+    }
+  },
+  "background": {
+    "color": "#f5f7fb",
+    "image": "assets/ayanami-background.png",
+    "fit": "cover",
+    "focusX": 0.5,
+    "focusY": 0.5,
+    "opacity": 1,
+    "overlayColor": "#f5f7fb",
+    "overlayOpacity": 0.08
+  },
+  "variants": {
+    "light": {
+      "background": {
+        "opacity": 1,
+        "overlayColor": "#f5f7fb",
+        "overlayOpacity": 0.08
+      }
+    },
+    "dark": {
+      "tokens": {
+        "color.surface.window": "#222733",
+        "color.surface.sidebar": "#2c3240",
+        "color.surface.input": "#3b4454",
+        "color.text.primary": "#e6ecf7",
+        "color.text.secondary": "#b0bdd3",
+        "color.border.default": "#5b6a84",
+        "color.accent": "#a0b7df"
+      },
+      "background": {
+        "color": "#222733",
+        "opacity": 0.55,
+        "overlayColor": "#222733",
+        "overlayOpacity": 0.70
+      }
+    }
+  }
+}

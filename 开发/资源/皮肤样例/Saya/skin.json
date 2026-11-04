@@ -1,0 +1,75 @@
+{
+  "formatVersion": 1,
+  "id": "saya",
+  "name": "Saya",
+  "version": "1.0.2",
+  "author": "Ancimen",
+  "appearance": "dark",
+  "tokens": {
+    "color.surface.window": "#13202b",
+    "color.surface.sidebar": "#0f1924",
+    "color.surface.input": "#1b2c36",
+    "color.text.primary": "#e5efe9",
+    "color.text.secondary": "#afc6c0",
+    "color.border.default": "#405d62",
+    "color.border.focus": "{color.accent}",
+    "color.accent": "#91c7b0",
+    "radius.control": 12,
+    "border.width": 1,
+    "material.fillOpacity": 0.4
+  },
+  "components": {
+    "window": {
+      "background": "{color.surface.window}",
+      "color": "{color.text.primary}"
+    },
+    "content": {
+      "background": "none"
+    },
+    "sidebar": {
+      "background": "{color.surface.sidebar}",
+      "borderRightColor": "{color.border.default}",
+      "borderRightWidth": "{border.width}"
+    },
+    "composer": {
+      "background": "{color.surface.input}",
+      "fillOpacity": "{material.fillOpacity}",
+      "borderColor": "{color.border.default}",
+      "borderWidth": "{border.width}",
+      "radius": "{radius.control}",
+      "states": {
+        "focused": {
+          "borderColor": "{color.border.focus}"
+        }
+      }
+    }
+  },
+  "background": {
+    "color": "#0a131c",
+    "image": "assets/saya-background.png",
+    "fit": "cover",
+    "focusX": 0.5,
+    "focusY": 0.5,
+    "opacity": 1,
+    "overlayColor": "#0a131c",
+    "overlayOpacity": 0.35
+  },
+  "variants": {
+    "light": {
+      "tokens": {
+        "color.surface.window": "#f1f5f2",
+        "color.surface.sidebar": "#e6eeea",
+        "color.surface.input": "#dce8e2",
+        "color.text.primary": "#233a37",
+        "color.text.secondary": "#536b65",
+        "color.border.default": "#a3bcb3",
+        "color.accent": "#3f806d"
+      },
+      "background": {
+        "color": "#eef5f0",
+        "overlayColor": "#eef5f0",
+        "overlayOpacity": 0.55
+      }
+    }
+  }
+}
