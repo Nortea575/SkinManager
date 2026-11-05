@@ -694,8 +694,8 @@ public static class NativeSkinStyleBuilder
         string value,
         ICollection<string> declarations)
     {
-        declarations.Add(
-            $"{string.Join(", ", CodexAdapter.ChatAssistantTextScopeSelectors)} {{{string.Join(';', variables.Select(variable => $"{variable}:{value} !important"))};}}");
+        AppendScopedVariableAliases(CodexAdapter.ChatAssistantTextScopeSelectors, variables, value, declarations);
+        AppendScopedVariableAliases(CodexAdapter.ChatAssistantDilVariableScopeSelectors, variables, value, declarations);
     }
 
     private static string BuildDerivedTextColor(string foreground, string surface, int foregroundPercent) =>
@@ -1008,10 +1008,16 @@ public static class NativeSkinStyleBuilder
     private static void AppendPaletteAliases(string variableGroup, string value, ICollection<string> declarations) =>
         AppendVariableAliases(CodexAdapter.NativePaletteVariables[variableGroup], value, declarations);
 
-    private static void AppendVariableAliases(IEnumerable<string> variables, string value, ICollection<string> declarations)
-    {
-        declarations.Add($":root[data-theme] {{{string.Join(';', variables.Select(variable => $"{variable}:{value} !important"))};}}");
-    }
+    private static void AppendVariableAliases(IEnumerable<string> variables, string value, ICollection<string> declarations) =>
+        AppendScopedVariableAliases(CodexAdapter.NativeVariableScopeSelectors, variables, value, declarations);
+
+    private static void AppendScopedVariableAliases(
+        IEnumerable<string> scopeSelectors,
+        IEnumerable<string> variables,
+        string value,
+        ICollection<string> declarations) =>
+        declarations.Add(
+            $"{string.Join(", ", scopeSelectors)} {{{string.Join(';', variables.Select(variable => $"{variable}:{value} !important"))};}}");
 
     private static void AppendBackgroundSurfaceRules(ICollection<string> declarations)
     {

@@ -69,7 +69,7 @@ SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在�
 
 ### 安装与应用皮肤
 
-1. 下载 [SkinManager-Setup-1.0.1.exe](https://github.com/Nortea575/SkinManager/releases/download/v1.0.1/SkinManager-Setup-1.0.1.exe) 并安装。
+1. 下载 [SkinManager-Setup-1.0.2.exe](https://github.com/Nortea575/SkinManager/releases/download/v1.0.2/SkinManager-Setup-1.0.2.exe) 并安装。
 2. 打开“皮肤市场”下载皮肤，或通过“导入皮肤”导入已有文件夹或 ZIP。
 3. 从 Codex 托盘菜单完全退出 Codex，再点击 SkinManager 的“启动调试版”。
 4. 选择皮肤，点击“连接并应用 / 更新”。

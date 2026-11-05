@@ -72,7 +72,7 @@
                        Margin="0,0,9,0" Stretch="Uniform" />
                 <TextBlock Text="SkinManager" FontSize="19" Style="{StaticResource SectionTitle}"
                            VerticalAlignment="Center" />
-                  <TextBlock Text="1.0.1" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                  <TextBlock Text="1.0.2" FontSize="11" Foreground="{StaticResource SecondaryText}"
                            VerticalAlignment="Center" Margin="8,2,0,0" />
                 <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
                        Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"

@@ -170,6 +170,13 @@ public static class CodexAdapter
         "--color-text-disabled", "--color-text-tertiary", "--text-tertiary"
     ];
 
+    internal const string ChatAssistantDilVariableScopeSelector =
+        ":root[data-theme] [data-markdown-text-style=\"assistant-message\"] [class*=\"_DilResponseRoot_\"]";
+
+    internal static readonly string[] ChatAssistantDilVariableScopeSelectors = [ChatAssistantDilVariableScopeSelector];
+
+    internal static readonly string[] NativeVariableScopeSelectors = [":root[data-theme]", ChatAssistantDilVariableScopeSelector];
+
     internal static readonly IReadOnlyDictionary<string, string[]> NativeSurfaceVariables =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
