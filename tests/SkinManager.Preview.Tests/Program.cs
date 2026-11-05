@@ -64,6 +64,18 @@ internal static class Program
           --color-text-secondary: color-mix(in srgb,#201a18 65%,transparent);
           --color-text-tertiary: color-mix(in srgb,#201a18 45%,transparent);
         }
+        ._PortalBoundary_1q7hk_2[data-theme="dark"] {
+          --color-surface: #212121;
+          --color-surface-secondary: #0e0e0e;
+          --color-surface-tertiary: #212121;
+          --color-text-prose: #fcfcfc;
+          --color-text-primary: #fcfcfc;
+          --color-text-secondary: color-mix(in srgb,#fcfcfc 65%,transparent);
+          --color-text-tertiary: color-mix(in srgb,#fcfcfc 45%,transparent);
+          --color-border: rgba(252,252,252,.084);
+        }
+        ._DilRenderer_i9fmn_1 { color: var(--color-text-prose); }
+        .dil-box { border: 1px solid var(--color-border); }
         ._MarkdownRoot_xjxw3_2[data-markdown-text-tone=inherit] ._ExternalMarkdownLink_xjxw3_2 {
           color: var(--markdown-link-color,currentColor);
         }
@@ -92,13 +104,42 @@ internal static class Program
                 <a id="chat-link" data-d-component="link" class="_ExternalMarkdownLink_xjxw3_2" href="#offline-link"><span id="chat-link-text" class="_TextBase_1ccqq_1 _Text_18604_1" style="--color-text-prose:var(--markdown-link-color)">Explicit markdown link</span></a>
                 <pre id="chat-code"><code><span id="chat-code-token" class="_TextBase_1ccqq_1 _Text_18604_1" style="--color-text-prose:rgb(203,85,20)">const item = 1;</span></code></pre>
               </section>
+              <div id="dil-portal" class="_PortalBoundary_1q7hk_2 _Renderer_1l3jy_1" data-theme="dark">
+                <div id="dil-root" class="_DilRenderer_i9fmn_1 _DilResponseRoot_i9fmn_120">
+                  <div id="dil-secondary" class="_Box_1vvvh_1 dil-box" style="background-color:var(--color-surface-secondary)">
+                    <p id="dil-text" class="_TextBase_1ccqq_1 _Text_18604_1">DIL node label</p>
+                    <span id="dil-caption" class="_TextBase_1ccqq_1 _Caption_sef0d_1">DIL caption</span>
+                    <a id="dil-link" class="_ExternalMarkdownLink_xjxw3_2" href="#dil-link" style="--markdown-link-color:#1878d4">DIL semantic link</a>
+                    <pre id="dil-code"><code><span id="dil-code-token" class="_TextBase_1ccqq_1 _Text_18604_1" style="--color-text-prose:rgb(203,85,20)">DIL code token</span></code></pre>
+                    <svg id="dil-icon" width="12" height="12" viewBox="0 0 12 12"><path id="dil-icon-path" d="M1 1h10v10H1z" fill="#5d2875"></path></svg>
+                    <img id="dil-image" alt="Offline image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+                  </div>
+                  <div id="dil-surface" class="_Box_1vvvh_1 dil-box" style="background-color:var(--color-surface)"></div>
+                  <div id="dil-tertiary" class="_Box_1vvvh_1 dil-box" style="background-color:var(--color-surface-tertiary)"></div>
+                  <div id="dil-elevated" class="_Box_1vvvh_1 dil-box" style="background-color:var(--color-surface-elevated,var(--app-color-background-elevated-tertiary-opaque))"></div>
+                </div>
+              </div>
             </div>
           </article>
           <article id="chat-user" data-skin-part="message.user">
             <div class="_MarkdownRoot_xjxw3_2" data-markdown-text-style="user-message" data-markdown-text-tone="inherit">
               <section class="chat-local-scope"><p id="chat-user-text" class="_TextBase_1ccqq_1 _Text_18604_1">User message stays independent</p></section>
+              <div id="dil-external-portal" class="_PortalBoundary_1q7hk_2 _Renderer_1l3jy_1" data-theme="dark">
+                <div id="dil-external-root" class="_DilRenderer_i9fmn_1 _DilResponseRoot_i9fmn_120">
+                  <div id="dil-external-secondary" class="_Box_1vvvh_1 dil-box" style="background-color:var(--color-surface-secondary)">
+                    <img id="user-upload" alt="User uploaded image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+                  </div>
+                </div>
+              </div>
             </div>
           </article>
+          <div id="dil-global-probes" aria-hidden="true">
+            <span id="dil-global-surface" style="background-color:var(--color-surface)"></span>
+            <span id="dil-global-secondary" style="background-color:var(--color-surface-secondary)"></span>
+            <span id="dil-global-tertiary" style="background-color:var(--color-surface-tertiary)"></span>
+            <span id="dil-global-elevated" style="background-color:var(--color-surface-elevated,var(--app-color-background-elevated-tertiary-opaque))"></span>
+            <span id="dil-global-border" style="border:1px solid var(--color-border)"></span>
+          </div>
         </main>
         """;
 
@@ -114,10 +155,14 @@ internal static class Program
         var instanceReviewUi = args.Contains("--instance-review-ui", StringComparer.OrdinalIgnoreCase);
         var managerInstanceDelay = ReadManagerInstanceDelay(args);
         var motionOnly = args.Contains("--motion-only", StringComparer.OrdinalIgnoreCase);
+        var chatReplyOnly = args.Contains("--chat-reply-only", StringComparer.OrdinalIgnoreCase);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
-        VerifyPackagedThemeFonts();
-        VerifyThemeTextContrast();
+        if (!chatReplyOnly)
+        {
+            VerifyPackagedThemeFonts();
+            VerifyThemeTextContrast();
+        }
         application.Dispatcher.BeginInvoke(new Action(async () =>
         {
             try
@@ -148,7 +193,7 @@ internal static class Program
                 }
                 else
                 {
-                    await RunAsync();
+                    await RunAsync(chatReplyOnly);
                 }
                 _exitCode = 0;
             }
@@ -174,8 +219,8 @@ internal static class Program
 
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 0, 1),
-            "更新比较读取公开软件版本 1.0.1");
+        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 0, 2),
+            "更新比较读取公开软件版本 1.0.2");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -185,11 +230,11 @@ internal static class Program
         store.Save(SkinPackageReader.ReadZipBytes(ayanamiBytes), replaceExisting: false);
         store.Save(SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")), replaceExisting: false);
 
-        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 0, 1));
+        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 0, 2));
         var updateCoordinator = new UpdateCoordinator(
             updateClient,
             Path.Combine(reviewRoot, "updates"),
-            new Version(1, 0, 1));
+            new Version(1, 0, 2));
         updateCoordinator.AutomaticCheckAndDownload = false;
         var fakeInstances = new FakeCodexInstanceService(
         [
@@ -533,12 +578,15 @@ internal static class Program
         Console.WriteLine($"已更新主窗与制作器截图：{screenshots}");
     }
 
-    private static async Task RunAsync()
+    private static async Task RunAsync(bool chatReplyOnly = false)
     {
         var testRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewTests", Guid.NewGuid().ToString("N"));
         _cleanupRoot = testRoot;
         Directory.CreateDirectory(testRoot);
-        await MotionBehaviorChecks.RunAsync();
+        if (!chatReplyOnly)
+        {
+            await MotionBehaviorChecks.RunAsync();
+        }
         var screenshotDirectory = FindTestOutputDirectory();
         Directory.CreateDirectory(screenshotDirectory);
 
@@ -598,7 +646,10 @@ internal static class Program
               saya.Appearance == SkinAppearance.Dark,
             "Saya 深色示例读取出声明的深色外观与背景资源");
 
-        await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, screenshotDirectory);
+        if (!chatReplyOnly)
+        {
+            await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, screenshotDirectory);
+        }
 
         var sayaLight = SkinResolver.Resolve(saya, SkinAppearance.Light, SkinScene.Home);
         var sayaDark = SkinResolver.Resolve(saya, SkinAppearance.Dark, SkinScene.Home);
@@ -641,6 +692,20 @@ internal static class Program
         try
         {
             await renderer.InitializeAsync();
+            if (chatReplyOnly)
+            {
+                await VerifyChatAssistantInkAsync(
+                    renderer,
+                    ayanami,
+                    saya,
+                    native,
+                    stateFixture,
+                    assistantColorFixture,
+                    screenshotDirectory);
+                Console.WriteLine($"Chat/DIL离线回归截图：{Path.Combine(screenshotDirectory, "dil-palette-ayanami-light.png")}");
+                return;
+            }
+
             var core = browser.CoreWebView2 ?? throw new InvalidOperationException("WebView2 初始化后仍不可用。");
             requestAudit = (_, args) =>
             {
@@ -1479,6 +1544,11 @@ internal static class Program
             "冻结的 2.3.4 root-only 颜色别名保留根色，但 Chat 正文、标题和列表仍复现局部黑字");
         Check(oldProbe["caption"] != sayaSecondary,
             "旧 root-only 颜色别名未覆盖 Chat TextBase 的 Caption 局部变量");
+        var nativeDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        Check(nativeDilProbe["portalTheme"] == "dark" && nativeDilProbe["surface"] == "rgb(33, 33, 33)" &&
+              nativeDilProbe["secondary"] == "rgb(14, 14, 14)" && nativeDilProbe["tertiary"] == "rgb(33, 33, 33)" &&
+              nativeDilProbe["rootColor"] == "rgb(252, 252, 252)",
+            "离线DIL夹具保留实测的浅色页面内嵌Dark PortalBoundary与深色Box基线");
 
         await renderer.ExecuteScriptAsync("document.getElementById('chat-ink-step').textContent = '2.3.4 root-only aliases：正文仍为 #201a18'; true;");
         var oldScreenshot = await CapturePreviewBytesAsync(renderer);
@@ -1490,20 +1560,16 @@ internal static class Program
             "Saya 深色的正文、标题与列表文本跟随 Chat 局部 TextBase 变量桥接");
         Check(sayaProbe["caption"] == sayaSecondary,
             "Saya 深色 secondary token 更新 Chat Caption 文本");
+        var sayaDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        VerifyAssistantDilPalette(sayaDilProbe, sayaPrimary, sayaSecondary, "Saya深色", nativeDilProbe);
+        Check(sayaDilProbe["secondary"] == CssColorToBrowserValue(SkinResolver.Resolve(saya, SkinAppearance.Dark, SkinScene.Conversation).Colors["color.surface.sidebar"]),
+            "DIL secondary显式surface.sidebar优先于派生palette");
         Check(sayaProbe["markdownLink"] == "rgb(24, 120, 212)" &&
               sayaProbe["codeToken"] == "rgb(203, 85, 20)" &&
               sayaProbe["userText"] == "rgb(32, 26, 24)",
             "Chat 文字桥接保留显式 Markdown 链接色、代码语法色和同级用户消息局部色");
         Check(sayaProbe["localScopeHasTheme"] == "false",
             "Chat 离线结构的 TextBase 局部作用域不依赖 data-theme 属性");
-
-        await renderer.ExecuteScriptAsync("document.getElementById('chat-ink-step').textContent = '2.3.5：助手回复正文跟随 Saya 浅色字'; true;");
-        var updatedScreenshot = await CapturePreviewBytesAsync(renderer);
-        Directory.CreateDirectory(screenshotDirectory);
-        await SaveChatInkComparisonAsync(
-            oldScreenshot,
-            updatedScreenshot,
-            Path.Combine(screenshotDirectory, "chat-ink-fix-comparison.png"));
 
         var streamedProbe = await ReadObjectAsync(renderer, """
             (() => {
@@ -1526,12 +1592,32 @@ internal static class Program
         var ayanamiProbe = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
         Check(ayanamiProbe["paragraph"] == ayanamiPrimary && ayanamiProbe["caption"] == ayanamiSecondary,
             "热更新到 Ayanami 浅色后 Chat 正文与 secondary Caption 同步更新");
+        var ayanamiDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        VerifyAssistantDilPalette(ayanamiDilProbe, ayanamiPrimary, ayanamiSecondary, "Ayanami浅色", nativeDilProbe);
+        Check(ayanamiDilProbe["portalTheme"] == "dark" && ayanamiDilProbe["surface"] == ayanamiDilProbe["globalSurface"] &&
+              ayanamiDilProbe["secondary"] == ayanamiDilProbe["globalSecondary"] &&
+              ayanamiDilProbe["tertiary"] == ayanamiDilProbe["globalTertiary"],
+            "页面根为light时DIL父级仍为dark，三个Box表面仍跟随浅色皮肤别名");
+        await renderer.ExecuteScriptAsync("document.getElementById('chat-ink-step').textContent = '助手回复与DIL组件跟随所选皮肤'; true;");
+        var updatedScreenshot = await CapturePreviewBytesAsync(renderer);
+        Directory.CreateDirectory(screenshotDirectory);
+        await SaveScreenshotAsync(renderer, Path.Combine(screenshotDirectory, "dil-palette-ayanami-light.png"));
+        await SaveChatInkComparisonAsync(
+            oldScreenshot,
+            updatedScreenshot,
+            Path.Combine(screenshotDirectory, "chat-ink-fix-comparison.png"));
 
         await renderer.ExecuteScriptAsync("document.documentElement.setAttribute('data-theme', 'dark'); true;");
         await renderer.ExecuteScriptAsync(NativeSkinStyleBuilder.BuildApplyScript(BuildChatInkPayload(saya, SkinAppearance.Dark)));
         var sayaReapplied = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
         Check(sayaReapplied["paragraph"] == sayaPrimary && sayaReapplied["caption"] == sayaSecondary,
             "再次应用 Saya 后 Chat 正文颜色恢复为新值");
+        VerifyAssistantDilPalette(
+            await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript),
+            sayaPrimary,
+            sayaSecondary,
+            "重新应用Saya深色",
+            nativeDilProbe);
 
         await renderer.ExecuteScriptAsync("document.documentElement.setAttribute('data-theme', 'light'); true;");
         await renderer.ExecuteScriptAsync(NativeSkinStyleBuilder.BuildApplyScript(BuildChatInkPayload(stateFixture, SkinAppearance.Light)));
@@ -1539,6 +1625,18 @@ internal static class Program
         Check(stateLinkProbe["markdownLink"] == "rgb(24, 120, 212)" &&
               stateLinkProbe["codeToken"] == "rgb(203, 85, 20)",
             "普通皮肤的显式链接色和高亮代码色不受正文 primary 别名影响");
+        var stateLight = SkinResolver.Resolve(stateFixture, SkinAppearance.Light, SkinScene.Conversation);
+        var stateDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        VerifyAssistantDilPalette(
+            stateDilProbe,
+            CssColorToBrowserValue(stateLight.Colors["color.text.primary"]),
+            CssColorToBrowserValue(stateLight.Colors["color.text.secondary"]),
+            "显式surface夹具",
+            nativeDilProbe,
+            CssColorToBrowserValue(stateLight.Colors["color.text.link"]));
+        Check(stateDilProbe["secondary"] == CssColorToBrowserValue(stateLight.Colors["color.surface.sidebar"]) &&
+              stateDilProbe["elevated"] == CssColorToBrowserValue(stateLight.Colors["color.surface.elevated"]),
+            "显式surface.sidebar与surface.elevated覆盖DIL根继承的Dark palette");
 
         await renderer.ExecuteScriptAsync(NativeSkinStyleBuilder.BuildApplyScript(BuildChatInkPayload(assistantColorFixture, SkinAppearance.Light)));
         var assistantColorProbe = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
@@ -1551,6 +1649,14 @@ internal static class Program
         var nativeProbe = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
         Check(nativeProbe["paragraph"] == "rgb(32, 26, 24)",
             "应用空 Native 配置后 Chat 正文恢复原生局部颜色");
+        var nativeRestoredDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        Check(nativeRestoredDilProbe["portalTheme"] == "dark" &&
+              nativeRestoredDilProbe["surface"] == nativeDilProbe["surface"] &&
+              nativeRestoredDilProbe["secondary"] == nativeDilProbe["secondary"] &&
+              nativeRestoredDilProbe["tertiary"] == nativeDilProbe["tertiary"] &&
+              nativeRestoredDilProbe["rootColor"] == nativeDilProbe["rootColor"] &&
+              nativeRestoredDilProbe["border"] == nativeDilProbe["border"],
+            "应用空Native配置后DIL局部深色surface、正文和border恢复原生palette");
         await renderer.ExecuteScriptAsync(NativeSkinStyleBuilder.BuildApplyScript(BuildChatInkPayload(saya, SkinAppearance.Dark)));
         var activeBeforeRemoval = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
         Check(activeBeforeRemoval["paragraph"] == sayaPrimary,
@@ -1559,6 +1665,38 @@ internal static class Program
         var removedProbe = await ReadObjectAsync(renderer, ChatAssistantInkProbeScript);
         Check(removedProbe["paragraph"] == "rgb(32, 26, 24)",
             "移除 Native 样式节点后 Chat 正文恢复原生局部颜色");
+        var removedDilProbe = await ReadObjectAsync(renderer, ChatAssistantDilPaletteProbeScript);
+        Check(removedDilProbe["surface"] == nativeDilProbe["surface"] &&
+              removedDilProbe["secondary"] == nativeDilProbe["secondary"] &&
+              removedDilProbe["tertiary"] == nativeDilProbe["tertiary"] &&
+              removedDilProbe["rootColor"] == nativeDilProbe["rootColor"],
+            "移除Native样式节点后DIL Box与文字恢复Dark PortalBoundary的原生颜色");
+    }
+
+    private static void VerifyAssistantDilPalette(
+        IReadOnlyDictionary<string, string> probe,
+        string primary,
+        string secondary,
+        string label,
+        IReadOnlyDictionary<string, string> nativeReference,
+        string linkColor = "rgb(24, 120, 212)")
+    {
+        Check(probe["portalTheme"] == "dark" &&
+              probe["surface"] == probe["globalSurface"] &&
+              probe["secondary"] == probe["globalSecondary"] &&
+              probe["tertiary"] == probe["globalTertiary"] &&
+              probe["elevated"] == probe["globalElevated"],
+            $"{label}将DIL Box的surface别名映射到相同的全局palette值，且保留Dark PortalBoundary");
+        Check(probe["rootColor"] == primary && probe["text"] == primary &&
+              probe["caption"] == secondary && probe["border"] == probe["globalBorder"],
+            $"{label}更新DIL根正文、primary/secondary和border变量（root={probe["rootColor"]}/{primary}, text={probe["text"]}, caption={probe["caption"]}/{secondary}, border={probe["border"]}/{probe["globalBorder"]}）");
+        Check(probe["link"] == linkColor && probe["codeToken"] == "rgb(203, 85, 20)" &&
+              probe["iconFill"] == "rgb(93, 40, 117)" && probe["imageFilter"] == "none" && probe["uploadFilter"] == "none",
+            $"{label}保留DIL链接色、代码色、SVG显式fill与用户图片效果");
+        Check(probe["externalSurface"] == nativeReference["externalSurface"] &&
+              probe["externalRootColor"] == nativeReference["externalRootColor"] &&
+              probe["externalBorder"] == nativeReference["externalBorder"],
+            $"{label}不触及助手消息范围外的DIL（surface={probe["externalSurface"]}, text={probe["externalRootColor"]}, border={probe["externalBorder"]}）");
     }
 
     private static NativeSkinStylePayload BuildChatInkPayload(SkinPackage package, SkinAppearance appearance)
@@ -1590,6 +1728,41 @@ internal static class Program
             codeToken: color('chat-code-token'),
             userText: color('chat-user-text'),
             localScopeHasTheme: String(localScope?.hasAttribute('data-theme') ?? false)
+          };
+        })()
+        """;
+
+    private const string ChatAssistantDilPaletteProbeScript = """
+        (() => {
+          const style = (id) => getComputedStyle(document.getElementById(id));
+          const background = (id) => style(id).backgroundColor;
+          const border = (id) => style(id).borderTopColor;
+          const root = style('dil-root');
+          return {
+            portalTheme: document.getElementById('dil-portal').getAttribute('data-theme'),
+            surface: background('dil-surface'),
+            secondary: background('dil-secondary'),
+            tertiary: background('dil-tertiary'),
+            elevated: background('dil-elevated'),
+            globalSurface: background('dil-global-surface'),
+            globalSecondary: background('dil-global-secondary'),
+            globalTertiary: background('dil-global-tertiary'),
+            globalElevated: background('dil-global-elevated'),
+            rootColor: root.color,
+            rootProse: root.getPropertyValue('--color-text-prose').trim(),
+            text: style('dil-text').color,
+            caption: style('dil-caption').color,
+            border: border('dil-secondary'),
+            globalBorder: border('dil-global-border'),
+            link: style('dil-link').color,
+            codeToken: style('dil-code-token').color,
+            iconFill: style('dil-icon-path').fill,
+            imageFilter: style('dil-image').filter,
+            externalSurface: background('dil-external-secondary'),
+            externalRootColor: style('dil-external-root').color,
+            externalRootProse: style('dil-external-root').getPropertyValue('--color-text-prose').trim(),
+            externalBorder: border('dil-external-secondary'),
+            uploadFilter: style('user-upload').filter
           };
         })()
         """;
@@ -1746,8 +1919,8 @@ internal static class Program
         string screenshotDirectory)
     {
         var updatesDirectory = Path.Combine(testRoot, "updates-defaults");
-        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"), new Version(1, 0, 2));
-        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(1, 0, 1));
+        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"), new Version(1, 0, 3));
+        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(1, 0, 2));
         Check(coordinator.AutomaticCheckAndDownload, "自动检查和下载默认开启");
         coordinator.StartAutomatically();
         await WaitUntilAsync(() => Task.FromResult(coordinator.HasDownloadedUpdate), "启动时自动检查并下载可用更新");
@@ -1769,7 +1942,7 @@ internal static class Program
         Check(FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked == true &&
               installButton.Visibility == Visibility.Visible && installButton.IsVisible && installButton.IsEnabled &&
               releaseNotes.Text == updateClient.Release.Notes && notesScroll?.ScrollableHeight > 0 &&
-              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.0.2",
+              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.0.3",
             "500×520 更新窗限制长发布说明滚动，安装按钮可见可用且版本只显示一次");
         await SaveWindowScreenshotAsync(updateWindow, Path.Combine(screenshotDirectory, "版本与更新窗口.png"));
         FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked = false;
@@ -1779,7 +1952,7 @@ internal static class Program
         using (var reloadedPreferences = new UpdateCoordinator(
                    new FakeUpdateClient(Path.Combine(testRoot, "preference-reload")),
                    updatesDirectory,
-                   new Version(1, 0, 1)))
+                   new Version(1, 0, 2)))
         {
             Check(!reloadedPreferences.AutomaticCheckAndDownload, "自动检查偏好跨启动持久化");
         }
