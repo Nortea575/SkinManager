@@ -4,7 +4,7 @@
         Title="版本与更新" Width="560" Height="590" MinWidth="500" MinHeight="520"
         ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
         Background="{StaticResource WindowSurface}"
-        FontFamily="Segoe UI, Microsoft YaHei UI"
+        FontFamily="{StaticResource KlayBodyFont}"
         Foreground="{StaticResource PrimaryText}">
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -22,13 +22,13 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0">
-            <TextBlock Text="版本与更新" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="版本与更新" FontSize="24" Style="{StaticResource PageTitle}" />
             <TextBlock x:Name="CurrentVersionText" Margin="0,5,0,0" FontSize="12"
                        Foreground="{StaticResource SecondaryText}" />
         </StackPanel>
 
         <Border Grid.Row="2" Background="{StaticResource PanelSurface}"
-                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="14">
+                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="14">
             <StackPanel>
                 <TextBlock x:Name="StatusText" FontSize="14" FontWeight="SemiBold"
                            TextWrapping="Wrap" AutomationProperties.Name="更新状态" />
@@ -53,7 +53,7 @@
             <TextBox x:Name="ReleaseNotesText" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True"
                      TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                      HorizontalScrollBarVisibility="Disabled" MinHeight="80"
-                     Background="{StaticResource PanelSurface}"
+                     Background="{StaticResource RaisedSurface}"
                      AutomationProperties.Name="发布说明" />
         </Grid>
 

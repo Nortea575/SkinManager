@@ -7,7 +7,8 @@
 <p align="center">为 Windows 上的 Codex 桌面版制作、预览和管理皮肤。</p>
 
 <p align="center">
-  <a href="#快速开始">下载与使用</a> ·
+  <a href="https://github.com/Nortea575/SkinManager/releases/latest">下载最新版</a> ·
+  <a href="#快速开始">快速开始</a> ·
   <a href="https://blog.ancimen.top/?page_id=39">皮肤市场</a> ·
   <a href="CHANGELOG.md">更新日志</a>
 </p>
@@ -18,7 +19,7 @@ SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在�
 
 ![SkinManager 主界面：皮肤库、效果预览和连接控制](docs/images/manager.png)
 
-皮肤库、预览和连接控制集中在一个窗口中，选择皮肤即可查看效果。
+炭黑界面搭配黄绿色强调色，皮肤库、预览和连接控制集中在一个窗口中。选择皮肤即可查看效果，预览区会随窗口尺寸调整。
 
 <details>
 <summary>查看浅色与深色皮肤示例</summary>
@@ -68,7 +69,7 @@ SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在�
 
 ### 安装与应用皮肤
 
-1. 在本仓库的 **Releases** 中下载 `SkinManager-Setup-1.0.0.exe` 并安装。
+1. 下载 [SkinManager-Setup-1.0.1.exe](https://github.com/Nortea575/SkinManager/releases/download/v1.0.1/SkinManager-Setup-1.0.1.exe) 并安装。
 2. 打开“皮肤市场”下载皮肤，或通过“导入皮肤”导入已有文件夹或 ZIP。
 3. 从 Codex 托盘菜单完全退出 Codex，再点击 SkinManager 的“启动调试版”。
 4. 选择皮肤，点击“连接并应用 / 更新”。
@@ -111,7 +112,7 @@ dotnet build .\SkinManager.sln -c Release --no-restore
 
 ## 反馈与贡献
 
-欢迎通过本仓库的 **Issues** 反馈问题和提出建议，或通过 **Pull Request** 贡献改进。
+欢迎通过 [Issues](https://github.com/Nortea575/SkinManager/issues) 反馈问题和提出建议，或通过 **Pull Request** 贡献改进。
 
 反馈问题时，请提供 SkinManager 版本、Codex 版本、皮肤名称、复现步骤和相关截图，便于定位。
 
@@ -120,5 +121,7 @@ dotnet build .\SkinManager.sln -c Release --no-restore
 作者：**Ancimen**。
 
 官方皮肤由 Ancimen 发布，**保留所有权利**。第三方皮肤及素材遵循各自的授权声明。
+
+管理器随附的 [Inter](https://github.com/rsms/inter) 与 [Space Grotesk](https://github.com/floriankarsten/space-grotesk) 字体均采用 SIL Open Font License 1.1，授权全文见 [ThirdPartyNotices.txt](src/SkinManager.Desktop/ThirdPartyNotices.txt)，安装目录中也附有同名文件。
 
 SkinManager 是独立项目，并非 OpenAI 官方产品。预览界面使用的 Codex CSS 与字体归各自权利方所有；安装器简体中文翻译来自 [Inno Setup Chinese Simplified Translation](https://github.com/kira-96/Inno-Setup-Chinese-Simplified-Translation)。

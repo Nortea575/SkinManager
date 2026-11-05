@@ -12,8 +12,11 @@ internal static class WindowMotion
 {
     private static readonly ConditionalWeakTable<Window, WindowMotionState> States = new();
     private static readonly ConditionalWeakTable<UIElement, OpacityMotionState> OpacityStates = new();
-    private static readonly Color CaptionColor = Color.FromRgb(0x18, 0x2A, 0x35);
-    private static readonly Color CaptionTextColor = Color.FromRgb(0xEC, 0xF2, 0xF6);
+    private static Color CaptionColor => GetResourceColor("WindowSurface", Color.FromRgb(0x0F, 0x10, 0x11));
+    private static Color CaptionTextColor => GetResourceColor("PrimaryText", Colors.White);
+
+    private static Color GetResourceColor(string key, Color fallback) =>
+        Application.Current?.TryFindResource(key) is SolidColorBrush brush ? brush.Color : fallback;
 
     // A local override keeps motion tests independent of global Windows accessibility settings.
     internal static bool? AnimationEnabledOverrideForTests { get; set; }

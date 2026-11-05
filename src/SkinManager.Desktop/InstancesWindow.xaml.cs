@@ -333,7 +333,7 @@ public partial class InstancesWindow : Window
         ActionStatus.Text = message;
         ActionStatus.ToolTip = message;
         ActionStatus.Foreground = isError
-            ? new SolidColorBrush(Color.FromRgb(150, 48, 53))
+            ? (Brush)FindResource("ErrorText")
             : (Brush)FindResource("SecondaryText");
     }
 

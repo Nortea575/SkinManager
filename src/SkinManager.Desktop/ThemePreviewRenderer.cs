@@ -1,5 +1,7 @@
 using System.IO;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SkinManager.Core;
@@ -527,6 +529,10 @@ public sealed class ThemePreviewRenderer : IDisposable
     {
         var enabledJson = JsonSerializer.Serialize(enabled);
         var generationJson = JsonSerializer.Serialize(generation);
+        var accent = Application.Current?.TryFindResource("FocusAccent") is SolidColorBrush brush
+            ? brush.Color
+            : Color.FromRgb(0xD9, 0xFB, 0x06);
+        var accentCssColor = $"#{accent.R:X2}{accent.G:X2}{accent.B:X2}";
         return $$"""
             (() => {
               if (location.protocol !== "https:" || location.hostname !== "{{PreviewDocumentBuilder.PreviewHost}}" ||
@@ -558,7 +564,7 @@ public sealed class ThemePreviewRenderer : IDisposable
                 document.head.appendChild(style);
               }
               style.textContent = picker.enabled
-                ? `[data-skin-part] { cursor: crosshair !important; } [data-skin-editor-picked="true"] { outline: 2px solid #2F718B !important; outline-offset: -2px !important; }`
+                ? `[data-skin-part] { cursor: crosshair !important; } [data-skin-editor-picked="true"] { outline: 2px solid {{accentCssColor}} !important; outline-offset: -2px !important; }`
                 : "";
               if (!picker.enabled) document.querySelectorAll("[data-skin-editor-picked]").forEach(item => item.removeAttribute("data-skin-editor-picked"));
             })()

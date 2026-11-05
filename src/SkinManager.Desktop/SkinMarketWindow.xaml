@@ -5,7 +5,7 @@
         Width="1000" Height="690" MinWidth="880" MinHeight="560"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource WindowSurface}"
-        FontFamily="Segoe UI, Microsoft YaHei UI"
+        FontFamily="{StaticResource KlayBodyFont}"
         Foreground="{StaticResource PrimaryText}">
     <Window.Resources>
         <Style x:Key="MarketFilterStyle" TargetType="RadioButton">
@@ -25,7 +25,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Chip" Property="Background" Value="{StaticResource SelectedSurface}" />
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                                 <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </Trigger>
@@ -33,7 +33,7 @@
                                 <Setter TargetName="Chip" Property="Background" Value="{StaticResource HoverSurface}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55" />
@@ -59,10 +59,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -73,8 +73,8 @@
             <Setter Property="Background" Value="{StaticResource PanelSurface}" />
             <Setter Property="BorderBrush" Value="{StaticResource Line}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="12" />
-            <Setter Property="Padding" Value="10" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="12" />
             <Setter Property="Margin" Value="6" />
         </Style>
         <Style x:Key="MarketExpanderStyle" TargetType="Expander"
@@ -93,7 +93,7 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
-            <TextBlock Text="皮肤市场" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Text="皮肤市场" FontSize="28" Style="{StaticResource PageTitle}" VerticalAlignment="Center" />
             <Button x:Name="RefreshButton" Content="刷新目录" HorizontalAlignment="Right"
                     Click="RefreshButton_Click" AutomationProperties.Name="刷新市场目录" />
         </Grid>
@@ -157,7 +157,7 @@
                                         </Grid.RowDefinitions>
                                         <Border Background="{StaticResource NoImageSurface}" CornerRadius="8"
                                                 ClipToBounds="True">
-                                                <Grid x:Name="PreviewFrame" SizeChanged="PreviewFrame_SizeChanged">
+                                                <Grid x:Name="PreviewFrame" Height="188" SizeChanged="PreviewFrame_SizeChanged">
                                                 <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
                                                        RenderOptions.BitmapScalingMode="HighQuality" />
                                                 <TextBlock x:Name="PreviewPlaceholder" Text="{Binding PreviewLabel}"
@@ -175,7 +175,7 @@
                                             </Grid>
                                         </Border>
                                         <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="9"
-                                                Padding="8,4" Background="#D9182A35" CornerRadius="6"
+                                                Padding="8,4" Background="{StaticResource OverlaySurface}" CornerRadius="8"
                                                 IsHitTestVisible="False">
                                             <TextBlock Text="背景预览" FontSize="11" FontWeight="SemiBold" />
                                         </Border>
@@ -187,7 +187,7 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" MinWidth="0">
-                                            <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
+                                            <TextBlock Text="{Binding Name}" FontSize="17" Style="{StaticResource SectionTitle}"
                                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Text="{Binding SummaryLabel}" FontSize="12" Margin="0,4,0,0"
                                                        Foreground="{StaticResource SecondaryText}" />
@@ -312,7 +312,7 @@
                 <Button x:Name="BackToCatalogButton" Content="返回市场" Padding="12,7"
                         Click="BackToCatalogButton_Click" AutomationProperties.Name="返回皮肤市场" />
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" MinWidth="0">
-                    <TextBlock x:Name="PreviewPageTitle" FontSize="16" FontWeight="SemiBold"
+                <TextBlock x:Name="PreviewPageTitle" FontSize="21" Style="{StaticResource PageTitle}"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="PreviewPageSummary" FontSize="12" Foreground="{StaticResource SecondaryText}"
                                Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />

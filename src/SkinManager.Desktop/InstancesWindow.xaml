@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Codex 实例管理" Width="920" Height="560" MinWidth="760" MinHeight="460"
         WindowStartupLocation="CenterOwner" Background="{StaticResource WindowSurface}"
-        FontFamily="Segoe UI, Microsoft YaHei UI" Foreground="{StaticResource PrimaryText}"
+        FontFamily="{StaticResource KlayBodyFont}" Foreground="{StaticResource PrimaryText}"
         ShowInTaskbar="False" ResizeMode="CanResizeWithGrip">
     <Window.Resources>
         <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -22,19 +22,19 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0">
-            <TextBlock Text="Codex 实例" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Codex 实例" FontSize="24" Style="{StaticResource PageTitle}" />
             <TextBlock Text="普通和调试主实例会分别列出。选择调试实例只会设置连接目标；仍需返回主窗口点击“连接并应用 / 更新”。"
                        FontSize="12" Foreground="{StaticResource SecondaryText}"
                        TextWrapping="Wrap" Margin="0,5,0,0" />
         </StackPanel>
 
         <Border Grid.Row="2" Background="{StaticResource PanelSurface}"
-                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9">
+                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14">
             <Grid>
                 <ListView x:Name="InstanceList" Margin="1" BorderThickness="0"
                           Background="Transparent" Foreground="{StaticResource PrimaryText}"
                           SelectionChanged="InstanceList_SelectionChanged"
-                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
@@ -43,23 +43,117 @@
                     <ListView.Resources>
                         <Style TargetType="{x:Type ListViewItem}">
                             <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
-                            <Setter Property="Padding" Value="8,6" />
-                            <Style.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
-                                    <Setter Property="Background" Value="{StaticResource HoverSurface}" />
-                                </Trigger>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource SelectedSurface}" />
-                                    <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
-                                </Trigger>
-                            </Style.Triggers>
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                            <Setter Property="Padding" Value="9,6" />
+                            <Setter Property="Margin" Value="0,1" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type ListViewItem}">
+                                        <Border x:Name="RowSurface"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                                SnapsToDevicePixels="True">
+                                            <GridViewRowPresenter
+                                                Content="{TemplateBinding Content}"
+                                                Columns="{Binding Path=View.Columns, RelativeSource={RelativeSource AncestorType={x:Type ListView}}}"
+                                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="RowSurface" Property="Background" Value="{StaticResource HoverSurface}" />
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="RowSurface" Property="Background" Value="{StaticResource SelectedSurface}" />
+                                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                                <Setter TargetName="RowSurface" Property="BorderThickness" Value="1" />
+                                                <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+                                            </Trigger>
+                                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                                <Setter TargetName="RowSurface" Property="BorderThickness" Value="1" />
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter Property="Opacity" Value="0.5" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
                         </Style>
                         <Style TargetType="{x:Type GridViewColumnHeader}">
                             <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
-                            <Setter Property="Background" Value="{StaticResource SoftSurface}" />
+                            <Setter Property="Background" Value="{StaticResource PanelSurface}" />
+                            <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+                            <Setter Property="BorderThickness" Value="0,0,0,1" />
                             <Setter Property="FontWeight" Value="SemiBold" />
-                            <Setter Property="Padding" Value="8,7" />
+                            <Setter Property="FontSize" Value="12" />
+                            <Setter Property="Height" Value="36" />
+                            <Setter Property="Padding" Value="9,0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type GridViewColumnHeader}">
+                                        <Grid>
+                                            <Border x:Name="HeaderSurface"
+                                                    Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                                <ContentPresenter
+                                                    Content="{TemplateBinding Content}"
+                                                    ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                    Margin="{TemplateBinding Padding}"
+                                                    RecognizesAccessKey="True" />
+                                            </Border>
+                                            <Thumb x:Name="PART_HeaderGripper" Width="8"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                                                   Background="Transparent" Cursor="SizeWE" Focusable="False">
+                                                <Thumb.Template>
+                                                    <ControlTemplate TargetType="Thumb">
+                                                        <Border Background="Transparent">
+                                                            <Border x:Name="GripLine" Width="1" Margin="0,7"
+                                                                    HorizontalAlignment="Center"
+                                                                    Background="{StaticResource ControlLine}" />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="GripLine" Property="Background" Value="{StaticResource FocusAccent}" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Thumb.Template>
+                                            </Thumb>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="HeaderSurface" Property="Background" Value="{StaticResource HoverSurface}" />
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="HeaderSurface" Property="Background" Value="{StaticResource RaisedSurface}" />
+                                            </Trigger>
+                                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                                <Setter TargetName="HeaderSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                                <Setter TargetName="HeaderSurface" Property="BorderThickness" Value="0,0,0,2" />
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter Property="Opacity" Value="0.5" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
                         </Style>
                     </ListView.Resources>
                     <ListView.View>

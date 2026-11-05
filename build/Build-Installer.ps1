@@ -17,6 +17,7 @@ $outputDirectory = Join-Path $artifactsRoot 'release'
 
 foreach ($requiredFile in @(
     (Join-Path $DesktopPublishDirectory 'SkinManager.exe'),
+    (Join-Path $DesktopPublishDirectory 'ThirdPartyNotices.txt'),
     (Join-Path $AgentPublishDirectory 'SkinManager.Agent.exe')
 )) {
     if (-not (Test-Path -LiteralPath $requiredFile)) {

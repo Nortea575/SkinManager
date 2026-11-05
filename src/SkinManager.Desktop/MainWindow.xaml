@@ -7,7 +7,7 @@
         Width="1240" Height="840" MinWidth="960" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowSurface}"
-        FontFamily="Segoe UI, Microsoft YaHei UI"
+        FontFamily="{StaticResource KlayBodyFont}"
         Foreground="{StaticResource PrimaryText}">
     <Window.Resources>
         <Style x:Key="SkinListItemStyle" TargetType="ListBoxItem">
@@ -33,11 +33,11 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
-                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                                 <Setter TargetName="RowSurface" Property="Background" Value="{StaticResource SelectedSurface}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusBlue}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -51,29 +51,28 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="12">
+    <Grid Margin="16,14">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
-            <RowDefinition Height="8" />
+            <RowDefinition Height="12" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="8" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="{StaticResource PanelSurface}"
-                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12"
-                Padding="10,6">
+        <Border Grid.Row="0" Background="Transparent" BorderThickness="0" Padding="4,2">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <Image Source="/SkinManager;component/SkinManager.ico" Width="28" Height="28"
+                <Image Source="{Binding RelativeSource={RelativeSource AncestorType={x:Type Window}}, Path=Icon}"
+                       Width="28" Height="28"
                        Margin="0,0,9,0" Stretch="Uniform" />
-                <TextBlock Text="SkinManager" FontSize="17" FontWeight="SemiBold"
+                <TextBlock Text="SkinManager" FontSize="19" Style="{StaticResource SectionTitle}"
                            VerticalAlignment="Center" />
-                  <TextBlock Text="1.0.0" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                  <TextBlock Text="1.0.1" FontSize="11" Foreground="{StaticResource SecondaryText}"
                            VerticalAlignment="Center" Margin="8,2,0,0" />
                 <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
                        Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
@@ -129,15 +128,15 @@
 
         <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="276" />
-                <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="262" />
+                <ColumnDefinition Width="18" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Background="{StaticResource SidebarSurface}"
-                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12">
+                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14">
                 <Grid>
-                    <Grid x:Name="LibraryPanel" Margin="10">
+                    <Grid x:Name="LibraryPanel" Margin="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="8" />
@@ -150,7 +149,7 @@
                     <Grid Grid.Row="0" Height="28">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse Width="7" Height="7" Fill="{StaticResource Accent}" Margin="1,0,8,0" />
-                            <TextBlock Text="皮肤库" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Text="皮肤库" FontSize="16" Style="{StaticResource SectionTitle}" />
                         </StackPanel>
                         <TextBlock x:Name="SkinCountText" Text="本地皮肤" FontSize="11"
                                    Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
@@ -250,12 +249,11 @@
             </Border>
 
             <Grid Grid.Column="2">
-                <Border x:Name="DetailsEmptyState" Background="{StaticResource PanelSurface}"
-                        BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12"
-                        Visibility="Collapsed">
+                <Border x:Name="DetailsEmptyState" Background="Transparent"
+                        BorderThickness="0" Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400" Margin="24">
-                        <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="20"
-                                   FontWeight="SemiBold" TextAlignment="Center" />
+                            <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="25"
+                                   Style="{StaticResource PageTitle}" TextAlignment="Center" />
                         <TextBlock x:Name="DetailsEmptyMessage" Text="浏览市场皮肤或导入本地皮肤包，查看背景图、配色和聊天布局预览。"
                                    FontSize="13" Foreground="{StaticResource SecondaryText}"
                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,14" />
@@ -267,12 +265,12 @@
 
                 <Grid x:Name="DetailsScroll" Visibility="Collapsed">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" MinHeight="150" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="150" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <Grid x:Name="SelectedSummary" Grid.Row="0" Margin="0,0,0,7">
@@ -281,7 +279,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center" MinWidth="0">
-                            <TextBlock x:Name="SelectedName" FontSize="20" FontWeight="SemiBold"
+                    <TextBlock x:Name="SelectedName" FontSize="30" Style="{StaticResource PageTitle}"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                             <TextBlock x:Name="SelectedId" FontSize="11" Foreground="{StaticResource SecondaryText}"
                                        Margin="0,2,0,0" />
@@ -298,25 +296,24 @@
                         </StackPanel>
                     </Grid>
 
-                    <Border Grid.Row="1" Margin="0,0,0,7" Padding="8,7"
-                            Background="{StaticResource SoftSurface}" BorderBrush="{StaticResource Line}"
-                            BorderThickness="1" CornerRadius="9">
+                    <Border Grid.Row="1" Margin="0,0,0,7" Padding="0"
+                            Background="Transparent" BorderThickness="0">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <WrapPanel Grid.Row="0" VerticalAlignment="Center">
-                                <TextBlock Text="页面" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="场景" FontSize="11" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <ComboBox x:Name="PreviewSceneBox" Width="84" SelectedIndex="0"
+                                <ComboBox x:Name="PreviewSceneBox" Width="96" SelectedIndex="0"
                                           SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="预览页面">
                                     <ComboBoxItem Content="首页" Tag="home" />
                                     <ComboBoxItem Content="对话" Tag="conversation" />
                                 </ComboBox>
-                                <TextBlock Text="外观" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="外观" FontSize="11" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="12,0,6,0" />
-                                <ComboBox x:Name="PreviewAppearanceBox" Width="104" Margin="0,0,10,0"
+                                <ComboBox x:Name="PreviewAppearanceBox" Width="112" Margin="0,0,10,0"
                                           SelectedIndex="0" SelectionChanged="PreviewOptions_SelectionChanged"
                                           AutomationProperties.Name="预览明暗">
                                     <ComboBoxItem Content="跟随皮肤" Tag="skin" />
@@ -364,7 +361,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="PreviewHeading" Text="预览" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PreviewHeading" Text="预览" FontSize="16" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
                         <TextBlock x:Name="PreviewStatus" Grid.Column="1" FontSize="11"
                                    Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center" Margin="10,0,8,0" Visibility="Visible"
@@ -378,7 +375,7 @@
                                 Click="PreviewPowerButton_Click" ToolTip="释放本地预览浏览器内存" />
                     </Grid>
 
-                    <Border Grid.Row="3" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="11"
+                    <Border Grid.Row="3" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
                             Background="{StaticResource PanelSurface}" ClipToBounds="True">
                         <Grid x:Name="PreviewViewport" MinHeight="150" ClipToBounds="True"
                               Background="{StaticResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
@@ -404,12 +401,10 @@
                         </Grid>
                     </Border>
 
-                    <Border x:Name="RuntimeControlsBorder" Grid.Row="4" Margin="0,7,0,0" Padding="8,7"
-                            Background="{StaticResource SoftSurface}" BorderBrush="{StaticResource Line}"
-                            BorderThickness="1" CornerRadius="9">
+                    <Border x:Name="RuntimeControlsBorder" Grid.Row="4" Margin="0,6,0,0" Padding="10,6"
+                            Background="{StaticResource SoftSurface}" BorderThickness="0" CornerRadius="12">
                         <Grid>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
@@ -430,48 +425,50 @@
                                         Style="{StaticResource DangerButton}" Padding="8,5"
                                         Click="RemoveRuntimeButton_Click" AutomationProperties.Name="恢复原生并断开连接" />
                             </WrapPanel>
-                            <Grid Grid.Row="1" Margin="0,6,0,0">
+                            <Grid Grid.Row="1" Margin="0,4,0,0">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Margin="0,0,14,0">
+                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
                                     <TextBlock Text="连接目标" FontSize="11" Foreground="{StaticResource SecondaryText}" />
                                     <TextBlock x:Name="RuntimeTargetText" Text="手动端口 · 9335" FontSize="12"
                                                FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
                                                ToolTip="手动端口 · 9335" />
                                 </StackPanel>
-                                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                <StackPanel Grid.Column="1" Margin="0,0,10,0">
                                     <TextBlock Text="当前连接" FontSize="11" Foreground="{StaticResource SecondaryText}" />
                                     <TextBlock x:Name="RuntimeConnectedTargetText" Text="未连接" FontSize="12"
                                                FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
                                                ToolTip="未连接" AutomationProperties.Name="当前连接的桌面应用实例" />
                                 </StackPanel>
-                                <Button x:Name="LocateConnectedWindowButton" Grid.Column="2" Content="定位已连接窗口"
+                                <Grid Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
+                                             Grid.Column="0" Fill="{StaticResource SecondaryText}"
+                                             VerticalAlignment="Center" />
+                                    <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="等待用户测试" FontSize="11"
+                                               FontWeight="SemiBold" Margin="7,0,8,0" VerticalAlignment="Center"
+                                               AutomationProperties.Name="桌面应用连接状态" />
+                                    <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
+                                               Text="等待用户点击连接并应用。" FontSize="11"
+                                               Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center" ToolTip="等待用户点击连接并应用。" />
+                                </Grid>
+                                <Button x:Name="LocateConnectedWindowButton" Grid.Column="3" Content="定位已连接窗口"
                                         Padding="8,4" MinHeight="30" VerticalAlignment="Center"
                                         Click="LocateConnectedWindowButton_Click" ToolTip="根据运行状态中的进程身份定位窗口。" />
-                            </Grid>
-                            <Grid Grid.Row="2" Margin="0,5,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="8" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
-                                         Fill="{StaticResource SecondaryText}" VerticalAlignment="Top" Margin="0,4,0,0" />
-                                <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="等待用户测试" FontSize="11"
-                                           FontWeight="SemiBold" Margin="7,0,8,0" VerticalAlignment="Top"
-                                           AutomationProperties.Name="桌面应用连接状态" />
-                                <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
-                                           Text="等待用户点击连接并应用。" FontSize="11"
-                                           Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
-                                           VerticalAlignment="Top" ToolTip="等待用户点击连接并应用。" />
                             </Grid>
                         </Grid>
                     </Border>
 
-                    <Grid Grid.Row="5" Margin="0,6,0,0">
+                    <Grid Grid.Row="5" Margin="0,3,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -490,7 +487,7 @@
                                            TextTrimming="CharacterEllipsis" ToolTip="背景图片像素尺寸；未提供背景图时显示“无背景图”" />
                             </StackPanel>
                         </Grid>
-                        <Grid x:Name="ColorSection" Grid.Row="1" Margin="0,4,0,0">
+                        <Grid x:Name="ColorSection" Grid.Row="1" Margin="0,3,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -498,17 +495,17 @@
                             <TextBlock Text="配色" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
                                        Margin="0,0,8,0" />
                             <ScrollViewer x:Name="ColorItemsScrollViewer" Grid.Column="1"
-                                          VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Auto"
-                                          VerticalAlignment="Center" MaxHeight="48" MinWidth="0"
+                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          VerticalAlignment="Top" MaxHeight="64" MinWidth="0"
                                           AutomationProperties.Name="皮肤配色">
                                 <ItemsControl x:Name="ColorItems">
                                     <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                        <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border Width="140" Height="38" Margin="0,0,6,0" Padding="6,4"
-                                                    CornerRadius="7" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                                            <Border Width="112" Height="34" Margin="0,0,6,5" Padding="5,3"
+                                                    CornerRadius="8" BorderBrush="{StaticResource Line}" BorderThickness="1"
                                                     Background="{StaticResource PanelSurface}" ToolTip="{Binding RawName}">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>

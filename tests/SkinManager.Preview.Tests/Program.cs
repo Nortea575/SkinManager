@@ -111,10 +111,13 @@ internal static class Program
         var marketLivePreviewImages = args.Contains("--market-live-preview-images", StringComparer.OrdinalIgnoreCase);
         var managerInstanceOnly = args.Contains("--manager-instance-only", StringComparer.OrdinalIgnoreCase);
         var managerInstancePostedOpen = args.Contains("--manager-instance-posted-open", StringComparer.OrdinalIgnoreCase);
+        var instanceReviewUi = args.Contains("--instance-review-ui", StringComparer.OrdinalIgnoreCase);
         var managerInstanceDelay = ReadManagerInstanceDelay(args);
         var motionOnly = args.Contains("--motion-only", StringComparer.OrdinalIgnoreCase);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
+        VerifyPackagedThemeFonts();
+        VerifyThemeTextContrast();
         application.Dispatcher.BeginInvoke(new Action(async () =>
         {
             try
@@ -126,6 +129,10 @@ internal static class Program
                 else if (marketUiOnly)
                 {
                     await RunMarketUiOnlyAsync();
+                }
+                else if (instanceReviewUi)
+                {
+                    await RunInstanceReviewUiAsync();
                 }
                 else if (reviewUi || reviewCapture)
                 {
@@ -167,8 +174,8 @@ internal static class Program
 
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 0, 0),
-            "更新比较读取公开软件版本 1.0.0");
+        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 0, 1),
+            "更新比较读取公开软件版本 1.0.1");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -178,11 +185,11 @@ internal static class Program
         store.Save(SkinPackageReader.ReadZipBytes(ayanamiBytes), replaceExisting: false);
         store.Save(SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")), replaceExisting: false);
 
-        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 0, 0));
+        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 0, 1));
         var updateCoordinator = new UpdateCoordinator(
             updateClient,
             Path.Combine(reviewRoot, "updates"),
-            new Version(1, 0, 0));
+            new Version(1, 0, 1));
         updateCoordinator.AutomaticCheckAndDownload = false;
         var fakeInstances = new FakeCodexInstanceService(
         [
@@ -204,7 +211,11 @@ internal static class Program
         {
             Width = 1240,
             Height = 840,
-            WindowStartupLocation = WindowStartupLocation.CenterScreen
+            WindowStartupLocation = captureScreenshots ? WindowStartupLocation.Manual : WindowStartupLocation.CenterScreen,
+            Left = captureScreenshots ? -2_000 : 0,
+            Top = captureScreenshots ? -2_000 : 0,
+            ShowActivated = !captureScreenshots,
+            ShowInTaskbar = !captureScreenshots
         };
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         window.Closed += (_, _) => closed.TrySetResult();
@@ -487,6 +498,7 @@ internal static class Program
         var browser = FindNamed<WebView2>(window, "PreviewBrowser");
         var list = FindNamed<ListBox>(window, "SkinList");
         await WaitUntilAsync(() => Task.FromResult(list.Items.Count >= 2), "离线审阅皮肤列表完成加载");
+        VerifyWindowUsesPackagedTypeface(window);
         list.SelectedItem = list.Items.Cast<object>().Single(row => GetRowId(row) == "ayanami");
         var renderer = GetWindowRenderer(window);
         await WaitUntilAsync(async () => browser.CoreWebView2 is not null && renderer.CurrentResolvedSkin is not null &&
@@ -503,6 +515,7 @@ internal static class Program
         window.Height = 640;
         window.UpdateLayout();
         await Task.Delay(190);
+        VerifyMinimumPaletteClientBounds(window);
         await SaveManagerWindowScreenshotAsync(window, browser, Path.Combine(screenshots, "管理器-最小窗口-960x640.png"));
 
         FindNamed<Button>(window, "EditSkinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -864,6 +877,33 @@ internal static class Program
         await VerifyManagerControlsAsync(testRoot, basePackage, ayanamiBytes, nativeBytes, sayaBytes, ayanami, saya, declaredDark);
     }
 
+    private static async Task RunInstanceReviewUiAsync()
+    {
+        var ordinary = CreateFakeInstance(7320, null, CodexInstanceKind.Normal, canConnect: false, "离线审阅普通实例");
+        var connectedDebug = CreateFakeInstance(7321, 9335, CodexInstanceKind.Debug, canConnect: true, "离线审阅当前调试实例");
+        var otherDebug = CreateFakeInstance(7322, 9336, CodexInstanceKind.Debug, canConnect: true, "离线审阅可选调试实例");
+        var unavailableDebug = CreateFakeInstance(7323, 9444, CodexInstanceKind.Debug, canConnect: false, "离线审阅端口未就绪实例");
+        var service = new FakeCodexInstanceService([ordinary, connectedDebug, otherDebug, unavailableDebug]);
+        var window = new InstancesWindow(service, connectedDebug.Identity, _ => false, _ => false)
+        {
+            Width = 920,
+            Height = 560,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            ShowActivated = true,
+            ShowInTaskbar = true,
+            WindowStyle = WindowStyle.SingleBorderWindow,
+            ResizeMode = ResizeMode.CanResizeWithGrip
+        };
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        window.Closed += (_, _) => closed.TrySetResult();
+        Application.Current.MainWindow = window;
+        window.Show();
+        await WaitUntilAsync(() => Task.FromResult(window.IsLoaded && window.Instances.Count == 4),
+            "实例离线审阅窗口加载四个fake实例");
+        Console.WriteLine("实例离线审阅窗口已打开：根窗口、无Owner、仅使用fake实例；可将窗口作为根Window进行鼠标和键盘交互。关闭窗口后程序会退出。");
+        await closed.Task;
+    }
+
     private static async Task VerifyInstanceManagementAsync(string screenshotDirectory)
     {
         var ordinary = CreateFakeInstance(7310, null, CodexInstanceKind.Normal, canConnect: false, "Codex 普通会话");
@@ -888,6 +928,20 @@ internal static class Program
                 "实例管理窗口淡入完成后再捕获客户区");
             await WaitUntilAsync(() => Task.FromResult(window.Instances.Count == 4), "fake 实例服务显示普通和调试 Codex 主实例");
             var list = FindNamed<ListView>(window, "InstanceList");
+            Check(list.View is GridView, "实例列表使用 GridView");
+            await WaitUntilAsync(() =>
+            {
+                window.UpdateLayout();
+                list.UpdateLayout();
+                return Task.FromResult(FindVisualChildren<Thumb>(list).Any(thumb =>
+                    thumb.Name == "PART_HeaderGripper" && thumb.IsVisible && thumb.ActualWidth >= 6));
+            }, "实例 GridView 表头生成可拖动的列宽把手");
+            var headerGripper = FindVisualChildren<Thumb>(list)
+                .First(thumb => thumb.Name == "PART_HeaderGripper" && thumb.IsVisible && thumb.ActualWidth >= 6);
+            Check(headerGripper.IsHitTestVisible && headerGripper.Cursor == Cursors.SizeWE,
+                "实例 GridView 列宽把手可命中并呈现水平拖动光标");
+
+            list.SelectedIndex = 0;
             var ordinaryRow = FindInstanceRow(list, ordinary.Identity);
             var connectedRow = FindInstanceRow(list, connectedDebug.Identity);
             var otherDebugRow = FindInstanceRow(list, otherDebug.Identity);
@@ -1692,8 +1746,8 @@ internal static class Program
         string screenshotDirectory)
     {
         var updatesDirectory = Path.Combine(testRoot, "updates-defaults");
-        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"));
-        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(2, 2, 0));
+        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"), new Version(1, 0, 2));
+        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(1, 0, 1));
         Check(coordinator.AutomaticCheckAndDownload, "自动检查和下载默认开启");
         coordinator.StartAutomatically();
         await WaitUntilAsync(() => Task.FromResult(coordinator.HasDownloadedUpdate), "启动时自动检查并下载可用更新");
@@ -1715,7 +1769,7 @@ internal static class Program
         Check(FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked == true &&
               installButton.Visibility == Visibility.Visible && installButton.IsVisible && installButton.IsEnabled &&
               releaseNotes.Text == updateClient.Release.Notes && notesScroll?.ScrollableHeight > 0 &&
-              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：2.3.0",
+              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.0.2",
             "500×520 更新窗限制长发布说明滚动，安装按钮可见可用且版本只显示一次");
         await SaveWindowScreenshotAsync(updateWindow, Path.Combine(screenshotDirectory, "版本与更新窗口.png"));
         FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked = false;
@@ -1725,7 +1779,7 @@ internal static class Program
         using (var reloadedPreferences = new UpdateCoordinator(
                    new FakeUpdateClient(Path.Combine(testRoot, "preference-reload")),
                    updatesDirectory,
-                   new Version(2, 2, 0)))
+                   new Version(1, 0, 1)))
         {
             Check(!reloadedPreferences.AutomaticCheckAndDownload, "自动检查偏好跨启动持久化");
         }
@@ -2331,29 +2385,97 @@ internal static class Program
                     Math.Abs(browser.Height - previewViewport.ActualHeight) < 1);
             }, "缩回最小窗口时预览浏览器重新匹配 viewport");
             var colorItemsScroll = FindNamed<ScrollViewer>(window, "ColorItemsScrollViewer");
-            var accentItem = colors.Items.Cast<object>().Single(item =>
-                item.GetType().GetProperty("RawName")?.GetValue(item) as string == "color.accent");
-            var accentCard = FindVisualChildren<Border>(colors).Single(card =>
-                card.Width == 140 && ReferenceEquals(card.DataContext, accentItem));
+            var colorItems = colors.Items.Cast<object>().ToArray();
             await WaitUntilAsync(() =>
             {
                 window.UpdateLayout();
                 colorItemsScroll.UpdateLayout();
-                return Task.FromResult(colorItemsScroll.ViewportWidth > 0 && colorItemsScroll.ScrollableWidth > 0);
-            }, "最小窗口配色区域获得有限宽度并启用横向滚动");
-            Check(colorItemsScroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto &&
-                  colorItemsScroll.ScrollableWidth > 0,
-                $"最小窗配色栏可横向浏览全部色卡：viewport={colorItemsScroll.ViewportWidth:0.#}, scrollable={colorItemsScroll.ScrollableWidth:0.#}");
-            colorItemsScroll.ScrollToHorizontalOffset(colorItemsScroll.ScrollableWidth);
-            await WaitUntilAsync(() =>
+                return Task.FromResult(colorItems.Length > 0 && colorItemsScroll.ViewportWidth > 0 &&
+                    colorItemsScroll.ViewportHeight > 0 && colorItemsScroll.ScrollableWidth <= 1);
+            }, "最小窗口配色区域按宽度换行并保留可用纵向视口");
+            Check(colorItemsScroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled &&
+                  colorItemsScroll.ScrollableWidth <= 1,
+                $"最小窗配色区域无横向溢出：viewport={colorItemsScroll.ViewportWidth:0.#}×{colorItemsScroll.ViewportHeight:0.#}, scrollableWidth={colorItemsScroll.ScrollableWidth:0.#}");
+            var windowClientBounds = GetWindowClientBounds(window);
+            var paletteViewportBounds = GetWindowBounds(window, colorItemsScroll);
+            Check(IsWithinBounds(paletteViewportBounds, windowClientBounds),
+                $"配色视口完整位于窗口客户区内：viewBottom={paletteViewportBounds.Bottom:0.#}, clientBottom={windowClientBounds.Bottom:0.#}");
+            var colorSection = FindNamed<Grid>(window, "ColorSection");
+            var colorHeading = FindVisualChildren<TextBlock>(colorSection).Single(text => text.Text == "配色");
+            Check(IsWithinBounds(GetWindowBounds(window, colorHeading), windowClientBounds),
+                "配色标题完整位于窗口客户区内");
+
+            foreach (var item in colorItems)
             {
-                window.UpdateLayout();
-                colorItemsScroll.UpdateLayout();
-                var accentBounds = accentCard.TransformToAncestor(colorItemsScroll)
-                    .TransformBounds(new Rect(new Point(0, 0), accentCard.RenderSize));
-                return Task.FromResult(accentCard.IsVisible && accentBounds.Left >= -1 &&
-                    accentBounds.Right <= colorItemsScroll.ViewportWidth + 1);
-            }, "横向滚到末尾后最后的强调色卡完整可见");
+                var container = colors.ItemContainerGenerator.ContainerFromItem(item)
+                    ?? throw new InvalidDataException("配色项目没有生成可访问的项目容器。");
+                var card = FindVisualChildren<Border>(container)
+                    .FirstOrDefault(candidate => ReferenceEquals(candidate.DataContext, item) && candidate.ActualWidth > 60)
+                    ?? throw new InvalidDataException("配色项目没有可见的卡片容器。");
+                await WaitUntilAsync(() =>
+                {
+                    window.UpdateLayout();
+                    colorItemsScroll.UpdateLayout();
+                    var bounds = card.TransformToAncestor(colorItemsScroll)
+                        .TransformBounds(new Rect(new Point(0, 0), card.RenderSize));
+                    var windowBounds = GetWindowBounds(window, card);
+                    var delta = bounds.Top < 0
+                        ? bounds.Top
+                        : bounds.Bottom > colorItemsScroll.ViewportHeight
+                            ? bounds.Bottom - colorItemsScroll.ViewportHeight
+                            : 0;
+                    if (Math.Abs(delta) > 0.5)
+                    {
+                        colorItemsScroll.ScrollToVerticalOffset(Math.Clamp(
+                            colorItemsScroll.VerticalOffset + delta,
+                            0,
+                            colorItemsScroll.ScrollableHeight));
+                    }
+
+                    return Task.FromResult(card.IsVisible && bounds.Left >= -1 &&
+                        bounds.Right <= colorItemsScroll.ViewportWidth + 1 &&
+                        bounds.Top >= -1 && bounds.Bottom <= colorItemsScroll.ViewportHeight + 1 &&
+                        IsWithinBounds(windowBounds, windowClientBounds));
+                }, $"配色项“{item.GetType().GetProperty("RawName")?.GetValue(item)}”可在自身区域内访问");
+            }
+
+            var verticalPaletteScrollBar = FindVisualChildren<ScrollBar>(colorItemsScroll)
+                .FirstOrDefault(scrollBar => scrollBar.Orientation == Orientation.Vertical &&
+                    scrollBar.IsVisible && scrollBar.ActualWidth > 0);
+            if (colorItemsScroll.ScrollableHeight > 1)
+            {
+                Check(verticalPaletteScrollBar is { IsHitTestVisible: true, IsEnabled: true } &&
+                      IsWithinBounds(GetWindowBounds(window, verticalPaletteScrollBar), windowClientBounds),
+                    "配色纵向滚动条完整位于窗口客户区内且可命中");
+            }
+            else if (verticalPaletteScrollBar is not null)
+            {
+                Check(IsWithinBounds(GetWindowBounds(window, verticalPaletteScrollBar), windowClientBounds),
+                    "配色滚动条（若显示）完整位于窗口客户区内");
+            }
+
+            colorItemsScroll.ScrollToVerticalOffset(0);
+            var details = FindNamed<Grid>(window, "DetailsScroll");
+            Check(FindHorizontalOverflowElement(details) is null,
+                "最小窗口右侧详情无页面级横向溢出");
+            var applyButton = FindNamed<Button>(window, "ApplyRuntimeButton");
+            var restoreButton = FindNamed<Button>(window, "RemoveRuntimeButton");
+            var controlsRemainVisible = new[] { applyButton, restoreButton }.All(button =>
+            {
+                if (!button.IsVisible || button.ActualWidth <= 0 || button.ActualHeight <= 0)
+                {
+                    return false;
+                }
+
+                var bounds = button.TransformToAncestor(details)
+                    .TransformBounds(new Rect(new Point(0, 0), button.RenderSize));
+                return bounds.Left >= -1 && bounds.Right <= details.ActualWidth + 1 &&
+                       bounds.Top >= -1 && bounds.Bottom <= details.ActualHeight + 1 &&
+                       IsWithinBounds(GetWindowBounds(window, button), windowClientBounds);
+            });
+            Check(controlsRemainVisible && IsWithinBounds(GetWindowBounds(window, previewViewport), windowClientBounds) &&
+                  previewViewport.ActualWidth > 400 && previewViewport.ActualHeight >= 150,
+                "最小窗口连接/恢复入口完整可见，预览视口保持可操作尺寸");
             var originalButton = FindNamed<Button>(window, "OriginalButton");
             originalButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitUntilAsync(() => Task.FromResult(FindNamed<Grid>(window, "OriginalImageLayer").Visibility == Visibility.Visible),
@@ -2443,6 +2565,32 @@ internal static class Program
             window.UpdateLayout();
             await Task.Delay(200);
             await SaveManagerWindowScreenshotAsync(window, browser, Path.Combine(screenshotDirectory, "管理器-最小窗口-960x640.png"));
+            var minimumViewport = new Size(previewViewport.ActualWidth, previewViewport.ActualHeight);
+            window.Width = 1600;
+            window.Height = 1000;
+            window.UpdateLayout();
+            await WaitUntilAsync(() =>
+            {
+                window.UpdateLayout();
+                return Task.FromResult(window.ActualWidth >= 1599 && window.ActualHeight >= 999 &&
+                    previewViewport.ActualWidth > minimumViewport.Width + 100 &&
+                    previewViewport.ActualHeight > minimumViewport.Height + 100 &&
+                    Math.Abs(browser.Width - previewViewport.ActualWidth) < 1 &&
+                    Math.Abs(browser.Height - previewViewport.ActualHeight) < 1);
+            }, "1600×1000 大窗口无最大尺寸锁定，预览视口与浏览器同步扩展");
+            Check(window.MaxWidth >= 1600 && window.MaxHeight >= 1000,
+                $"主窗最大尺寸不会限制 1600×1000：Max={window.MaxWidth:0.#}×{window.MaxHeight:0.#}");
+            await SaveManagerWindowScreenshotAsync(window, browser,
+                Path.Combine(screenshotDirectory, "管理器-大窗口-1600x1000.png"));
+            window.Width = 960;
+            window.Height = 640;
+            window.UpdateLayout();
+            await WaitUntilAsync(() =>
+            {
+                window.UpdateLayout();
+                return Task.FromResult(Math.Abs(browser.Width - previewViewport.ActualWidth) < 1 &&
+                    Math.Abs(browser.Height - previewViewport.ActualHeight) < 1);
+            }, "大窗口验收后恢复最小尺寸并重新匹配预览视口");
             await VerifyEditorWorkflowAsync(window, store, testRoot, screenshotDirectory);
             await VerifyPreviewReleaseAndReopenAsync(window);
         }
@@ -3643,14 +3791,213 @@ internal static class Program
             dictionary.Add(new XAttribute(attribute));
         }
 
-        foreach (var child in resources.Elements())
+        var declaredDictionary = resources.Elements().SingleOrDefault(element => element.Name == presentation + "ResourceDictionary");
+        if (declaredDictionary is not null && resources.Elements().Count() == 1)
         {
-            dictionary.Add(new XElement(child));
+            var declaredSource = declaredDictionary.Attribute("Source")?.Value;
+            if (declaredSource is not null)
+            {
+                var mergedDictionaries = new XElement(presentation + "ResourceDictionary.MergedDictionaries");
+                mergedDictionaries.Add(new XElement(presentation + "ResourceDictionary", new XAttribute("Source", declaredSource)));
+                dictionary.Add(mergedDictionaries);
+            }
+            else
+            {
+                foreach (var child in declaredDictionary.Elements())
+                {
+                    dictionary.Add(new XElement(child));
+                }
+            }
+        }
+        else
+        {
+            foreach (var child in resources.Elements())
+            {
+                dictionary.Add(new XElement(child));
+            }
+        }
+
+        var appDirectory = Path.GetDirectoryName(appPath)
+            ?? throw new InvalidDataException("无法定位 App.xaml 目录。");
+        var assemblyName = typeof(MainWindow).Assembly.GetName().Name
+            ?? throw new InvalidDataException("无法定位桌面程序集名称。");
+        foreach (var sourceDictionary in dictionary.DescendantsAndSelf()
+                     .Where(element => element.Name == presentation + "ResourceDictionary" &&
+                                       element.Attribute("Source") is not null))
+        {
+            var source = sourceDictionary.Attribute("Source")!.Value;
+            sourceDictionary.SetAttributeValue("Source", ResolveApplicationResourceUri(source, appDirectory, assemblyName));
         }
 
         return XamlReader.Parse(dictionary.ToString(SaveOptions.DisableFormatting)) as ResourceDictionary
             ?? throw new InvalidDataException("无法加载离线预览资源字典。");
     }
+
+    private static string ResolveApplicationResourceUri(string source, string appDirectory, string assemblyName)
+    {
+        if (Uri.TryCreate(source, UriKind.Absolute, out var absolute) &&
+            string.Equals(absolute.Scheme, "pack", StringComparison.OrdinalIgnoreCase))
+        {
+            return source;
+        }
+
+        var componentMarker = source.IndexOf(";component/", StringComparison.OrdinalIgnoreCase);
+        if (componentMarker >= 0)
+        {
+            source = source[(componentMarker + ";component/".Length)..];
+        }
+
+        source = source.TrimStart('/', '\\');
+        var resolvedPath = Path.GetFullPath(Path.Combine(appDirectory, source.Replace('/', Path.DirectorySeparatorChar)));
+        var relativePath = Path.GetRelativePath(appDirectory, resolvedPath);
+        if (Path.IsPathRooted(relativePath) || relativePath == ".." ||
+            relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"App.xaml 的资源字典路径超出桌面项目目录：{source}");
+        }
+
+        return $"pack://application:,,,/{assemblyName};component/{relativePath.Replace('\\', '/')}";
+    }
+
+    private static void VerifyPackagedThemeFonts()
+    {
+        var assemblyName = typeof(MainWindow).Assembly.GetName().Name
+            ?? throw new InvalidDataException("无法定位桌面程序集名称。");
+        var fontLocation = new Uri($"pack://application:,,,/{assemblyName};component/Fonts/", UriKind.Absolute);
+        var families = Fonts.GetFontFamilies(fontLocation).ToArray();
+        var familyNames = families.SelectMany(family => family.FamilyNames.Values).ToArray();
+        Check(familyNames.Contains("Inter", StringComparer.OrdinalIgnoreCase),
+            "离线桌面程序集真实解析到打包的 Inter 字体族");
+        Check(familyNames.Contains("Space Grotesk", StringComparer.OrdinalIgnoreCase),
+            "离线桌面程序集真实解析到打包的 Space Grotesk 字体族");
+
+        var embeddedGlyphs = families
+            .SelectMany(family => family.GetTypefaces())
+            .Select(typeface => typeface.TryGetGlyphTypeface(out var glyphTypeface) ? glyphTypeface : null)
+            .Where(glyphTypeface => glyphTypeface is not null &&
+                                    glyphTypeface.FontUri?.ToString().Contains(";component/Fonts/", StringComparison.OrdinalIgnoreCase) == true &&
+                                    glyphTypeface.CharacterToGlyphMap.TryGetValue('A', out var glyphIndex) && glyphIndex != 0)
+            .ToArray();
+        Check(embeddedGlyphs.Length > 0, "嵌入字体的真实 GlyphTypeface 可绘制 Latin A 字形");
+    }
+
+    private static void VerifyWindowUsesPackagedTypeface(Window window)
+    {
+        var hasEmbeddedTypeface = window.FontFamily.GetTypefaces().Any(typeface =>
+            typeface.TryGetGlyphTypeface(out var glyphTypeface) &&
+            glyphTypeface.FontUri?.ToString().Contains(";component/Fonts/", StringComparison.OrdinalIgnoreCase) == true &&
+            glyphTypeface.CharacterToGlyphMap.TryGetValue('A', out var glyphIndex) && glyphIndex != 0);
+        Check(hasEmbeddedTypeface, $"{window.Title} 正文实际命中程序集内字体并可绘制 Latin A");
+    }
+
+    private static void VerifyThemeTextContrast()
+    {
+        static string ColorValue(string key)
+        {
+            if (Application.Current.Resources[key] is not SolidColorBrush brush || brush.Color.A != byte.MaxValue)
+            {
+                throw new InvalidDataException($"主题资源 {key} 不是不透明 SolidColorBrush。");
+            }
+
+            return $"#{brush.Color.R:X2}{brush.Color.G:X2}{brush.Color.B:X2}";
+        }
+
+        var sampleSurfaces = new[] { "WindowSurface", "PanelSurface", "RaisedSurface" };
+        foreach (var textKey in new[] { "PrimaryText", "SecondaryText" })
+        {
+            foreach (var surfaceKey in sampleSurfaces)
+            {
+                var ratio = ContrastRatio(ColorValue(textKey), ColorValue(surfaceKey));
+                Check(ratio >= 4.5, $"主题 {textKey} 在 {surfaceKey} 上的实测对比度为 {ratio:0.00}:1（≥4.5:1）");
+            }
+        }
+
+        var actionRatio = ContrastRatio(ColorValue("AccentForeground"), ColorValue("Accent"));
+        Check(actionRatio >= 4.5, $"主题强调操作文字在强调色上的实测对比度为 {actionRatio:0.00}:1（≥4.5:1）");
+    }
+
+    private static FrameworkElement? FindHorizontalOverflowElement(FrameworkElement viewport)
+    {
+        foreach (var element in FindVisualChildren<FrameworkElement>(viewport))
+        {
+            if (!element.IsVisible || element.ActualWidth <= 0)
+            {
+                continue;
+            }
+
+            var bounds = element.TransformToAncestor(viewport)
+                .TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
+            if (bounds.Left < -1 || bounds.Right > viewport.ActualWidth + 1)
+            {
+                return element;
+            }
+        }
+
+        return null;
+    }
+
+    private static Rect GetWindowClientBounds(Window window)
+    {
+        if (window.Content is not FrameworkElement content)
+        {
+            throw new InvalidDataException("窗口没有可测量的客户区内容。");
+        }
+
+        var contentBounds = content.TransformToAncestor(window)
+            .TransformBounds(new Rect(new Point(0, 0), content.RenderSize));
+        var margin = content.Margin;
+        return new Rect(
+            contentBounds.Left - margin.Left,
+            contentBounds.Top - margin.Top,
+            content.ActualWidth + margin.Left + margin.Right,
+            content.ActualHeight + margin.Top + margin.Bottom);
+    }
+
+    private static void VerifyMinimumPaletteClientBounds(Window window)
+    {
+        var clientBounds = GetWindowClientBounds(window);
+        var paletteViewport = FindNamed<ScrollViewer>(window, "ColorItemsScrollViewer");
+        var paletteHeading = FindVisualChildren<TextBlock>(FindNamed<Grid>(window, "ColorSection"))
+            .Single(text => text.Text == "配色");
+        var viewportBounds = GetWindowBounds(window, paletteViewport);
+        var headingBounds = GetWindowBounds(window, paletteHeading);
+        Check(paletteViewport.ViewportWidth > 0 && paletteViewport.ViewportHeight > 0 &&
+              paletteViewport.ScrollableWidth <= 1 &&
+              IsWithinBounds(viewportBounds, clientBounds) && IsWithinBounds(headingBounds, clientBounds),
+            $"真实窗口最小尺寸下配色视口和标题处于客户区内：viewportBottom={viewportBounds.Bottom:0.#}, headingBottom={headingBounds.Bottom:0.#}, clientBottom={clientBounds.Bottom:0.#}");
+
+        var scrollBar = FindVisualChildren<ScrollBar>(paletteViewport)
+            .FirstOrDefault(candidate => candidate.Orientation == Orientation.Vertical &&
+                candidate.IsVisible && candidate.ActualWidth > 0);
+        Check(paletteViewport.ScrollableHeight <= 1
+                ? scrollBar is null || IsWithinBounds(GetWindowBounds(window, scrollBar), clientBounds)
+                : scrollBar is { IsHitTestVisible: true, IsEnabled: true } &&
+                  IsWithinBounds(GetWindowBounds(window, scrollBar), clientBounds),
+            "真实窗口最小尺寸下配色纵向滚动条可命中且完整位于客户区内");
+
+        var details = FindNamed<Grid>(window, "DetailsScroll");
+        var preview = FindNamed<Grid>(window, "PreviewViewport");
+        var actions = new[]
+        {
+            FindNamed<Button>(window, "ApplyRuntimeButton"),
+            FindNamed<Button>(window, "RemoveRuntimeButton")
+        };
+        Check(IsWithinBounds(GetWindowBounds(window, preview), clientBounds) &&
+              actions.All(button => button.IsVisible && button.IsEnabled &&
+                  IsWithinBounds(GetWindowBounds(window, button), clientBounds) &&
+                  IsWithinBounds(GetWindowBounds(window, button), GetWindowBounds(window, details))),
+            "真实窗口最小尺寸下预览视口及连接/恢复操作完整可见");
+    }
+
+    private static Rect GetWindowBounds(Window window, FrameworkElement element) =>
+        element.TransformToAncestor(window)
+            .TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
+
+    private static bool IsWithinBounds(Rect bounds, Rect viewport, double tolerance = 1) =>
+        bounds.Left >= viewport.Left - tolerance &&
+        bounds.Top >= viewport.Top - tolerance &&
+        bounds.Right <= viewport.Right + tolerance &&
+        bounds.Bottom <= viewport.Bottom + tolerance;
 
     private static bool GetPreviewActivityState(MainWindow window) =>
         typeof(MainWindow).GetField("_previewWasActive", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(window) is true;

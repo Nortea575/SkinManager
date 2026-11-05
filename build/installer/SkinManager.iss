@@ -1,4 +1,4 @@
-#define ProductVersion "1.0.0"
+#define ProductVersion "1.0.1"
 
 [Setup]
 AppId={{6FBD8E7A-8A61-4DB8-BD4A-4F2E43110B67}
@@ -6,12 +6,12 @@ AppName=SkinManager
 AppVersion={#ProductVersion}
 AppVerName=SkinManager {#ProductVersion}
 AppPublisher=SkinManager
-VersionInfoVersion=1.0.0.0
-VersionInfoProductVersion=1.0.0
+VersionInfoVersion=1.0.1.0
+VersionInfoProductVersion=1.0.1
 VersionInfoDescription=SkinManager Setup
 VersionInfoProductName=SkinManager
 VersionInfoCompany=SkinManager
-VersionInfoOriginalFileName=SkinManager-Setup-1.0.0.exe
+VersionInfoOriginalFileName=SkinManager-Setup-1.0.1.exe
 DefaultDirName={localappdata}\Programs\SkinManager
 DefaultGroupName=SkinManager
 DisableProgramGroupPage=yes
@@ -39,6 +39,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "..\..\artifacts\publish\installer-stage\SkinManager.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\artifacts\publish\installer-stage\SkinManager.Agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\artifacts\publish\installer-stage\ThirdPartyNotices.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
 Filename: "{app}\SkinManager.exe"; Flags: nowait; Check: IsSkinManagerUpdate

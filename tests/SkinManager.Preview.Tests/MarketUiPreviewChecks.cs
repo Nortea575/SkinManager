@@ -52,7 +52,12 @@ internal static class MarketUiPreviewChecks
             skinMarketClientFactory: () => new SkinMarketClient(new FixtureHandler(source)))
         {
             Width = 960,
-            Height = 640
+            Height = 640,
+            Left = -2_000,
+            Top = -2_000,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            ShowActivated = false,
+            ShowInTaskbar = false
         };
 
         SkinMarketWindow? marketWindow = null;

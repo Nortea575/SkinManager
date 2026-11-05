@@ -2124,9 +2124,9 @@ public partial class MainWindow : Window
         }
 
         var targetColor = selected
-            ? GetResourceColor("SelectedSurface", Color.FromRgb(233, 239, 243))
+            ? GetResourceColor("SelectedSurface", Color.FromRgb(63, 72, 22))
             : item.IsMouseOver
-                ? GetResourceColor("HoverSurface", Color.FromRgb(240, 243, 245))
+                ? GetResourceColor("HoverSurface", Color.FromRgb(36, 38, 40))
                 : Colors.Transparent;
         AnimateBrushColor(surface, targetColor, selected ? 150 : 130, animate);
     }
