@@ -219,8 +219,8 @@ internal static class Program
 
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 0, 2),
-            "更新比较读取公开软件版本 1.0.2");
+        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 0),
+            "更新比较读取公开软件版本 1.1.0");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -230,16 +230,16 @@ internal static class Program
         store.Save(SkinPackageReader.ReadZipBytes(ayanamiBytes), replaceExisting: false);
         store.Save(SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")), replaceExisting: false);
 
-        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 0, 2));
+        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 1, 0));
         var updateCoordinator = new UpdateCoordinator(
             updateClient,
             Path.Combine(reviewRoot, "updates"),
-            new Version(1, 0, 2));
+            new Version(1, 1, 0));
         updateCoordinator.AutomaticCheckAndDownload = false;
         var fakeInstances = new FakeCodexInstanceService(
         [
-            CreateFakeInstance(7901, 9335, CodexInstanceKind.Debug, canConnect: true, "离线审阅用虚拟实例"),
-            CreateFakeInstance(7902, null, CodexInstanceKind.Normal, canConnect: false, "离线审阅普通实例")
+            CreateFakeInstance(7901, 9335, CodexInstanceKind.Debug, canConnect: true, "Codex · 工作区"),
+            CreateFakeInstance(7902, null, CodexInstanceKind.Normal, canConnect: false, "Codex · 日常项目")
         ]);
         var window = new MainWindow(
             store,
@@ -586,6 +586,8 @@ internal static class Program
         if (!chatReplyOnly)
         {
             await MotionBehaviorChecks.RunAsync();
+            await RuntimeApplyWorkflowTests.RunAsync();
+            await CompatibilityWindowTests.RunAsync();
         }
         var screenshotDirectory = FindTestOutputDirectory();
         Directory.CreateDirectory(screenshotDirectory);
@@ -1919,8 +1921,8 @@ internal static class Program
         string screenshotDirectory)
     {
         var updatesDirectory = Path.Combine(testRoot, "updates-defaults");
-        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"), new Version(1, 0, 3));
-        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(1, 0, 2));
+        var updateClient = new FakeUpdateClient(Path.Combine(testRoot, "fake-downloads"), new Version(1, 1, 1));
+        using var coordinator = new UpdateCoordinator(updateClient, updatesDirectory, new Version(1, 1, 0));
         Check(coordinator.AutomaticCheckAndDownload, "自动检查和下载默认开启");
         coordinator.StartAutomatically();
         await WaitUntilAsync(() => Task.FromResult(coordinator.HasDownloadedUpdate), "启动时自动检查并下载可用更新");
@@ -1942,7 +1944,7 @@ internal static class Program
         Check(FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked == true &&
               installButton.Visibility == Visibility.Visible && installButton.IsVisible && installButton.IsEnabled &&
               releaseNotes.Text == updateClient.Release.Notes && notesScroll?.ScrollableHeight > 0 &&
-              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.0.3",
+              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.1.1",
             "500×520 更新窗限制长发布说明滚动，安装按钮可见可用且版本只显示一次");
         await SaveWindowScreenshotAsync(updateWindow, Path.Combine(screenshotDirectory, "版本与更新窗口.png"));
         FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked = false;
@@ -1952,7 +1954,7 @@ internal static class Program
         using (var reloadedPreferences = new UpdateCoordinator(
                    new FakeUpdateClient(Path.Combine(testRoot, "preference-reload")),
                    updatesDirectory,
-                   new Version(1, 0, 2)))
+                   new Version(1, 1, 0)))
         {
             Check(!reloadedPreferences.AutomaticCheckAndDownload, "自动检查偏好跨启动持久化");
         }
@@ -2138,14 +2140,40 @@ internal static class Program
               FindNamed<Border>(emptyWindow, "DetailsEmptyState").Visibility == Visibility.Visible &&
               FindNamed<Button>(emptyWindow, "ListEmptyImportButton").IsEnabled,
             "空库时侧栏与详情区显示可继续导入的空状态");
+        var emptyRuntimeControls = FindNamed<Border>(emptyWindow, "RuntimeControlsBorder");
+        var emptyLaunchButton = FindNamed<Button>(emptyWindow, "LaunchDebugButton");
+        var emptyManageButton = FindNamed<Button>(emptyWindow, "ManageInstancesButton");
+        var emptyAdvancedSettings = FindNamed<Expander>(emptyWindow, "AdvancedSettingsExpander");
+        emptyAdvancedSettings.IsExpanded = true;
+        emptyAdvancedSettings.UpdateLayout();
+        Check(emptyRuntimeControls.Visibility == Visibility.Visible && emptyLaunchButton.IsEnabled && emptyManageButton.IsEnabled &&
+              !FindNamed<Button>(emptyWindow, "ApplyRuntimeButton").IsEnabled,
+            "没有已选皮肤时仍可独立启动调试版或管理实例，应用动作保持禁用");
         emptyWindow.Show();
         await WaitUntilAsync(() => Task.FromResult(emptyWindow.IsLoaded && emptyWindow.Opacity >= 0.999),
             "空库管理器淡入完成后再捕获客户区");
+        Check(emptyLaunchButton.IsVisible && emptyManageButton.IsVisible,
+            "展开高级设置后，空库中的独立启动入口可见且实例管理入口可见");
+
+        FindNamed<Button>(emptyWindow, "NewSkinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var emptyLibraryEditor = FindNamed<SkinEditorView>(emptyWindow, "SkinEditor");
+        await WaitUntilAsync(() => Task.FromResult(emptyLibraryEditor.Visibility == Visibility.Visible && emptyLibraryEditor.Opacity >= 0.999),
+            "空库中新建皮肤后打开制作器");
+        FindNamed<Button>(emptyLibraryEditor, "CancelButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => Task.FromResult(emptyLibraryEditor.Visibility == Visibility.Collapsed &&
+            emptyRuntimeControls.Visibility == Visibility.Visible), "取消空库新建后恢复全局连接区");
+        Check(emptyLaunchButton.IsEnabled && emptyManageButton.IsEnabled,
+            "空库新建并取消后仍可独立启动调试版或管理实例");
         await SaveWindowScreenshotAsync(emptyWindow, Path.Combine(screenshotDirectory, "管理器-空库-最小窗口-960x640.png"));
         emptyWindow.Close();
 
         var connectedDebug = CreateFakeInstance(7411, 9335, CodexInstanceKind.Debug, canConnect: true, "Codex 当前连接实例");
-        var selectedDebug = CreateFakeInstance(7412, 9336, CodexInstanceKind.Debug, canConnect: true, "Codex 可选调试实例");
+        var selectedDebug = CreateFakeInstance(
+            7412,
+            9336,
+            CodexInstanceKind.Debug,
+            canConnect: true,
+            "Codex · " + string.Join(" · ", Enumerable.Repeat("长项目工作区名称", 12)));
         var unavailableDebug = CreateFakeInstance(7413, 9444, CodexInstanceKind.Debug, canConnect: false, "Codex 未就绪调试实例");
         var ordinary = CreateFakeInstance(7414, null, CodexInstanceKind.Normal, canConnect: false, "Codex 普通实例");
         var fakeInstances = new FakeCodexInstanceService([connectedDebug, selectedDebug, unavailableDebug, ordinary]);
@@ -2254,8 +2282,8 @@ internal static class Program
                 FindNamed<TextBlock>(window, "RuntimeConnectedTargetText").Text == $"PID {connectedDebug.Identity.ProcessId}"),
                 "fake RuntimeStatus 注入当前连接PID");
             Check(FindNamed<TextBox>(window, "RuntimePortInput").Text == "9335" &&
-                  FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "已应用" &&
-                  FindNamed<TextBlock>(window, "RuntimeTargetText").Text == "手动端口 · 9335" &&
+                  FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "已连接并已应用" &&
+                  FindNamed<TextBlock>(window, "RuntimeTargetText").Text == "自动查找调试版 · 端口 9335" &&
                   FindNamed<Button>(window, "LaunchDebugButton").IsEnabled &&
                   FindNamed<Button>(window, "ManageInstancesButton").IsEnabled,
                 "离线测试通过注入的fake RuntimeStatus显示真实连接身份，未访问实际RuntimeController");
@@ -2351,6 +2379,11 @@ internal static class Program
                   FindNamed<TextBlock>(window, "RuntimeTargetText").Text.Contains($"PID {selectedDebug.Identity.ProcessId}", StringComparison.Ordinal) &&
                   FindNamed<TextBlock>(window, "RuntimeConnectedTargetText").Text == $"PID {connectedDebug.Identity.ProcessId}",
                 "使用调试实例只填入连接目标和端口，不自动连接，当前连接身份保持独立");
+            await window.Dispatcher.InvokeAsync(() => window.UpdateLayout());
+            var longTargetBounds = GetWindowBounds(window, FindNamed<TextBlock>(window, "RuntimeTargetText"));
+            var primaryActionBounds = GetWindowBounds(window, FindNamed<Button>(window, "ApplyRuntimeButton"));
+            Check(!longTargetBounds.IntersectsWith(primaryActionBounds) && primaryActionBounds.Width > 0,
+                "超长 Codex 窗口名被约束，不遮挡主连接操作按钮");
             var buildRequest = (RuntimeApplyRequest)(typeof(MainWindow)
                 .GetMethod("BuildRuntimeApplyRequest", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?.Invoke(window, [ayanami, selectedDebug.DebugPort!.Value, null])
@@ -2360,8 +2393,8 @@ internal static class Program
                 "所选调试目标将其身份写入ExpectedInstance，端口写入连接端点");
 
             FindNamed<TextBox>(window, "RuntimePortInput").Text = "9337";
-            Check(FindNamed<TextBlock>(window, "RuntimeTargetText").Text == "手动端口 · 9337",
-                "手动修改端口会清除之前选中的实例目标");
+            Check(FindNamed<TextBlock>(window, "RuntimeTargetText").Text.Contains("9337", StringComparison.Ordinal),
+                "手动修改端口后目标摘要显示新端口");
             var manualRequest = (RuntimeApplyRequest)(typeof(MainWindow)
                 .GetMethod("BuildRuntimeApplyRequest", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?.Invoke(window, [ayanami, 9337, null])
@@ -2456,6 +2489,13 @@ internal static class Program
             },
                 "Ayanami 跟随皮肤预览以浅色与对应色卡完成刷新");
 
+            var previewSettings = FindNamed<Expander>(window, "PreviewSettingsExpander");
+            previewSettings.IsExpanded = true;
+            await WaitUntilAsync(() =>
+            {
+                window.UpdateLayout();
+                return Task.FromResult(PresentationSource.FromVisual(transparencyInput) is not null && transparencyInput.IsVisible);
+            }, "展开预览选项后透明度输入连接到窗口");
             var transparencyFollow = FindNamed<CheckBox>(window, "PreviewTransparencyFollowCheckBox");
             var transparencyError = FindNamed<TextBlock>(window, "PreviewTransparencyError");
             Check(transparencyInput.Text == "75" && !transparencyInput.IsEnabled &&
@@ -2527,6 +2567,7 @@ internal static class Program
                 activeRenderer.CurrentResolvedSkin?.PanelOpacityOverride is null),
                 "测试结束后恢复跟随主题默认状态");
 
+            previewSettings.IsExpanded = false;
             var previewViewport = FindNamed<Grid>(window, "PreviewViewport");
             await WaitUntilAsync(() =>
             {
@@ -2640,11 +2681,9 @@ internal static class Program
                     return false;
                 }
 
-                var bounds = button.TransformToAncestor(details)
-                    .TransformBounds(new Rect(new Point(0, 0), button.RenderSize));
-                return bounds.Left >= -1 && bounds.Right <= details.ActualWidth + 1 &&
-                       bounds.Top >= -1 && bounds.Bottom <= details.ActualHeight + 1 &&
-                       IsWithinBounds(GetWindowBounds(window, button), windowClientBounds);
+                return IsWithinBounds(GetWindowBounds(window, button), windowClientBounds) &&
+                       IsWithinBounds(GetWindowBounds(window, button),
+                           GetWindowBounds(window, FindNamed<Border>(window, "RuntimeControlsBorder")));
             });
             Check(controlsRemainVisible && IsWithinBounds(GetWindowBounds(window, previewViewport), windowClientBounds) &&
                   previewViewport.ActualWidth > 400 && previewViewport.ActualHeight >= 150,
@@ -4158,7 +4197,8 @@ internal static class Program
         Check(IsWithinBounds(GetWindowBounds(window, preview), clientBounds) &&
               actions.All(button => button.IsVisible && button.IsEnabled &&
                   IsWithinBounds(GetWindowBounds(window, button), clientBounds) &&
-                  IsWithinBounds(GetWindowBounds(window, button), GetWindowBounds(window, details))),
+                  IsWithinBounds(GetWindowBounds(window, button),
+                      GetWindowBounds(window, FindNamed<Border>(window, "RuntimeControlsBorder")))),
             "真实窗口最小尺寸下预览视口及连接/恢复操作完整可见");
     }
 

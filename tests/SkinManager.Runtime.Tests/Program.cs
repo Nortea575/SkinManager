@@ -13,6 +13,7 @@ internal static class Program
     {
         try
         {
+            await MagpieCompatibilityServiceTests.RunAsync();
             await TestDebugClientLaunchAsync();
             await TestCodexInstanceEnumerationAndActionsAsync();
             await TestExpectedInstanceAndPipeIdentityAsync();

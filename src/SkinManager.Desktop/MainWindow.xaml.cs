@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
     private readonly bool _closeAfterSuccessfulInstall;
     private readonly string _previewProfileDirectory;
     private readonly RuntimeController _runtimeController = new();
+    private readonly RuntimeApplyWorkflow _runtimeApplyWorkflow;
     private readonly bool _readRuntimeStatusOnLoad;
     private readonly ObservableCollection<SkinCard> _skins = [];
     private readonly ICollectionView _skinsView;
@@ -56,6 +58,7 @@ public partial class MainWindow : Window
     private bool _previewWasActive;
     private bool _previewNeedsRefresh;
     private bool _runtimeOperationInProgress;
+    private bool _runtimeActionCancellable;
     private bool _isEditing;
     private bool _previewClosed;
     private bool _editorResourcesChanged;
@@ -63,6 +66,7 @@ public partial class MainWindow : Window
     private bool _closePreparationInProgress;
     private UpdatesWindow? _updatesWindow;
     private SkinMarketWindow? _skinMarketWindow;
+    private CompatibilityWindow? _compatibilityWindow;
     private SkinPackage? _editOriginalPackage;
     private string? _editOriginalId;
     private int _previewTransparency = 30;
@@ -73,6 +77,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _editorPreviewTimer;
     private CodexInstance? _selectedConnectionInstance;
     private RuntimeStatus? _lastRuntimeStatus;
+    private CodexProcessIdentity? _lastConnectedInstance;
+    private CancellationTokenSource? _runtimeActionCancellation;
     private bool _settingInstancePort;
     private long _visibilitySequence;
 
@@ -101,6 +107,10 @@ public partial class MainWindow : Window
         _updateCoordinator = updateCoordinator;
         _installerLauncher = installerLauncher;
         _codexInstanceService = codexInstanceService;
+        _runtimeApplyWorkflow = new RuntimeApplyWorkflow(
+            _runtimeController.LaunchDebugClientAsync,
+            _runtimeController.ApplyAsync,
+            codexInstanceService);
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
         _runtimeStatusReader = runtimeStatusReader;
@@ -122,6 +132,7 @@ public partial class MainWindow : Window
         PreviewBaseVersion.Text = $"原生静态样板 · {basePackage.SourceVersion}";
         PreviewViewport.ToolTip = $"本地原生样板 {basePackage.SourceVersion} · 离线静态结构预览";
         PreviewBaseVersion.ToolTip = $"依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{basePackage.SourceVersion}";
+        AppVersionLabel.Text = UpdateCoordinator.ReadCurrentVersion().ToString(3);
         UpdateEntryLabel.Text = _updateCoordinator?.UpdateEntryLabel ?? $"版本与更新 · {UpdateCoordinator.ReadCurrentVersion().ToString(3)}";
         if (_updateCoordinator is not null)
         {
@@ -143,12 +154,14 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Closed += (_, _) =>
         {
+            _runtimeActionCancellation?.Cancel();
             if (_updateCoordinator is not null)
             {
                 _updateCoordinator.PropertyChanged -= UpdateCoordinator_PropertyChanged;
                 _updateCoordinator.Dispose();
             }
             _skinMarketWindow?.Close();
+            _compatibilityWindow?.Close();
             _previewStatusSequence++;
             _originalTransitionSequence++;
             _editorPreviewTimer.Stop();
@@ -182,28 +195,71 @@ public partial class MainWindow : Window
         }
 
         Interlocked.Increment(ref _runtimeStatusSequence);
-        SetRuntimeOperationInProgress(true, "正在连接并应用皮肤…");
+        var cancellation = new CancellationTokenSource();
+        _runtimeActionCancellation = cancellation;
+        SetRuntimeOperationInProgress(true, "正在核验连接目标…", cancellable: true);
         try
         {
             var transparency = PreviewTransparencyFollowCheckBox.IsChecked == true
                 ? null
                 : (double?)_previewTransparency;
             var request = BuildRuntimeApplyRequest(package, port, transparency);
-            var status = await _runtimeController.ApplyAsync(request);
+            var activeInstance = GetActiveConnectionInstance(port, out var hasActiveConnection);
+            var status = await _runtimeApplyWorkflow.StartOrApplyAsync(
+                request,
+                port,
+                _selectedConnectionInstance,
+                activeInstance,
+                hasActiveConnection,
+                cancellation.Token);
             DisplayRuntimeStatus(
                 status,
                 status.State == RuntimeStatusState.Error
-                    ? "连接或应用失败。请检查端口和桌面应用状态。"
+                    ? "本次操作未完成。请查看原因后重试。"
                     : $"当前皮肤：{package.Name}");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            SetRuntimeActionCanceledNotice();
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "连接或应用失败。请检查端口后重试。");
+            SetRuntimeError(exception.Message, "本次操作未完成。请查看原因后重试。");
         }
         finally
         {
+            if (ReferenceEquals(_runtimeActionCancellation, cancellation))
+            {
+                _runtimeActionCancellation = null;
+            }
+            cancellation.Dispose();
             SetRuntimeOperationInProgress(false);
         }
+    }
+
+    private static bool TryReadRuntimeStatusPort(RuntimeStatus status, out int port)
+    {
+        if (Uri.TryCreate(status.Endpoint, UriKind.Absolute, out var endpoint))
+        {
+            port = endpoint.Port;
+            return port is >= 1 and <= 65535;
+        }
+
+        port = 0;
+        return false;
+    }
+
+    private CodexProcessIdentity? GetActiveConnectionInstance(int port, out bool isConnected)
+    {
+        if (_lastRuntimeStatus is { State: RuntimeStatusState.Connected } status &&
+            TryReadRuntimeStatusPort(status, out var connectedPort) && connectedPort == port)
+        {
+            isConnected = true;
+            return status.ConnectedInstance;
+        }
+
+        isConnected = false;
+        return null;
     }
 
     private RuntimeApplyRequest BuildRuntimeApplyRequest(SkinPackage package, int port, double? transparency)
@@ -312,19 +368,39 @@ public partial class MainWindow : Window
         }
 
         var targetText = _selectedConnectionInstance is { CanConnect: true, DebugPort: int debugPort } instance
-            ? $"调试版 · PID {instance.Identity.ProcessId} · 端口 {debugPort}"
-            : $"手动端口 · {RuntimePortInput.Text.Trim()}";
+            ? $"{(string.IsNullOrWhiteSpace(instance.WindowTitle) ? "调试版 Codex" : instance.WindowTitle)} · PID {instance.Identity.ProcessId} · 端口 {debugPort}"
+            : $"自动查找调试版 · 端口 {RuntimePortInput.Text.Trim()}";
         RuntimeTargetText.Text = targetText;
         RuntimeTargetText.ToolTip = _selectedConnectionInstance is { } selected
             ? $"{targetText}\n{selected.Identity.ExecutablePath}\n启动时间：{selected.Identity.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
             : targetText;
 
-        var connected = _lastRuntimeStatus?.ConnectedInstance;
+        var hasLiveConnectionIdentity = _lastRuntimeStatus is
+            { State: RuntimeStatusState.Connected or RuntimeStatusState.Applying, ConnectedInstance: not null };
+        if (_lastRuntimeStatus is { State: RuntimeStatusState.Connected } connectedStatus)
+        {
+            _lastConnectedInstance = connectedStatus.ConnectedInstance;
+        }
+        else if (_lastRuntimeStatus is { State: RuntimeStatusState.Applying, ConnectedInstance: not null } applyingStatus)
+        {
+            _lastConnectedInstance = applyingStatus.ConnectedInstance;
+        }
+        else if (_lastRuntimeStatus?.State == RuntimeStatusState.Stopped)
+        {
+            _lastConnectedInstance = null;
+        }
+
+        var connected = hasLiveConnectionIdentity
+            ? _lastRuntimeStatus?.ConnectedInstance
+            : _lastRuntimeStatus?.State == RuntimeStatusState.Stopped ? null : _lastConnectedInstance;
+        RuntimeConnectedTargetLabel.Text = hasLiveConnectionIdentity
+            ? "当前连接"
+            : connected is null ? "当前连接" : "上次确认";
         var connectedText = connected is null ? "未连接" : $"PID {connected.ProcessId}";
         RuntimeConnectedTargetText.Text = connectedText;
         RuntimeConnectedTargetText.ToolTip = connected is null
             ? "运行状态尚未报告连接实例。"
-            : $"PID {connected.ProcessId}\n{connected.ExecutablePath}\n启动时间：{connected.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+            : $"{(hasLiveConnectionIdentity ? "当前连接" : "上次确认连接")}: PID {connected.ProcessId}\n{connected.ExecutablePath}\n启动时间：{connected.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
     }
 
     private async void ManageInstancesButton_Click(object sender, RoutedEventArgs e)
@@ -363,6 +439,71 @@ public partial class MainWindow : Window
     }
 
     private void MarketEntryButton_Click(object sender, RoutedEventArgs e) => OpenMarketWindow();
+
+    private void CompatibilityEntryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_runtimeOperationInProgress || _isBusy || _isEditing)
+        {
+            return;
+        }
+
+        if (_compatibilityWindow is { IsVisible: true } existing)
+        {
+            existing.Activate();
+            return;
+        }
+
+        var window = new CompatibilityWindow(StartDebugClientFromCompatibilityAsync)
+        {
+            Owner = this
+        };
+        _compatibilityWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_compatibilityWindow, window))
+            {
+                _compatibilityWindow = null;
+            }
+        };
+        window.Show();
+    }
+
+    private async Task<RuntimeStatus> StartDebugClientFromCompatibilityAsync()
+    {
+        if (_runtimeOperationInProgress)
+        {
+            return new RuntimeStatus(RuntimeStatusState.Error, null, null,
+                "管理器正在执行其他操作，请完成后重试。", null);
+        }
+
+        if (!TryReadRuntimePort(out var port))
+        {
+            return new RuntimeStatus(RuntimeStatusState.Error, null, null,
+                "端口无效。请检查高级设置中的端口。", null);
+        }
+
+        Interlocked.Increment(ref _runtimeStatusSequence);
+        SetRuntimeOperationInProgress(true, "正在请求启动 Codex 调试版…");
+        try
+        {
+            var status = await _runtimeController.LaunchDebugClientAsync(new DebugClientLaunchOptions(port));
+            DisplayRuntimeStatus(
+                status,
+                status.State == RuntimeStatusState.Error
+                    ? "未能启动 Codex 调试版。请检查实例管理中的运行实例。"
+                    : "已请求启动调试版。此操作不会应用皮肤。请等待调试端口就绪。 ");
+            return status;
+        }
+        catch (Exception exception)
+        {
+            SetRuntimeError(exception.Message, "未能启动 Codex 调试版。请检查实例管理中的运行实例。");
+            return new RuntimeStatus(RuntimeStatusState.Error, null, null, exception.Message, null);
+        }
+        finally
+        {
+            SetRuntimeOperationInProgress(false);
+        }
+    }
 
     internal SkinMarketWindow? OpenMarketWindow(SkinMarketClient? clientOverride = null)
     {
@@ -471,8 +612,7 @@ public partial class MainWindow : Window
 
     private bool TryReadRuntimePort(out int port)
     {
-        if (int.TryParse(RuntimePortInput.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port) &&
-            port is >= 1 and <= 65535)
+        if (TryParseRuntimePort(RuntimePortInput.Text, out port))
         {
             return true;
         }
@@ -483,9 +623,18 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private void SetRuntimeOperationInProgress(bool inProgress, string? message = null)
+    private static bool TryParseRuntimePort(string? value, out int port) =>
+        int.TryParse(value?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port) &&
+        port is >= 1 and <= 65535;
+
+    private void SetRuntimeOperationInProgress(bool inProgress, string? message = null, bool cancellable = false)
     {
         _runtimeOperationInProgress = inProgress;
+        _runtimeActionCancellable = inProgress && cancellable && _runtimeActionCancellation is not null;
+        if (!inProgress)
+        {
+            CancelRuntimeActionButton.Content = "取消操作";
+        }
         if (!string.IsNullOrWhiteSpace(message))
         {
             RuntimeStatusMessage.Text = message;
@@ -497,7 +646,7 @@ public partial class MainWindow : Window
 
     private void UpdateRuntimeControls()
     {
-        if (RuntimePortInput is null)
+        if (RuntimePortInput is null || RuntimePrimaryActionText is null || LocateConnectedWindowButton is null)
         {
             return;
         }
@@ -508,9 +657,52 @@ public partial class MainWindow : Window
         ApplyRuntimeButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _selectedPackage is not null;
         RemoveRuntimeButton.IsEnabled = !_runtimeOperationInProgress && !_isEditing;
         ManageInstancesButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
+        SelectRuntimeTargetButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
+        CompatibilityEntryButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing;
         LocateConnectedWindowButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing &&
             _codexInstanceService is not null && _lastRuntimeStatus?.ConnectedInstance is not null;
+        CancelRuntimeActionButton.Visibility = _runtimeOperationInProgress && _runtimeActionCancellable
+            ? Visibility.Visible : Visibility.Collapsed;
+        CancelRuntimeActionButton.IsEnabled = _runtimeOperationInProgress && _runtimeActionCancellable &&
+            _runtimeActionCancellation?.IsCancellationRequested != true;
+        var currentPortMatches = _lastRuntimeStatus is { State: RuntimeStatusState.Connected } connectedStatus &&
+            TryParseRuntimePort(RuntimePortInput.Text, out var requestedPort) &&
+            TryReadRuntimeStatusPort(connectedStatus, out var connectedPort) && requestedPort == connectedPort;
+        var hasActiveConnection = currentPortMatches;
+        RuntimeSelectedSkinText.Text = _selectedPackage is { } package
+            ? package.Name
+            : "尚未选择皮肤；可以先启动调试版 Codex";
+        RuntimePrimaryActionText.Text = RuntimeConnectionViewState.GetPrimaryActionLabel(
+            hasActiveConnection,
+            _selectedConnectionInstance is not null,
+            _selectedPackage is not null);
+        AutomationProperties.SetName(ApplyRuntimeButton, RuntimePrimaryActionText.Text);
         EditSkinButton.IsEnabled = !_isBusy && !_isEditing && _selectedPackage is not null;
+    }
+
+    private void CancelRuntimeActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_runtimeOperationInProgress || !_runtimeActionCancellable || _runtimeActionCancellation is null)
+        {
+            return;
+        }
+
+        RuntimeStatusMessage.Text = "正在取消操作；结果待确认。管理器不会关闭 Codex，也不会自动恢复皮肤。";
+        RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
+        CancelRuntimeActionButton.Content = "正在取消…";
+        CancelRuntimeActionButton.IsEnabled = false;
+        _runtimeActionCancellation.Cancel();
+    }
+
+    private void SetRuntimeActionCanceledNotice()
+    {
+        var warningBrush = (Brush)FindResource("WarningText");
+        RuntimeStatusIndicator.Fill = warningBrush;
+        RuntimeStatusText.Foreground = warningBrush;
+        RuntimeStatusText.Text = "已取消，结果待确认";
+        RuntimeStatusMessage.Text = "操作已取消。管理器不会关闭 Codex，也不会自动恢复皮肤；请稍后查看连接状态。";
+        RuntimeStatusText.ToolTip = RuntimeStatusMessage.Text;
+        RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
     }
 
     private void NewSkinButton_Click(object sender, RoutedEventArgs e)
@@ -541,7 +733,9 @@ public partial class MainWindow : Window
         _isEditing = true;
         _editorResourcesChanged = false;
         SkinEditor.SetDraft(draft, isNew);
-        TransitionVisibility(LibraryPanel, Visibility.Collapsed, 145);
+        WorkspaceLeftColumn.Width = new GridLength(380);
+        TransitionVisibility(LibraryBorder, Visibility.Collapsed, 145);
+        TransitionVisibility(EditorPanel, Visibility.Visible, 165);
         TransitionVisibility(SkinEditor, Visibility.Visible, 165);
         TransitionVisibility(DetailsEmptyState, Visibility.Collapsed, 135);
         TransitionVisibility(DetailsScroll, Visibility.Visible, 145);
@@ -575,9 +769,11 @@ public partial class MainWindow : Window
         _editorResourcesChanged = false;
         _ = _previewRenderer?.SetComponentSelectionModeAsync(false);
         TransitionVisibility(SkinEditor, Visibility.Collapsed, 135);
-        TransitionVisibility(LibraryPanel, Visibility.Visible, 160);
+        TransitionVisibility(EditorPanel, Visibility.Collapsed, 135);
+        TransitionVisibility(LibraryBorder, Visibility.Visible, 160);
+        WorkspaceLeftColumn.Width = new GridLength(262);
         TransitionVisibility(SelectedSummary, _selectedPackage is null ? Visibility.Collapsed : Visibility.Visible, 145);
-        TransitionVisibility(RuntimeControlsBorder, _selectedPackage is null ? Visibility.Collapsed : Visibility.Visible, 145);
+        TransitionVisibility(RuntimeControlsBorder, Visibility.Visible, 145);
         TransitionVisibility(SelectedMetadata, _selectedPackage is null ? Visibility.Collapsed : Visibility.Visible, 145);
         TransitionVisibility(ColorSection, _selectedPackage is not null && ColorItems.Items.Count > 0
             ? Visibility.Visible : Visibility.Collapsed, 145);
@@ -685,6 +881,18 @@ public partial class MainWindow : Window
             SetPreviewStatus("预览草稿 · 点击组件可切换编辑目标");
             UpdateTransparencyControls();
         }
+        catch (OperationCanceledException) when (
+            sequence != Volatile.Read(ref _editorPreviewSequence) ||
+            !_isEditing ||
+            _previewClosed ||
+            !ReferenceEquals(_previewRenderer, renderer))
+        {
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            SetPreviewStatus("预览更新已中止，请重试。", persistent: true);
+        }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or InvalidOperationException)
         {
             SkinEditor.SetValidationError(exception.Message);
@@ -788,6 +996,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _runtimeActionCancellation?.Cancel();
         e.Cancel = true;
         if (_closePreparationInProgress)
         {
@@ -1043,45 +1252,26 @@ public partial class MainWindow : Window
     {
         _lastRuntimeStatus = status;
         UpdateRuntimeTargetSummary();
-        var (label, brushKey) = status.State switch
-        {
-            RuntimeStatusState.Connecting when string.IsNullOrWhiteSpace(status.SkinId) => ("等待调试版", "WarningText"),
-            RuntimeStatusState.Connecting => ("正在连接", "WarningText"),
-            RuntimeStatusState.Applying => ("正在应用", "WarningText"),
-            RuntimeStatusState.Connected when status.AppliedTargetCount > 0 => ("已应用", "SuccessText"),
-            RuntimeStatusState.Connected => ("等待主界面", "WarningText"),
-            RuntimeStatusState.Error => ("错误", "ErrorText"),
-            _ => ("未连接", "SecondaryText")
-        };
-
-        var statusBrush = (Brush)FindResource(brushKey);
+        var viewState = RuntimeConnectionViewState.From(status);
+        var statusBrush = (Brush)FindResource(viewState.BrushResourceKey);
         RuntimeStatusIndicator.Fill = statusBrush;
         RuntimeStatusText.Foreground = statusBrush;
-        RuntimeStatusText.Text = label;
-        var message = !string.IsNullOrWhiteSpace(status.Message) ? status.Message : fallbackMessage ?? (status.State switch
-        {
-            RuntimeStatusState.Connecting => "正在连接桌面应用…",
-            RuntimeStatusState.Applying => "正在更新当前皮肤…",
-            RuntimeStatusState.Connected when status.AppliedTargetCount > 0 && !string.IsNullOrWhiteSpace(status.SkinId) => $"当前皮肤：{status.SkinId}",
-            RuntimeStatusState.Connected => "连接已建立，等待桌面应用主界面。",
-            RuntimeStatusState.Error => "连接或应用失败。请检查端口和桌面应用状态。",
-            _ => "点击“连接并应用 / 更新”开始。"
-        });
+        RuntimeStatusText.Text = viewState.StatusLabel;
+        var message = string.IsNullOrWhiteSpace(status.Message) ? fallbackMessage ?? viewState.Message : status.Message;
         RuntimeStatusMessage.Text = message;
-        RuntimeStatusMessage.ToolTip = status.Message ?? message;
-        RuntimeStatusText.ToolTip = status.Message;
+        RuntimeStatusMessage.ToolTip = message;
+        RuntimeStatusText.ToolTip = message;
         UpdateRuntimeControls();
     }
 
     private void SetRuntimeError(string detail, string fallbackMessage)
     {
-        var errorBrush = (Brush)FindResource("ErrorText");
-        RuntimeStatusIndicator.Fill = errorBrush;
-        RuntimeStatusText.Foreground = errorBrush;
-        RuntimeStatusText.Text = "错误";
-        RuntimeStatusText.ToolTip = detail;
-        RuntimeStatusMessage.Text = string.IsNullOrWhiteSpace(detail) ? fallbackMessage : detail;
-        RuntimeStatusMessage.ToolTip = detail;
+        DisplayRuntimeStatus(new RuntimeStatus(
+            RuntimeStatusState.Error,
+            _lastRuntimeStatus?.SkinId,
+            _lastRuntimeStatus?.Endpoint,
+            string.IsNullOrWhiteSpace(detail) ? fallbackMessage : detail,
+            _lastRuntimeStatus?.IsDebugPortOpen));
     }
 
     private void ImportButton_Click(object sender, RoutedEventArgs e)
@@ -1197,6 +1387,17 @@ public partial class MainWindow : Window
         await Task.Run(() => _store.Save(package, replace));
         RefreshList(package.Id);
         return true;
+    }
+
+    private void MoreActionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MoreActionsButton.ContextMenu is not { } menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = MoreActionsButton;
+        menu.IsOpen = true;
     }
 
     private void ExportButton_Click(object sender, RoutedEventArgs e)
@@ -2467,8 +2668,7 @@ public partial class MainWindow : Window
         SkinList.IsEnabled = !busy && !_isEditing;
         SkinEditor.IsEnabled = !busy;
         OriginalButton.IsEnabled = !busy && _selectedImageAvailable;
-        ExportButton.IsEnabled = !busy;
-        DeleteButton.IsEnabled = !busy;
+        MoreActionsButton.IsEnabled = !busy && !_isEditing && _selectedPackage is not null;
         PreviewSceneBox.IsEnabled = !busy;
         PreviewAppearanceBox.IsEnabled = !busy;
         PreviewSidebarCheckBox.IsEnabled = !busy;

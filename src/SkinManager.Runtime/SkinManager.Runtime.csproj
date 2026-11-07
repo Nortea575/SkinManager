@@ -6,9 +6,6 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>SkinManager.Runtime</AssemblyName>
     <RootNamespace>SkinManager.Runtime</RootNamespace>
-    <Version>1.0.2</Version>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="SkinManager.Agent" />

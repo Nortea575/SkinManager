@@ -72,7 +72,7 @@
                        Margin="0,0,9,0" Stretch="Uniform" />
                 <TextBlock Text="SkinManager" FontSize="19" Style="{StaticResource SectionTitle}"
                            VerticalAlignment="Center" />
-                  <TextBlock Text="1.0.2" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                <TextBlock x:Name="AppVersionLabel" Text="" FontSize="12" Foreground="{StaticResource SecondaryText}"
                            VerticalAlignment="Center" Margin="8,2,0,0" />
                 <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
                        Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
@@ -115,6 +115,18 @@
                         <TextBlock Text="管理实例" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
+                <Button x:Name="CompatibilityEntryButton" Margin="6,0,0,0" Padding="9,5"
+                        Click="CompatibilityEntryButton_Click"
+                        ToolTip="检查 Magpie 与调试版 Codex 的兼容状态。"
+                        AutomationProperties.Name="兼容设置">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="M12,2 L20,5 V11 C20,16 16.5,19 12,21 C7.5,19 4,16 4,11 V5 Z M9,12 L11,14 L15,10"
+                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"
+                              Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
+                        <TextBlock Text="兼容设置" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
         </Border>
@@ -126,14 +138,14 @@
                        TextWrapping="Wrap" />
         </Border>
 
-        <Grid Grid.Row="4">
+        <Grid x:Name="WorkspaceGrid" Grid.Row="4">
             <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="262" />
+                <ColumnDefinition x:Name="WorkspaceLeftColumn" Width="262" />
                 <ColumnDefinition Width="18" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="{StaticResource SidebarSurface}"
+            <Border x:Name="LibraryBorder" Grid.Column="0" Background="{StaticResource SidebarSurface}"
                     BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14">
                 <Grid>
                     <Grid x:Name="LibraryPanel" Margin="12">
@@ -244,12 +256,21 @@
                                 AutomationProperties.Name="导入皮肤" />
                     </Grid>
                 </Grid>
-                    <desktop:SkinEditorView x:Name="SkinEditor" Visibility="Collapsed" />
                 </Grid>
             </Border>
 
-            <Grid Grid.Column="2">
-                <Border x:Name="DetailsEmptyState" Background="Transparent"
+            <Border x:Name="EditorPanel" Grid.Column="0" Background="{StaticResource SidebarSurface}"
+                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
+                    Visibility="Collapsed">
+                <desktop:SkinEditorView x:Name="SkinEditor" Visibility="Collapsed" />
+            </Border>
+
+            <Grid x:Name="MainContentGrid" Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border x:Name="DetailsEmptyState" Grid.Row="0" Background="Transparent"
                         BorderThickness="0" Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400" Margin="24">
                             <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="25"
@@ -263,13 +284,12 @@
                     </StackPanel>
                 </Border>
 
-                <Grid x:Name="DetailsScroll" Visibility="Collapsed">
+                <Grid x:Name="DetailsScroll" Grid.Row="0" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" MinHeight="150" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -289,29 +309,51 @@
                                     Click="EditSkinButton_Click" AutomationProperties.Name="编辑皮肤" />
                             <Button x:Name="OriginalButton" Content="原图" Margin="0,0,5,0" Padding="9,5"
                                     Click="OriginalButton_Click" ToolTip="查看原始背景图" />
-                            <Button x:Name="ExportButton" Content="导出" Margin="0,0,5,0" Padding="9,5"
-                                    Click="ExportButton_Click" />
-                            <Button x:Name="DeleteButton" Content="删除" Style="{StaticResource DangerButton}" Padding="9,5"
-                                    Click="DeleteButton_Click" />
+                            <Button x:Name="MoreActionsButton" Content="更多" Padding="9,5"
+                                    Click="MoreActionsButton_Click"
+                                    ToolTip="导出或删除当前皮肤">
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem x:Name="ExportMenuItem" Header="导出皮肤…" Click="ExportButton_Click" />
+                                        <Separator />
+                                        <MenuItem x:Name="DeleteMenuItem" Header="删除皮肤…" Click="DeleteButton_Click"
+                                                  Foreground="{StaticResource DangerText}" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
                         </StackPanel>
                     </Grid>
 
-                    <Border Grid.Row="1" Margin="0,0,0,7" Padding="0"
-                            Background="Transparent" BorderThickness="0">
+                    <Expander x:Name="PreviewSettingsExpander" Grid.Row="1" IsExpanded="False"
+                              Margin="0,0,0,7">
+                        <Expander.Header>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="预览选项" FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="外观、场景、侧栏和原版对照只影响预览；透明度也会用于下一次应用。"
+                                           FontSize="12" Foreground="{StaticResource SecondaryText}" Margin="10,0,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Expander.Header>
+                        <Border Margin="0,5,0,0" Padding="0"
+                                Background="Transparent" BorderThickness="0">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <WrapPanel Grid.Row="0" VerticalAlignment="Center">
-                                <TextBlock Text="场景" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                            <TextBlock Grid.Row="0" Text="场景、外观、侧栏与原版对照只用于预览；透明度会同步用于下一次皮肤应用。"
+                                       FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                       Margin="0,0,0,6" TextWrapping="Wrap" />
+                            <WrapPanel Grid.Row="1" VerticalAlignment="Center">
+                                <TextBlock Text="场景" FontSize="13" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
                                 <ComboBox x:Name="PreviewSceneBox" Width="96" SelectedIndex="0"
                                           SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="预览页面">
                                     <ComboBoxItem Content="首页" Tag="home" />
                                     <ComboBoxItem Content="对话" Tag="conversation" />
                                 </ComboBox>
-                                <TextBlock Text="外观" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="外观" FontSize="13" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="12,0,6,0" />
                                 <ComboBox x:Name="PreviewAppearanceBox" Width="112" Margin="0,0,10,0"
                                           SelectedIndex="0" SelectionChanged="PreviewOptions_SelectionChanged"
@@ -329,8 +371,8 @@
                                           VerticalAlignment="Center" Checked="PreviewOptions_ToggleChanged"
                                           Unchecked="PreviewOptions_ToggleChanged" AutomationProperties.Name="原版对照" />
                             </WrapPanel>
-                            <WrapPanel Grid.Row="1" Margin="0,6,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="透明度" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                            <WrapPanel Grid.Row="2" Margin="0,6,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="应用透明度" FontSize="13" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <CheckBox x:Name="PreviewTransparencyFollowCheckBox" Content="跟随主题" IsChecked="True"
                                           VerticalAlignment="Center" Margin="0,0,7,0"
@@ -345,14 +387,15 @@
                                          AutomationProperties.Name="面板透明度百分比" />
                                 <TextBlock Text="%" FontSize="12" Foreground="{StaticResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="4,0,8,0" />
-                                <TextBlock x:Name="PreviewTransparencyValue" Text="主题值" FontSize="11"
+                                <TextBlock x:Name="PreviewTransparencyValue" Text="主题值" FontSize="12"
                                            Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-                                <TextBlock x:Name="PreviewTransparencyError" FontSize="11" Foreground="{StaticResource ErrorText}"
+                                <TextBlock x:Name="PreviewTransparencyError" FontSize="12" Foreground="{StaticResource ErrorText}"
                                            Margin="9,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
                                            AutomationProperties.Name="面板透明度输入错误" />
                             </WrapPanel>
                         </Grid>
-                    </Border>
+                        </Border>
+                    </Expander>
 
                     <Grid Grid.Row="2" Margin="1,0,0,4">
                         <Grid.ColumnDefinitions>
@@ -401,74 +444,7 @@
                         </Grid>
                     </Border>
 
-                    <Border x:Name="RuntimeControlsBorder" Grid.Row="4" Margin="0,6,0,0" Padding="10,6"
-                            Background="{StaticResource SoftSurface}" BorderThickness="0" CornerRadius="12">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <WrapPanel Grid.Row="0" VerticalAlignment="Center">
-                                <TextBlock Text="端口" FontSize="11" Foreground="{StaticResource SecondaryText}"
-                                           VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <TextBox x:Name="RuntimePortInput" Text="9335" Width="64" Height="32"
-                                         Padding="6,0" TextAlignment="Right" MaxLength="5"
-                                         ToolTip="本地调试端口，默认 9335。" AutomationProperties.Name="桌面应用连接端口"
-                                         TextChanged="RuntimePortInput_TextChanged" />
-                                <Button x:Name="LaunchDebugButton" Content="启动调试版" Margin="7,0,5,0" Padding="8,5"
-                                        Click="LaunchDebugButton_Click"
-                                        ToolTip="按需启动独立的调试会话；不会自动关闭已运行的桌面应用。" />
-                                <Button x:Name="ApplyRuntimeButton" Content="连接并应用 / 更新"
-                                        Style="{StaticResource PrimaryButton}" Margin="0,0,5,0" Padding="9,5"
-                                        Click="ApplyRuntimeButton_Click" AutomationProperties.Name="连接并应用或更新皮肤" />
-                                <Button x:Name="RemoveRuntimeButton" Content="恢复原生 / 断开"
-                                        Style="{StaticResource DangerButton}" Padding="8,5"
-                                        Click="RemoveRuntimeButton_Click" AutomationProperties.Name="恢复原生并断开连接" />
-                            </WrapPanel>
-                            <Grid Grid.Row="1" Margin="0,4,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                                    <TextBlock Text="连接目标" FontSize="11" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBlock x:Name="RuntimeTargetText" Text="手动端口 · 9335" FontSize="12"
-                                               FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
-                                               ToolTip="手动端口 · 9335" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Margin="0,0,10,0">
-                                    <TextBlock Text="当前连接" FontSize="11" Foreground="{StaticResource SecondaryText}" />
-                                    <TextBlock x:Name="RuntimeConnectedTargetText" Text="未连接" FontSize="12"
-                                               FontWeight="SemiBold" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"
-                                               ToolTip="未连接" AutomationProperties.Name="当前连接的桌面应用实例" />
-                                </StackPanel>
-                                <Grid Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="8" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
-                                             Grid.Column="0" Fill="{StaticResource SecondaryText}"
-                                             VerticalAlignment="Center" />
-                                    <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="等待用户测试" FontSize="11"
-                                               FontWeight="SemiBold" Margin="7,0,8,0" VerticalAlignment="Center"
-                                               AutomationProperties.Name="桌面应用连接状态" />
-                                    <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
-                                               Text="等待用户点击连接并应用。" FontSize="11"
-                                               Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
-                                               VerticalAlignment="Center" ToolTip="等待用户点击连接并应用。" />
-                                </Grid>
-                                <Button x:Name="LocateConnectedWindowButton" Grid.Column="3" Content="定位已连接窗口"
-                                        Padding="8,4" MinHeight="30" VerticalAlignment="Center"
-                                        Click="LocateConnectedWindowButton_Click" ToolTip="根据运行状态中的进程身份定位窗口。" />
-                            </Grid>
-                        </Grid>
-                    </Border>
-
-                    <Grid Grid.Row="5" Margin="0,3,0,0">
+                    <Grid Grid.Row="4" Margin="0,3,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -524,6 +500,102 @@
                         </Grid>
                     </Grid>
                 </Grid>
+
+                <Border x:Name="RuntimeControlsBorder" Grid.Row="1" Margin="0,8,0,0" Padding="12,9"
+                        Background="{StaticResource SoftSurface}" BorderThickness="0" CornerRadius="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" MinWidth="0">
+                                <TextBlock Text="连接与应用" FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock x:Name="RuntimeSelectedSkinText" Text="先选择要应用的皮肤" FontSize="14"
+                                           FontWeight="SemiBold" Margin="0,2,0,3" TextTrimming="CharacterEllipsis" />
+                                <Grid MinWidth="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="目标窗口" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                               VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="RuntimeTargetText" Grid.Column="1" Text="自动查找调试版"
+                                               FontSize="13" MinWidth="0" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"
+                                               ToolTip="自动查找当前可用的 Codex 调试版；也可在实例管理中选择。" />
+                                    <TextBlock x:Name="RuntimeConnectedTargetLabel" Grid.Column="2" Text="当前连接"
+                                               FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                               VerticalAlignment="Center" Margin="12,0,6,0" />
+                                    <TextBlock x:Name="RuntimeConnectedTargetText" Grid.Column="3" Text="未连接"
+                                               FontSize="13" MaxWidth="90" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                               ToolTip="当前皮肤管理器连接到的 Codex 实例。"
+                                               AutomationProperties.Name="当前连接的桌面应用实例" />
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                <Button x:Name="SelectRuntimeTargetButton" Content="选择窗口" Padding="10,6"
+                                        Margin="0,0,6,0" Click="ManageInstancesButton_Click"
+                                        ToolTip="查看正在运行的 Codex 实例并选择连接目标。" />
+                                <Button x:Name="ApplyRuntimeButton" Style="{StaticResource PrimaryButton}"
+                                        MinWidth="132" Padding="12,7" Click="ApplyRuntimeButton_Click"
+                                        AutomationProperties.Name="启动并应用或更新皮肤">
+                                    <TextBlock x:Name="RuntimePrimaryActionText" Text="启动并应用" />
+                                </Button>
+                                <Button x:Name="RemoveRuntimeButton" Content="恢复原生" Margin="6,0,0,0"
+                                        Padding="10,6" Click="RemoveRuntimeButton_Click"
+                                        AutomationProperties.Name="恢复原生并断开连接" />
+                                <Button x:Name="CancelRuntimeActionButton" Content="取消操作" Margin="6,0,0,0"
+                                        Padding="10,6" Visibility="Collapsed"
+                                        Click="CancelRuntimeActionButton_Click" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
+                                     Grid.Column="0" Fill="{StaticResource SecondaryText}"
+                                     VerticalAlignment="Center" />
+                            <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="未连接" FontSize="13"
+                                       FontWeight="SemiBold" Margin="7,0,10,0" VerticalAlignment="Center"
+                                       AutomationProperties.Name="桌面应用连接与应用状态" />
+                            <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
+                                       Text="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。"
+                                       FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                       TextWrapping="Wrap" VerticalAlignment="Center"
+                                       ToolTip="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。" />
+                        </Grid>
+                        <Expander x:Name="AdvancedSettingsExpander" Grid.Row="2" Header="高级设置"
+                                  IsExpanded="False" Margin="0,6,0,0">
+                            <WrapPanel Margin="0,7,0,2" VerticalAlignment="Center">
+                                <TextBlock Text="端口" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox x:Name="RuntimePortInput" Text="9335" Width="72" Height="34"
+                                         Padding="6,0" TextAlignment="Right" MaxLength="5"
+                                         ToolTip="仅在需要手动指定循环地址调试端口时修改。默认9335。"
+                                         AutomationProperties.Name="桌面应用连接端口"
+                                         TextChanged="RuntimePortInput_TextChanged" />
+                                <Button x:Name="LaunchDebugButton" Content="只启动调试版" Margin="8,0,6,0"
+                                        Padding="10,6" Click="LaunchDebugButton_Click"
+                                        ToolTip="仅启动Codex调试版，不应用皮肤；不会自动关闭或重启已运行的应用。" />
+                                <Button x:Name="LocateConnectedWindowButton" Content="定位已连接窗口"
+                                        Padding="10,6" Click="LocateConnectedWindowButton_Click"
+                                        ToolTip="按当前连接的进程身份定位窗口。" />
+                            </WrapPanel>
+                        </Expander>
+                    </Grid>
+                </Border>
             </Grid>
         </Grid>
     </Grid>
