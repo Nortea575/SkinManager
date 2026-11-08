@@ -16,6 +16,7 @@ var passed = 0;
 
 try
 {
+    passed += CreationWorkflowTests.Run();
     var ayanamiDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "ayanami");
     var sayaDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "saya");
     var nativeDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "native");

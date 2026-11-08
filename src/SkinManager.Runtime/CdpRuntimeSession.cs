@@ -11,24 +11,30 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _eventPump;
     private readonly string _bindingName;
-    private RuntimeApplyRequest _activeRequest;
+    private RuntimeApplyRequest? _activeRequest;
+    private RuntimeCompatibilityOptions _compatibilityOptions;
+    private LocaleOverrideSnapshotStore? _compatibilitySnapshotStore;
     private int _appliedTargetCount;
     private bool _stopping;
     private bool _hadCodexTarget;
     private int _disposed;
+    private long _compatibilityGeneration;
 
     public bool IsConnected => !_stopping && _browser.IsConnected;
     public Uri Endpoint { get; }
     public int AppliedTargetCount => Volatile.Read(ref _appliedTargetCount);
     public CodexProcessIdentity? ConnectedInstance => _browser.ConnectedInstance;
+    public bool HasSkin => _activeRequest is not null;
     public event Action<string>? Disconnected;
     public event Action<int>? AppliedTargetCountChanged;
+    public event Action<RuntimeCompatibilityResult>? CompatibilityResultChanged;
 
-    private CdpRuntimeSession(Uri endpoint, CdpBrowserClient browser, RuntimeApplyRequest request)
+    private CdpRuntimeSession(Uri endpoint, CdpBrowserClient browser, RuntimeApplyRequest? request, RuntimeCompatibilityOptions compatibilityOptions)
     {
         Endpoint = endpoint;
         _browser = browser;
         _activeRequest = request;
+        _compatibilityOptions = compatibilityOptions;
         _bindingName = "__skinManagerApplied_" + Guid.NewGuid().ToString("N");
         _eventPump = PumpEventsAsync();
     }
@@ -40,9 +46,20 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         CancellationToken cancellationToken,
         CodexProcessIdentity? expectedInstance = null)
     {
-        expectedInstance ??= request.ExpectedInstance;
+        return await ConnectAsync(endpoint, request, request.Compatibility ?? new RuntimeCompatibilityOptions(), identityVerifier, cancellationToken, expectedInstance ?? request.ExpectedInstance).ConfigureAwait(false);
+    }
+
+    public static async Task<CdpRuntimeSession> ConnectAsync(
+        Uri endpoint,
+        RuntimeApplyRequest? request,
+        RuntimeCompatibilityOptions compatibilityOptions,
+        ICodexEndpointIdentityVerifier identityVerifier,
+        CancellationToken cancellationToken,
+        CodexProcessIdentity? expectedInstance = null)
+    {
+        ArgumentNullException.ThrowIfNull(compatibilityOptions);
         var browser = await CdpBrowserClient.ConnectAsync(endpoint, identityVerifier, cancellationToken, expectedInstance).ConfigureAwait(false);
-        var session = new CdpRuntimeSession(endpoint, browser, request);
+        var session = new CdpRuntimeSession(endpoint, browser, request, compatibilityOptions);
         try
         {
             await browser.SendAsync("Target.setDiscoverTargets", new { discover = true }, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -75,6 +92,11 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
                 await RemoveEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
                 await ClearGuardAsync(target, target.RuntimeToken, cancellationToken).ConfigureAwait(false);
                 target.RuntimeToken = nextToken;
+                if (!target.SkinBindingInstalled)
+                {
+                    await _browser.SendAsync("Runtime.addBinding", new { name = _bindingName }, target.SessionId, cancellationToken).ConfigureAwait(false);
+                    target.SkinBindingInstalled = true;
+                }
                 target.IsApplied = await InstallRuntimeAsync(target, request.RuntimeScript, cancellationToken).ConfigureAwait(false);
             }
             _activeRequest = request;
@@ -84,6 +106,364 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
             RecountAppliedTargets();
             _targetGate.Release();
         }
+    }
+
+    public async Task<RuntimeCompatibilityResult> ConfigureCompatibilityAsync(
+        RuntimeCompatibilityOptions options,
+        LocaleOverrideSnapshotStore snapshotStore,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(snapshotStore);
+        await _targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureConnected();
+            _compatibilityOptions = options;
+            _compatibilitySnapshotStore = snapshotStore;
+            var generation = Interlocked.Increment(ref _compatibilityGeneration).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var targets = _targets.Values.Where(target => target.IsCodexAppUrl && target.SessionId is not null).ToArray();
+            if (targets.Length == 0)
+            {
+                if (!options.ForceSimplifiedChinese)
+                {
+                    try
+                    {
+                        if (snapshotStore.Load() is null)
+                            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Disabled, Endpoint.ToString(), "简体中文固定模式已关闭。", true, ConnectedInstance);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+                    {
+                        return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), $"读取语言恢复状态失败：{ex.Message}", true, ConnectedInstance);
+                    }
+                }
+                return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Pending, Endpoint.ToString(), "已连接，但尚无可用的 Codex 主窗口；语言设置会在页面就绪后重试。", true, ConnectedInstance);
+            }
+
+            if (!options.ForceSimplifiedChinese)
+            {
+                LocaleOverrideRestoreSnapshot? snapshot;
+                try { snapshot = snapshotStore.Load(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+                {
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), $"读取语言恢复状态失败：{ex.Message}", true, ConnectedInstance);
+                }
+
+                foreach (var target in targets)
+                {
+                    await RemoveCompatibilityEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
+                    var disabled = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildStateScript(generation, enabled: false), cancellationToken).ConfigureAwait(false);
+                    if (disabled.State is "pending" or "cancelled")
+                        return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Pending, Endpoint.ToString(), "语言兼容钩子正在等待页面桥接就绪。", true, ConnectedInstance);
+                    if (disabled.State == "unsupported")
+                        return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "当前 Codex 窗口不支持已验证的语言适配入口。", true, ConnectedInstance);
+                }
+
+                if (snapshot is null)
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Disabled, Endpoint.ToString(), "简体中文固定模式已关闭。", true, ConnectedInstance);
+
+                var restored = false;
+                var shouldKeepSnapshot = false;
+                foreach (var target in targets)
+                {
+                    var result = await EvaluateCompatibilityScriptAsync(
+                        target,
+                        CodexLocaleCompatibilityScript.BuildRestoreLocaleOverrideScript(generation, snapshot.OriginalValue),
+                        cancellationToken).ConfigureAwait(false);
+                    switch (result.State)
+                    {
+                        case "restored":
+                            restored = true;
+                            break;
+                        case "preserved":
+                            restored = true;
+                            break;
+                        case "pending":
+                        case "cancelled":
+                            shouldKeepSnapshot = true;
+                            break;
+                        case "unsupported":
+                            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "当前 Codex 窗口不支持已验证的语言设置宿主接口。", true, ConnectedInstance);
+                        default:
+                            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), "恢复原语言设置失败；原值快照仍保留以便重试。", true, ConnectedInstance);
+                    }
+                    if (result.State is "restored" or "preserved")
+                        break;
+                }
+
+                if (shouldKeepSnapshot || !restored)
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Pending, Endpoint.ToString(), "原语言设置等待 Codex 设置宿主就绪；恢复快照已保留。", true, ConnectedInstance);
+
+                try { snapshotStore.Clear(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), $"语言已恢复，但清理恢复状态失败：{ex.Message}", true, ConnectedInstance);
+                }
+                return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Disabled, Endpoint.ToString(), "简体中文固定模式已关闭，并按当前值有条件恢复了原语言设置。", true, ConnectedInstance);
+            }
+
+            foreach (var target in targets)
+            {
+                var hook = await EnsureCompatibilityEarlyScriptAsync(target, generation, cancellationToken).ConfigureAwait(false);
+                if (hook.State != RuntimeCompatibilityState.Applied)
+                    return hook;
+            }
+
+            var sawPending = false;
+            foreach (var target in targets)
+            {
+                var read = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildReadLocaleOverrideScript(generation), cancellationToken).ConfigureAwait(false);
+                if (read.State == "pending")
+                {
+                    sawPending = true;
+                    continue;
+                }
+                if (read.State == "cancelled")
+                {
+                    sawPending = true;
+                    continue;
+                }
+                if (read.State == "unsupported")
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "当前 Codex 窗口未提供已验证的 localeOverride 设置接口。", true, ConnectedInstance);
+                if (read.State != "ready")
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), "读取 Codex localeOverride 设置失败。", true, ConnectedInstance);
+
+                try { snapshotStore.CaptureIfMissing(read.Value); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException or InvalidOperationException)
+                {
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), $"保存原语言恢复状态失败，未写入中文设置：{ex.Message}", true, ConnectedInstance);
+                }
+
+                if (string.Equals(read.Value, "zh-CN", StringComparison.Ordinal))
+                {
+                    target.CompatibilitySettingsGeneration = generation;
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Applied, Endpoint.ToString(), "已确认 localeOverride=zh-CN，并启用本地化入口；界面首次绘制仍由 Codex 自身加载流程决定。", true, ConnectedInstance);
+                }
+
+                var write = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildWriteSimplifiedChineseScript(generation), cancellationToken).ConfigureAwait(false);
+                if (write.State == "applied")
+                {
+                    foreach (var candidate in targets)
+                        candidate.CompatibilitySettingsGeneration = generation;
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Applied, Endpoint.ToString(), "已确认写入 localeOverride=zh-CN，并启用本地化入口；界面首次绘制仍由 Codex 自身加载流程决定。", true, ConnectedInstance);
+                }
+                if (write.State is "pending" or "cancelled")
+                {
+                    sawPending = true;
+                    continue;
+                }
+                if (write.State == "unsupported")
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "Codex 设置宿主不支持 localeOverride 写入。", true, ConnectedInstance);
+                return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), "写入或验证 zh-CN 设置失败；原语言恢复快照已保留。", true, ConnectedInstance);
+            }
+
+            return new RuntimeCompatibilityResult(
+                sawPending ? RuntimeCompatibilityState.Pending : RuntimeCompatibilityState.Failed,
+                Endpoint.ToString(),
+                sawPending ? "中文设置等待 Codex 设置宿主就绪；原值快照未被覆盖。" : "没有可用窗口完成中文设置写入。",
+                true,
+                ConnectedInstance);
+        }
+        finally
+        {
+            _targetGate.Release();
+        }
+    }
+
+    public async Task RemoveSkinAsync(CancellationToken cancellationToken)
+    {
+        await _targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureConnected();
+            var request = _activeRequest;
+            if (request is null)
+                return;
+            foreach (var target in _targets.Values.ToArray())
+            {
+                if (!target.IsCodexAppUrl || target.SessionId is null)
+                    continue;
+                await RemoveEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
+                await EvaluateGuardedScriptAsync(target, request.RemoveScript, target.RuntimeToken, cancellationToken, isRemove: true).ConfigureAwait(false);
+                await ClearGuardAsync(target, target.RuntimeToken, cancellationToken).ConfigureAwait(false);
+                target.IsApplied = false;
+                target.RuntimeToken = Guid.NewGuid().ToString("N");
+            }
+            _activeRequest = null;
+            RecountAppliedTargets();
+        }
+        finally
+        {
+            _targetGate.Release();
+        }
+    }
+
+    private string CurrentCompatibilityGeneration => _bindingName + "_" + Volatile.Read(ref _compatibilityGeneration).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task<RuntimeCompatibilityResult> EnsureCompatibilityEarlyScriptAsync(CdpTarget target, string generation, CancellationToken cancellationToken)
+    {
+        if (target.SessionId is null || !target.IsCodexAppUrl)
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "目标不是可用的 Codex 顶层页面。", true, ConnectedInstance);
+        if (target.CompatibilityScriptId is not null && !string.Equals(target.CompatibilityScriptGeneration, generation, StringComparison.Ordinal))
+            await RemoveCompatibilityEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
+        if (target.CompatibilityScriptId is null)
+        {
+            var installed = await _browser.SendAsync(
+                "Page.addScriptToEvaluateOnNewDocument",
+                new { source = CodexLocaleCompatibilityScript.BuildStateScript(generation, enabled: true), runImmediately = false },
+                target.SessionId,
+                cancellationToken).ConfigureAwait(false);
+            target.CompatibilityScriptId = ReadString(installed, "identifier") ?? throw new InvalidOperationException("CDP 未返回语言兼容脚本 identifier。 ");
+            target.CompatibilityScriptGeneration = generation;
+        }
+
+        var result = await EvaluateCompatibilityScriptAsync(
+            target,
+            CodexLocaleCompatibilityScript.BuildStateScript(generation, enabled: true),
+            cancellationToken).ConfigureAwait(false);
+        if (result.State == "hooked" && result.HookInstalled)
+        {
+            target.CompatibilityHookGeneration = generation;
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Applied, Endpoint.ToString(), "本地化开关钩子已就绪。", true, ConnectedInstance);
+        }
+        target.CompatibilityHookGeneration = null;
+        return result.State switch
+        {
+            "pending" or "cancelled" => new RuntimeCompatibilityResult(RuntimeCompatibilityState.Pending, Endpoint.ToString(), "语言钩子正在等待 Codex 页面桥接就绪。", true, ConnectedInstance),
+            "unsupported" => new RuntimeCompatibilityResult(RuntimeCompatibilityState.Unsupported, Endpoint.ToString(), "当前 Codex 窗口不支持已验证的本地化开关适配。", true, ConnectedInstance),
+            _ => new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, Endpoint.ToString(), "安装本地化开关失败。", true, ConnectedInstance)
+        };
+    }
+
+    private async Task<CompatibilityScriptResult> ApplyCompatibilityToTargetAsync(
+        CdpTarget target,
+        string generation,
+        bool reassertIfAlreadyChinese,
+        CancellationToken cancellationToken)
+    {
+        if (target.SessionId is null || !target.IsCodexAppUrl || !_compatibilityOptions.ForceSimplifiedChinese || _compatibilitySnapshotStore is null)
+            return new CompatibilityScriptResult("pending");
+        if (!string.Equals(target.CompatibilityHookGeneration, generation, StringComparison.Ordinal))
+        {
+            var hook = await EnsureCompatibilityEarlyScriptAsync(target, generation, cancellationToken).ConfigureAwait(false);
+            if (hook.State != RuntimeCompatibilityState.Applied)
+                return new CompatibilityScriptResult(hook.State switch
+                {
+                    RuntimeCompatibilityState.Pending => "pending",
+                    RuntimeCompatibilityState.Unsupported => "unsupported",
+                    RuntimeCompatibilityState.TimedOut => "pending",
+                    _ => "failed"
+                }, ErrorMessage: hook.Message);
+        }
+        if (!reassertIfAlreadyChinese && string.Equals(target.CompatibilitySettingsGeneration, generation, StringComparison.Ordinal))
+            return new CompatibilityScriptResult("applied", "zh-CN");
+
+        var read = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildReadLocaleOverrideScript(generation), cancellationToken).ConfigureAwait(false);
+        if (read.State != "ready")
+            return read;
+
+        try { _compatibilitySnapshotStore.CaptureIfMissing(read.Value); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException or InvalidOperationException)
+        {
+            return new CompatibilityScriptResult("failed", ErrorMessage: $"无法持久化原语言恢复状态：{ex.Message}");
+        }
+
+        if (!reassertIfAlreadyChinese && string.Equals(read.Value, "zh-CN", StringComparison.Ordinal))
+        {
+            target.CompatibilitySettingsGeneration = generation;
+            return new CompatibilityScriptResult("applied", "zh-CN");
+        }
+
+        var write = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildWriteSimplifiedChineseScript(generation), cancellationToken).ConfigureAwait(false);
+        if (write.State == "applied")
+            target.CompatibilitySettingsGeneration = generation;
+        return write;
+    }
+
+    private async Task<CompatibilityScriptResult> RestoreCompatibilityForTargetAsync(CdpTarget target, string generation, CancellationToken cancellationToken)
+    {
+        if (target.SessionId is null || !target.IsCodexAppUrl || _compatibilitySnapshotStore is null)
+            return new CompatibilityScriptResult("pending");
+
+        await RemoveCompatibilityEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
+        var disabled = await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildStateScript(generation, enabled: false), cancellationToken).ConfigureAwait(false);
+        if (disabled.State is "pending" or "cancelled")
+            return disabled;
+        if (disabled.State == "unsupported")
+            return disabled;
+
+        LocaleOverrideRestoreSnapshot? snapshot;
+        try { snapshot = _compatibilitySnapshotStore.Load(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            return new CompatibilityScriptResult("failed", ErrorMessage: $"无法读取原语言恢复状态：{ex.Message}");
+        }
+        if (snapshot is null)
+            return new CompatibilityScriptResult("restored");
+
+        var result = await EvaluateCompatibilityScriptAsync(
+            target,
+            CodexLocaleCompatibilityScript.BuildRestoreLocaleOverrideScript(generation, snapshot.OriginalValue),
+            cancellationToken).ConfigureAwait(false);
+        if (result.State is "restored" or "preserved")
+        {
+            try { _compatibilitySnapshotStore.Clear(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new CompatibilityScriptResult("failed", ErrorMessage: $"已恢复语言，但清理恢复状态失败：{ex.Message}");
+            }
+        }
+        return result;
+    }
+
+    private async Task RemoveCompatibilityEarlyScriptAsync(CdpTarget target, CancellationToken cancellationToken)
+    {
+        if (target.CompatibilityScriptId is null || !_browser.IsConnected || target.SessionId is null)
+            return;
+        var id = target.CompatibilityScriptId;
+        await _browser.SendAsync("Page.removeScriptToEvaluateOnNewDocument", new { identifier = id }, target.SessionId, cancellationToken).ConfigureAwait(false);
+        target.CompatibilityScriptId = null;
+        target.CompatibilityHookGeneration = null;
+        target.CompatibilityScriptGeneration = null;
+        target.CompatibilitySettingsGeneration = null;
+    }
+
+    private async Task<CompatibilityScriptResult> EvaluateCompatibilityScriptAsync(CdpTarget target, string expression, CancellationToken cancellationToken)
+    {
+        JsonElement result;
+        try
+        {
+            result = await _browser.SendAsync(
+                "Runtime.evaluate",
+                new { expression, returnByValue = true, awaitPromise = true },
+                target.SessionId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsDestroyedTargetFailure(ex))
+        {
+            return new CompatibilityScriptResult("pending", ErrorMessage: "Codex 正在重新创建页面执行上下文。");
+        }
+        if (result.TryGetProperty("exceptionDetails", out var exceptionDetails))
+        {
+            var text = ReadString(exceptionDetails, "text") ?? "语言兼容脚本执行失败";
+            var transientContext = text.Contains("context was destroyed", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("Cannot find context", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("execution context", StringComparison.OrdinalIgnoreCase) && text.Contains("not found", StringComparison.OrdinalIgnoreCase);
+            return new CompatibilityScriptResult(transientContext ? "pending" : "failed", ErrorMessage: text);
+        }
+        if (!result.TryGetProperty("result", out var remoteObject) || !remoteObject.TryGetProperty("value", out var value) || value.ValueKind != JsonValueKind.Object)
+            return new CompatibilityScriptResult("failed", ErrorMessage: "语言兼容脚本未返回可验证结果。");
+
+        var state = ReadString(value, "state");
+        if (state is null)
+            return new CompatibilityScriptResult("failed", ErrorMessage: "语言兼容脚本状态缺失。");
+        var hookInstalled = value.TryGetProperty("hookInstalled", out var hookValue) && hookValue.ValueKind == JsonValueKind.True;
+        string? locale = null;
+        if (value.TryGetProperty("value", out var localeValue) && localeValue.ValueKind == JsonValueKind.String)
+            locale = localeValue.GetString();
+        else if (value.TryGetProperty("value", out localeValue) && localeValue.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            locale = null;
+        return new CompatibilityScriptResult(state, locale, hookInstalled);
     }
 
     public async Task RemoveAndStopAsync(CancellationToken cancellationToken)
@@ -101,24 +481,36 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
                 try { await RemoveEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) when (IsDestroyedTargetFailure(ex)) { destroyedTargets.Add(target.TargetId); }
                 catch (Exception ex) { failures.Add(ex); }
-            }
-            foreach (var target in _targets.Values.ToArray())
-            {
-                if (destroyedTargets.Contains(target.TargetId) || !target.IsCodexAppUrl)
-                    continue;
-                try
-                {
-                    await EvaluateGuardedScriptAsync(target, _activeRequest.RemoveScript, target.RuntimeToken, cancellationToken, isRemove: true).ConfigureAwait(false);
-                    target.IsApplied = false;
-                }
+                try { await RemoveCompatibilityEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) when (IsDestroyedTargetFailure(ex)) { destroyedTargets.Add(target.TargetId); }
                 catch (Exception ex) { failures.Add(ex); }
             }
             foreach (var target in _targets.Values.ToArray())
             {
+                if (destroyedTargets.Contains(target.TargetId) || !target.IsCodexAppUrl)
+                    continue;
+                if (_activeRequest is not null)
+                {
+                    try
+                    {
+                        await EvaluateGuardedScriptAsync(target, _activeRequest.RemoveScript, target.RuntimeToken, cancellationToken, isRemove: true).ConfigureAwait(false);
+                        target.IsApplied = false;
+                    }
+                    catch (Exception ex) when (IsDestroyedTargetFailure(ex)) { destroyedTargets.Add(target.TargetId); }
+                    catch (Exception ex) { failures.Add(ex); }
+                }
+                if (!destroyedTargets.Contains(target.TargetId))
+                {
+                    try { await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildStateScript(CurrentCompatibilityGeneration, enabled: false), cancellationToken).ConfigureAwait(false); }
+                    catch (Exception ex) when (IsDestroyedTargetFailure(ex)) { destroyedTargets.Add(target.TargetId); }
+                    catch (Exception ex) { failures.Add(ex); }
+                }
+            }
+            foreach (var target in _targets.Values.ToArray())
+            {
                 if (destroyedTargets.Contains(target.TargetId) || target.SessionId is null || !_browser.IsConnected)
                     continue;
-                if (target.EarlyScriptId is not null)
+                if (target.EarlyScriptId is not null || target.CompatibilityScriptId is not null)
                     continue;
                 try
                 {
@@ -133,7 +525,7 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
                 try { await _browser.SendAsync("Target.setDiscoverTargets", new { discover = false }, cancellationToken: cancellationToken).ConfigureAwait(false); }
                 catch (Exception ex) { failures.Add(ex); }
             }
-            foreach (var targetId in _targets.Values.Where(target => target.EarlyScriptId is null).Select(target => target.TargetId).ToArray())
+            foreach (var targetId in _targets.Values.Where(target => target.EarlyScriptId is null && target.CompatibilityScriptId is null).Select(target => target.TargetId).ToArray())
                 _targets.Remove(targetId);
             RecountAppliedTargets();
             if (failures.Count > 0)
@@ -234,14 +626,24 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
             EnsureConnected();
             if (_targets.TryGetValue(targetId, out var existing))
             {
+                var urlChanged = !string.Equals(existing.Url, url, StringComparison.Ordinal);
                 existing.Url = url;
                 if (isCandidate && existing.SessionId is not null)
                 {
-                    if (existing.EarlyScriptId is null)
+                    if (urlChanged)
+                    {
+                        existing.CompatibilityHookGeneration = null;
+                        existing.CompatibilitySettingsGeneration = null;
+                    }
+                    if (_activeRequest is not null && existing.EarlyScriptId is null)
                     {
                         existing.RuntimeToken = Guid.NewGuid().ToString("N");
                         existing.IsApplied = await InstallRuntimeAsync(existing, _activeRequest.RuntimeScript, cancellationToken).ConfigureAwait(false);
                     }
+                    if (_compatibilityOptions.ForceSimplifiedChinese && _compatibilitySnapshotStore is not null)
+                        PublishCompatibilityScriptResult(await ApplyCompatibilityToTargetAsync(existing, CurrentCompatibilityGeneration, reassertIfAlreadyChinese: false, cancellationToken).ConfigureAwait(false));
+                    else if (!_compatibilityOptions.ForceSimplifiedChinese && _compatibilitySnapshotStore is not null)
+                        PublishCompatibilityScriptResult(await RestoreCompatibilityForTargetAsync(existing, CurrentCompatibilityGeneration, cancellationToken).ConfigureAwait(false));
                     RecountAppliedTargets();
                     return;
                 }
@@ -266,8 +668,23 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
             _targets[targetId] = target;
             await _browser.SendAsync("Page.enable", sessionId: sessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
             await _browser.SendAsync("Runtime.enable", sessionId: sessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
-            await _browser.SendAsync("Runtime.addBinding", new { name = _bindingName }, sessionId, cancellationToken).ConfigureAwait(false);
-            target.IsApplied = await InstallRuntimeAsync(target, _activeRequest.RuntimeScript, cancellationToken).ConfigureAwait(false);
+            if (_activeRequest is not null)
+            {
+                await _browser.SendAsync("Runtime.addBinding", new { name = _bindingName }, sessionId, cancellationToken).ConfigureAwait(false);
+                target.SkinBindingInstalled = true;
+                target.IsApplied = await InstallRuntimeAsync(target, _activeRequest.RuntimeScript, cancellationToken).ConfigureAwait(false);
+            }
+            if (_compatibilityOptions.ForceSimplifiedChinese)
+            {
+                if (_compatibilitySnapshotStore is not null)
+                    PublishCompatibilityScriptResult(await ApplyCompatibilityToTargetAsync(target, CurrentCompatibilityGeneration, reassertIfAlreadyChinese: false, cancellationToken).ConfigureAwait(false));
+                else
+                    await EnsureCompatibilityEarlyScriptAsync(target, CurrentCompatibilityGeneration, cancellationToken).ConfigureAwait(false);
+            }
+            else if (_compatibilitySnapshotStore is not null)
+            {
+                PublishCompatibilityScriptResult(await RestoreCompatibilityForTargetAsync(target, CurrentCompatibilityGeneration, cancellationToken).ConfigureAwait(false));
+            }
             RecountAppliedTargets();
         }
         finally
@@ -284,7 +701,14 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
             var target = _targets.Values.FirstOrDefault(candidate => candidate.SessionId == sessionId);
             if (target is null || !target.IsCodexAppUrl || _stopping)
                 return;
-            target.IsApplied = await ProbeAppliedStateAsync(target, cancellationToken).ConfigureAwait(false);
+            if (_activeRequest is not null)
+                target.IsApplied = await ProbeAppliedStateAsync(target, cancellationToken).ConfigureAwait(false);
+            target.CompatibilityHookGeneration = null;
+            target.CompatibilitySettingsGeneration = null;
+            if (_compatibilityOptions.ForceSimplifiedChinese && _compatibilitySnapshotStore is not null)
+                PublishCompatibilityScriptResult(await ApplyCompatibilityToTargetAsync(target, CurrentCompatibilityGeneration, reassertIfAlreadyChinese: false, cancellationToken).ConfigureAwait(false));
+            else if (!_compatibilityOptions.ForceSimplifiedChinese && _compatibilitySnapshotStore is not null)
+                PublishCompatibilityScriptResult(await RestoreCompatibilityForTargetAsync(target, CurrentCompatibilityGeneration, cancellationToken).ConfigureAwait(false));
             RecountAppliedTargets();
         }
         finally
@@ -325,7 +749,7 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         try
         {
             var target = _targets.Values.FirstOrDefault(candidate => candidate.SessionId == cdpEvent.SessionId);
-            if (target is null || !target.IsCodexAppUrl || ReadString(cdpEvent.Parameters, "payload") != target.RuntimeToken)
+            if (target is null || !target.IsCodexAppUrl || _activeRequest is null || ReadString(cdpEvent.Parameters, "payload") != target.RuntimeToken)
                 return;
             target.IsApplied = true;
             RecountAppliedTargets();
@@ -380,8 +804,11 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         if (target.SessionId is null)
             return;
         await RemoveEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
-        if (target.IsCodexAppUrl && target.RuntimeToken is not null)
+        await RemoveCompatibilityEarlyScriptAsync(target, cancellationToken).ConfigureAwait(false);
+        if (target.IsCodexAppUrl && target.RuntimeToken is not null && _activeRequest is not null)
             await EvaluateGuardedScriptAsync(target, _activeRequest.RemoveScript, target.RuntimeToken, cancellationToken, isRemove: true).ConfigureAwait(false);
+        if (target.IsCodexAppUrl)
+            await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildStateScript(CurrentCompatibilityGeneration, enabled: false), cancellationToken).ConfigureAwait(false);
         await _browser.SendAsync("Target.detachFromTarget", new { sessionId = target.SessionId }, cancellationToken: cancellationToken).ConfigureAwait(false);
         target.SessionId = null;
         target.IsApplied = false;
@@ -511,7 +938,51 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         var hasCodexPage = result.TryGetProperty("targetInfos", out var infos) && infos.ValueKind == JsonValueKind.Array &&
             infos.EnumerateArray().Any(info => ReadString(info, "type") == "page" && IsCodexAppUrl(ReadString(info, "url") ?? string.Empty));
         if (!hasCodexPage)
+        {
+            if (_compatibilityOptions.ForceSimplifiedChinese)
+                return;
+            try
+            {
+                if (_compatibilitySnapshotStore?.Load() is not null)
+                    return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+            {
+                return;
+            }
             FailBrowserSession(new IOException("Codex 已关闭所有受支持的 app 页面，皮肤连接已停止。"));
+        }
+    }
+
+    private void PublishCompatibilityScriptResult(CompatibilityScriptResult scriptResult)
+    {
+        var state = scriptResult.State switch
+        {
+            "applied" or "restored" or "preserved" => _compatibilityOptions.ForceSimplifiedChinese
+                ? RuntimeCompatibilityState.Applied
+                : RuntimeCompatibilityState.Disabled,
+            "pending" or "cancelled" => RuntimeCompatibilityState.Pending,
+            "unsupported" => RuntimeCompatibilityState.Unsupported,
+            _ => RuntimeCompatibilityState.Failed
+        };
+        var message = state switch
+        {
+            RuntimeCompatibilityState.Applied => "Codex 语言设置已确认使用简体中文。",
+            RuntimeCompatibilityState.Disabled when scriptResult.State == "preserved" => "已关闭固定中文；保留了用户手动更改的语言。",
+            RuntimeCompatibilityState.Disabled => "简体中文固定模式已关闭，并完成原语言恢复。",
+            RuntimeCompatibilityState.Pending => "语言设置等待 Codex 主窗口或设置宿主就绪。",
+            RuntimeCompatibilityState.Unsupported => "当前 Codex 窗口不支持已验证的语言设置入口。",
+            _ => scriptResult.ErrorMessage ?? "Codex 语言设置未完成。"
+        };
+        var result = new RuntimeCompatibilityResult(state, Endpoint.ToString(), message, true, ConnectedInstance);
+        var handlers = CompatibilityResultChanged;
+        if (handlers is null)
+            return;
+        foreach (Action<RuntimeCompatibilityResult> handler in handlers.GetInvocationList())
+        {
+            try { handler(result); }
+            catch { }
+        }
     }
 
     private void EnsureConnected()
@@ -535,6 +1006,13 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
                     {
                         try { await RemoveEarlyScriptAsync(target, cleanupTimeout.Token).ConfigureAwait(false); }
                         catch { }
+                        try { await RemoveCompatibilityEarlyScriptAsync(target, cleanupTimeout.Token).ConfigureAwait(false); }
+                        catch { }
+                        if (target.IsCodexAppUrl && target.SessionId is not null)
+                        {
+                            try { await EvaluateCompatibilityScriptAsync(target, CodexLocaleCompatibilityScript.BuildStateScript(CurrentCompatibilityGeneration, enabled: false), cleanupTimeout.Token).ConfigureAwait(false); }
+                            catch { }
+                        }
                     }
                 }
                 _targets.Clear();
@@ -550,6 +1028,8 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         _lifetime.Dispose();
     }
 
+    private sealed record CompatibilityScriptResult(string State, string? Value = null, bool HookInstalled = false, string? ErrorMessage = null);
+
     private sealed class CdpTarget(string targetId, string sessionId, string url, string runtimeToken)
     {
         public string TargetId { get; } = targetId;
@@ -557,6 +1037,11 @@ internal sealed class CdpRuntimeSession : IAsyncDisposable
         public string Url { get; set; } = url;
         public string RuntimeToken { get; set; } = runtimeToken;
         public string? EarlyScriptId { get; set; }
+        public string? CompatibilityScriptId { get; set; }
+        public string? CompatibilityScriptGeneration { get; set; }
+        public string? CompatibilityHookGeneration { get; set; }
+        public string? CompatibilitySettingsGeneration { get; set; }
+        public bool SkinBindingInstalled { get; set; }
         public bool IsApplied { get; set; }
         public bool IsCodexAppUrl => CdpRuntimeSession.IsCodexAppUrl(Url);
     }

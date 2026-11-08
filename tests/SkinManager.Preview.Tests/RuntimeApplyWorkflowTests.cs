@@ -17,6 +17,10 @@ internal static class RuntimeApplyWorkflowTests
         await DoesNotApplyAfterLaunchFailureOrWrongProcessAsync();
         await CancellingWhileWaitingDoesNotApplyAsync();
         await TimeoutDoesNotApplyAsync();
+        await ConnectsToExistingTargetWithoutSkinAsync();
+        await LaunchesAndWaitsForTargetWithoutSkinAsync();
+        await RefusesNormalInstanceForCompatibilityAsync();
+        await CancellingCompatibilityReadinessDoesNotConnectAsync();
         VerifiesConnectedDoesNotMeanApplied();
     }
 
@@ -170,6 +174,74 @@ internal static class RuntimeApplyWorkflowTests
 
         Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 1 && services.Applies.Count == 0,
             "调试端口超时后不发送皮肤脚本");
+    }
+
+    private static async Task ConnectsToExistingTargetWithoutSkinAsync()
+    {
+        var target = CreateTarget(4112, 9335);
+        var services = new FakeServices(new FakeInstances([target]));
+        var result = await services.CreateWorkflow().StartOrConnectAsync(
+            9335, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && result.SkinId is null &&
+                result.AppliedTargetCount == 0 && result.ConnectedInstance == target.Identity &&
+                services.LaunchCount == 0 && services.Applies.Count == 0,
+            "无皮肤时连接唯一就绪的调试目标，不发送Apply");
+    }
+
+    private static async Task LaunchesAndWaitsForTargetWithoutSkinAsync()
+    {
+        var target = CreateTarget(4113, 9339);
+        var services = new FakeServices(new FakeInstances([], [target]));
+        var result = await services.CreateWorkflow().StartOrConnectAsync(
+            9339, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && result.SkinId is null &&
+                result.AppliedTargetCount == 0 && result.ConnectedInstance == target.Identity &&
+                services.LaunchCount == 1 && services.LaunchPort == 9339 && services.Applies.Count == 0,
+            "无皮肤时等待正确调试身份就绪后连接，Apply次数仍为零");
+    }
+
+    private static async Task RefusesNormalInstanceForCompatibilityAsync()
+    {
+        var normal = CreateTarget(4114, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var services = new FakeServices(new FakeInstances([normal]));
+        var result = await services.CreateWorkflow().StartOrConnectAsync(
+            9335, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0,
+            "普通实例运行时不关闭或重启，也不连接/配置兼容选项");
+    }
+
+    private static async Task CancellingCompatibilityReadinessDoesNotConnectAsync()
+    {
+        var instances = new FakeInstances([]);
+        var waitingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        instances.OnRead = count =>
+        {
+            if (count >= 2)
+            {
+                waitingStarted.TrySetResult();
+            }
+        };
+        var services = new FakeServices(instances);
+        using var cancellation = new CancellationTokenSource();
+        var operation = services.CreateWorkflow(pollInterval: TimeSpan.FromSeconds(10)).StartOrConnectAsync(
+            9335, null, null, hasActiveConnection: false, cancellation.Token);
+        await waitingStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        try
+        {
+            await operation;
+            throw new InvalidOperationException("等待目标时取消应结束语言同步启动流程。");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Require(services.LaunchCount == 1 && services.Applies.Count == 0,
+            "无皮肤配置的就绪等待取消后不连接、不发送Apply");
     }
 
     private static void VerifiesConnectedDoesNotMeanApplied()

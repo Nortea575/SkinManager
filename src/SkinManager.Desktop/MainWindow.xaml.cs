@@ -39,6 +39,8 @@ public partial class MainWindow : Window
     private readonly string _previewProfileDirectory;
     private readonly RuntimeController _runtimeController = new();
     private readonly RuntimeApplyWorkflow _runtimeApplyWorkflow;
+    private readonly CompatibilitySettingsStore _compatibilitySettingsStore;
+    private readonly SemaphoreSlim _compatibilityConfigureGate = new(1, 1);
     private readonly bool _readRuntimeStatusOnLoad;
     private readonly ObservableCollection<SkinCard> _skins = [];
     private readonly ICollectionView _skinsView;
@@ -80,6 +82,12 @@ public partial class MainWindow : Window
     private CodexProcessIdentity? _lastConnectedInstance;
     private CancellationTokenSource? _runtimeActionCancellation;
     private bool _settingInstancePort;
+    private RuntimeCompatibilityOptions _compatibilityOptions = new();
+    private bool _compatibilitySettingsLoaded;
+    private string? _compatibilitySettingsLoadError;
+    private RuntimeCompatibilityResult? _lastCompatibilityResult;
+    private Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> _configureCompatibility = null!;
+    private bool _startupCompatibilityReconciled;
     private long _visibilitySequence;
 
     private const double SkinThumbnailWidth = 76;
@@ -111,6 +119,7 @@ public partial class MainWindow : Window
             _runtimeController.LaunchDebugClientAsync,
             _runtimeController.ApplyAsync,
             codexInstanceService);
+        _configureCompatibility = _runtimeController.ConfigureCompatibilityAsync;
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
         _runtimeStatusReader = runtimeStatusReader;
@@ -126,6 +135,11 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ChatGPTSkinManager",
             "PreviewBrowser"));
+        var compatibilitySettingsPath = previewProfileDirectory is null
+            ? null
+            : Path.Combine(_previewProfileDirectory, "compatibility-settings.json");
+        _compatibilitySettingsStore = new CompatibilitySettingsStore(compatibilitySettingsPath);
+        TryLoadCompatibilitySettings();
         _previewRenderer = new ThemePreviewRenderer(PreviewBrowser, _previewProfileDirectory, basePackage);
         _editorPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
         _editorPreviewTimer.Tick += EditorPreviewTimer_Tick;
@@ -145,12 +159,15 @@ public partial class MainWindow : Window
         PreviewBrowser.IsVisibleChanged += PreviewBrowser_IsVisibleChanged;
         _previewRenderer.CurrentResolvedSkinChanged += PreviewRenderer_CurrentResolvedSkinChanged;
         _previewRenderer.ComponentSelected += PreviewRenderer_ComponentSelected;
+        _previewRenderer.BackgroundFocusChanged += PreviewRenderer_BackgroundFocusChanged;
         _runtimeController.StatusChanged += RuntimeController_StatusChanged;
         SkinEditor.DraftChanged += SkinEditor_DraftChanged;
         SkinEditor.ScopeChanged += SkinEditor_ScopeChanged;
         SkinEditor.SaveRequested += SkinEditor_SaveRequested;
         SkinEditor.CancelRequested += SkinEditor_CancelRequested;
         SkinEditor.SaveAsRequested += SkinEditor_SaveAsRequested;
+        SkinEditor.BackgroundFocusModeChanged += SkinEditor_BackgroundFocusModeChanged;
+        SkinEditor.EditorModeChanged += SkinEditor_EditorModeChanged;
         Closing += MainWindow_Closing;
         Closed += (_, _) =>
         {
@@ -170,6 +187,7 @@ public partial class MainWindow : Window
             {
                 renderer.CurrentResolvedSkinChanged -= PreviewRenderer_CurrentResolvedSkinChanged;
                 renderer.ComponentSelected -= PreviewRenderer_ComponentSelected;
+                renderer.BackgroundFocusChanged -= PreviewRenderer_BackgroundFocusChanged;
                 renderer.Dispose();
                 _previewRenderer = null;
             }
@@ -217,6 +235,37 @@ public partial class MainWindow : Window
                 status.State == RuntimeStatusState.Error
                     ? "本次操作未完成。请查看原因后重试。"
                     : $"当前皮肤：{package.Name}");
+            if (status.State == RuntimeStatusState.Connected && _compatibilitySettingsLoaded)
+            {
+                RuntimeCompatibilityResult? compatibilityResult = status.CompatibilityResult;
+                if (compatibilityResult is null)
+                {
+                    try
+                    {
+                        compatibilityResult = await ConfigureCompatibilityForCurrentTargetAsync(
+                            _compatibilityOptions,
+                            cancellation.Token,
+                            callerOwnsBusyState: true);
+                    }
+                    catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                    {
+                        compatibilityResult = new RuntimeCompatibilityResult(
+                            RuntimeCompatibilityState.Pending,
+                            status.Endpoint,
+                            "皮肤应用已完成；语言状态确认已取消。已保存设置会在下次连接后重试。",
+                            status.IsDebugPortOpen,
+                            status.ConnectedInstance);
+                    }
+                }
+
+                _lastCompatibilityResult = compatibilityResult ?? new RuntimeCompatibilityResult(
+                    RuntimeCompatibilityState.Pending,
+                    status.Endpoint,
+                    "皮肤应用已完成；当前实例的语言状态尚未确认。",
+                    status.IsDebugPortOpen,
+                    status.ConnectedInstance);
+                _compatibilityWindow?.UpdateRuntimePreference(_lastCompatibilityResult);
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -276,8 +325,257 @@ public partial class MainWindow : Window
             RuntimeScript = SkinRuntimeCompiler.BuildRuntimeScript(package, transparency),
             RemoveScript = SkinRuntimeCompiler.BuildRemoveScript(),
             Endpoint = $"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}",
-            ExpectedInstance = selected?.Identity
+            ExpectedInstance = selected?.Identity,
+            Compatibility = _compatibilitySettingsLoaded ? _compatibilityOptions : null
         };
+    }
+
+    private void TryLoadCompatibilitySettings()
+    {
+        try
+        {
+            _compatibilityOptions = _compatibilitySettingsStore.Load();
+            _compatibilitySettingsLoaded = true;
+            _compatibilitySettingsLoadError = null;
+        }
+        catch (Exception exception)
+        {
+            _compatibilityOptions = new RuntimeCompatibilityOptions();
+            _compatibilitySettingsLoaded = false;
+            _compatibilitySettingsLoadError = exception.Message;
+        }
+    }
+
+    private RuntimeCompatibilityOptions ReloadCompatibilitySettings()
+    {
+        _compatibilityOptions = _compatibilitySettingsStore.Load();
+        _compatibilitySettingsLoaded = true;
+        _compatibilitySettingsLoadError = null;
+        return _compatibilityOptions;
+    }
+
+    private async Task<RuntimeCompatibilityResult?> SaveAndConfigureCompatibilityAsync(
+        RuntimeCompatibilityOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (_runtimeOperationInProgress)
+        {
+            throw new InvalidOperationException("管理器正在执行其他操作，请完成后重试。");
+        }
+
+        SetRuntimeOperationInProgress(true, "正在保存并同步界面语言设置…");
+        try
+        {
+            _compatibilitySettingsStore.Save(options);
+            _compatibilityOptions = options;
+            _compatibilitySettingsLoaded = true;
+            _compatibilitySettingsLoadError = null;
+            var result = await ConfigureCompatibilityForCurrentTargetAsync(options, cancellationToken, callerOwnsBusyState: true);
+            _lastCompatibilityResult = result;
+            return result;
+        }
+        finally
+        {
+            SetRuntimeOperationInProgress(false);
+        }
+    }
+
+    private async Task<RuntimeCompatibilityResult?> ConfigureCompatibilityForCurrentTargetAsync(
+        RuntimeCompatibilityOptions options,
+        CancellationToken cancellationToken,
+        bool callerOwnsBusyState = false)
+    {
+        if (!_compatibilitySettingsLoaded)
+        {
+            return null;
+        }
+
+        var candidate = GetCompatibilityTarget();
+        if (candidate is null)
+        {
+            return null;
+        }
+
+        var endpoint = $"http://127.0.0.1:{candidate.Value.Port.ToString(CultureInfo.InvariantCulture)}";
+        if (_codexInstanceService is null)
+        {
+            var missingService = new RuntimeCompatibilityResult(
+                RuntimeCompatibilityState.Pending,
+                endpoint,
+                "无法核验 Codex 实例；请在实例管理中刷新并重新选择目标。",
+                false,
+                candidate.Value.Identity);
+            _lastCompatibilityResult = missingService;
+            _compatibilityWindow?.UpdateRuntimePreference(missingService);
+            return missingService;
+        }
+
+        if (_runtimeOperationInProgress && !callerOwnsBusyState)
+        {
+            var deferred = new RuntimeCompatibilityResult(
+                RuntimeCompatibilityState.Pending,
+                endpoint,
+                "管理器正在执行其他操作；设置已保存，将在下一次连接时应用。",
+                false,
+                candidate.Value.Identity);
+            _lastCompatibilityResult = deferred;
+            _compatibilityWindow?.UpdateRuntimePreference(deferred);
+            return deferred;
+        }
+
+        var ownsBusyState = false;
+        if (!callerOwnsBusyState)
+        {
+            SetRuntimeOperationInProgress(true, "正在同步界面语言设置…");
+            ownsBusyState = true;
+        }
+
+        var acquiredGate = false;
+        try
+        {
+            await _compatibilityConfigureGate.WaitAsync(cancellationToken);
+            acquiredGate = true;
+            var instances = await _codexInstanceService.GetInstancesAsync(cancellationToken);
+            var target = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, candidate.Value.Identity));
+            if (target is not { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort } ||
+                debugPort != candidate.Value.Port)
+            {
+                var unavailable = new RuntimeCompatibilityResult(
+                    RuntimeCompatibilityState.Pending,
+                    endpoint,
+                    "所选 Codex 实例已退出或端口尚未就绪；设置已保存，刷新实例后可重试。",
+                    false,
+                    candidate.Value.Identity);
+                _lastCompatibilityResult = unavailable;
+                _compatibilityWindow?.UpdateRuntimePreference(unavailable);
+                return unavailable;
+            }
+
+            var request = new RuntimeCompatibilityRequest
+            {
+                Endpoint = endpoint,
+                ExpectedInstance = target.Identity,
+                Options = options
+            };
+            var result = await _configureCompatibility(request, cancellationToken);
+            _lastCompatibilityResult = result;
+            _compatibilityWindow?.UpdateRuntimePreference(result);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var failed = new RuntimeCompatibilityResult(
+                RuntimeCompatibilityState.Failed,
+                endpoint,
+                exception.Message,
+                false,
+                candidate.Value.Identity);
+            _lastCompatibilityResult = failed;
+            _compatibilityWindow?.UpdateRuntimePreference(failed);
+            return failed;
+        }
+        finally
+        {
+            if (acquiredGate)
+            {
+                _compatibilityConfigureGate.Release();
+            }
+            if (ownsBusyState)
+            {
+                SetRuntimeOperationInProgress(false);
+            }
+        }
+    }
+
+    private (CodexProcessIdentity Identity, int Port)? GetCompatibilityTarget()
+    {
+        if (_selectedConnectionInstance is
+            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int selectedDebugPort } selected)
+        {
+            return (selected.Identity, selectedDebugPort);
+        }
+
+        if (_lastRuntimeStatus is
+            { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } endpointText } &&
+            Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) &&
+            endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback && endpoint.Port is >= 1 and <= 65535 &&
+            TryReadRuntimePort(out var selectedPort) && endpoint.Port == selectedPort)
+        {
+            return (connectedIdentity, endpoint.Port);
+        }
+
+        return null;
+    }
+
+    private static bool SameProcessIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
+        left.ProcessId == right.ProcessId &&
+        left.StartedAtUtc.UtcDateTime == right.StartedAtUtc.UtcDateTime &&
+        string.Equals(Path.GetFullPath(left.ExecutablePath), Path.GetFullPath(right.ExecutablePath), StringComparison.OrdinalIgnoreCase);
+
+    internal void SetCompatibilityConfiguratorForTesting(
+        Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> configure) =>
+        _configureCompatibility = configure;
+
+    private async Task<RuntimeStatus> StartOrConnectAndConfigureCompatibilityAsync(int port, CancellationToken cancellationToken)
+    {
+        var activeInstance = GetActiveConnectionInstance(port, out var hasActiveConnection);
+        var status = await _runtimeApplyWorkflow.StartOrConnectAsync(
+            port,
+            _selectedConnectionInstance,
+            activeInstance,
+            hasActiveConnection,
+            cancellationToken);
+        if (status.State != RuntimeStatusState.Connected)
+        {
+            DisplayRuntimeStatus(status);
+            return status;
+        }
+
+        Interlocked.Increment(ref _runtimeStatusSequence);
+        DisplayRuntimeStatus(status, "Codex 调试目标已核验；没有应用皮肤。");
+        if (!_compatibilitySettingsLoaded)
+        {
+            var unavailableMessage = $"调试目标已就绪；未能读取兼容设置，因此没有同步界面语言。{_compatibilitySettingsLoadError} 尚未应用皮肤。";
+            var unavailable = new RuntimeStatus(
+                RuntimeStatusState.Connected,
+                null,
+                status.Endpoint,
+                unavailableMessage,
+                true,
+                0,
+                status.ConnectedInstance);
+            DisplayRuntimeStatus(unavailable);
+            return unavailable;
+        }
+
+        var result = await ConfigureCompatibilityForCurrentTargetAsync(
+            _compatibilityOptions,
+            cancellationToken,
+            callerOwnsBusyState: true);
+        var compatibilityMessage = result switch
+        {
+            { State: RuntimeCompatibilityState.Applied } => "简体中文设置已应用。",
+            { State: RuntimeCompatibilityState.Disabled } disabled => $"固定语言已关闭：{disabled.Message ?? "当前目标已响应关闭设置。"}",
+            { State: RuntimeCompatibilityState.Pending } pending => $"界面语言待处理：{pending.Message ?? "目标暂不可用。"}",
+            { State: RuntimeCompatibilityState.Unsupported } unsupported => $"当前目标不支持界面语言设置：{unsupported.Message ?? "宿主接口不可用。"}",
+            { State: RuntimeCompatibilityState.TimedOut } timedOut => $"等待界面语言状态超时：{timedOut.Message ?? "请在兼容设置中重试。"}",
+            { State: RuntimeCompatibilityState.Failed } failed => $"界面语言设置未完成：{failed.Message ?? "请在兼容设置中重试。"}",
+            _ => "界面语言设置已保存；连接状态待确认。"
+        };
+        var completed = new RuntimeStatus(
+            RuntimeStatusState.Connected,
+            null,
+            status.Endpoint,
+            $"调试目标已核验。{compatibilityMessage} 未应用皮肤。",
+            true,
+            0,
+            status.ConnectedInstance);
+        DisplayRuntimeStatus(completed);
+        return completed;
     }
 
     private async void LaunchDebugButton_Click(object sender, RoutedEventArgs e)
@@ -288,19 +586,14 @@ public partial class MainWindow : Window
         }
 
         Interlocked.Increment(ref _runtimeStatusSequence);
-        SetRuntimeOperationInProgress(true, "正在启动调试版…");
+        SetRuntimeOperationInProgress(true, "正在核验调试目标并同步界面语言…");
         try
         {
-            var status = await _runtimeController.LaunchDebugClientAsync(new DebugClientLaunchOptions(port));
-            DisplayRuntimeStatus(
-                status,
-                status.State == RuntimeStatusState.Error
-                    ? null
-                    : "已请求启动。请等待桌面应用主界面出现后再连接。");
+            await StartOrConnectAndConfigureCompatibilityAsync(port, CancellationToken.None);
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "调试版未能启动。请关闭已有的调试会话后重试。");
+            SetRuntimeError(exception.Message, "调试版未能启动或界面语言未能同步。请检查实例管理与兼容设置后重试。");
         }
         finally
         {
@@ -358,6 +651,14 @@ public partial class MainWindow : Window
         _selectedConnectionInstance = null;
         UpdateRuntimeTargetSummary();
         UpdateRuntimeControls();
+        if (_lastCompatibilityResult is not null &&
+            (!TryReadRuntimePort(out var selectedPort) ||
+             !Uri.TryCreate(_lastCompatibilityResult.Endpoint, UriKind.Absolute, out var configuredEndpoint) ||
+             configuredEndpoint.Port != selectedPort))
+        {
+            _lastCompatibilityResult = null;
+            _compatibilityWindow?.UpdateRuntimePreference(null);
+        }
     }
 
     private void UpdateRuntimeTargetSummary()
@@ -426,8 +727,38 @@ public partial class MainWindow : Window
             RuntimePortInput.Text = debugPort.ToString(CultureInfo.InvariantCulture);
             _settingInstancePort = false;
             UpdateRuntimeTargetSummary();
-            RuntimeStatusMessage.Text = "已选择调试实例。点击“连接并应用 / 更新”后才会连接并应用皮肤。";
+            _lastCompatibilityResult = null;
+            _compatibilityWindow?.UpdateRuntimePreference(null);
+            RuntimeStatusMessage.Text = "已选择调试实例。界面语言会在该目标连接后单独配置；应用皮肤仍需点击主操作。";
             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
+
+            if (_compatibilitySettingsLoaded)
+            {
+                SetRuntimeOperationInProgress(true, "正在核验目标并同步界面语言…");
+                try
+                {
+                    await ConfigureCompatibilityForCurrentTargetAsync(
+                        _compatibilityOptions,
+                        CancellationToken.None,
+                        callerOwnsBusyState: true);
+                }
+                catch (Exception exception)
+                {
+                    var endpoint = $"http://127.0.0.1:{debugPort.ToString(CultureInfo.InvariantCulture)}";
+                    var failed = new RuntimeCompatibilityResult(
+                        RuntimeCompatibilityState.Failed,
+                        endpoint,
+                        exception.Message,
+                        false,
+                        instance.Identity);
+                    _lastCompatibilityResult = failed;
+                    _compatibilityWindow?.UpdateRuntimePreference(failed);
+                }
+                finally
+                {
+                    SetRuntimeOperationInProgress(false);
+                }
+            }
         }
 
         if (_readRuntimeStatusOnLoad &&
@@ -453,7 +784,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var window = new CompatibilityWindow(StartDebugClientFromCompatibilityAsync)
+        var window = new CompatibilityWindow(
+            _compatibilityOptions,
+            _compatibilitySettingsLoaded,
+            _compatibilitySettingsLoadError,
+            _lastCompatibilityResult,
+            SaveAndConfigureCompatibilityAsync,
+            ReloadCompatibilitySettings,
+            StartDebugClientFromCompatibilityAsync)
         {
             Owner = this
         };
@@ -483,20 +821,14 @@ public partial class MainWindow : Window
         }
 
         Interlocked.Increment(ref _runtimeStatusSequence);
-        SetRuntimeOperationInProgress(true, "正在请求启动 Codex 调试版…");
+        SetRuntimeOperationInProgress(true, "正在核验调试目标并同步界面语言…");
         try
         {
-            var status = await _runtimeController.LaunchDebugClientAsync(new DebugClientLaunchOptions(port));
-            DisplayRuntimeStatus(
-                status,
-                status.State == RuntimeStatusState.Error
-                    ? "未能启动 Codex 调试版。请检查实例管理中的运行实例。"
-                    : "已请求启动调试版。此操作不会应用皮肤。请等待调试端口就绪。 ");
-            return status;
+            return await StartOrConnectAndConfigureCompatibilityAsync(port, CancellationToken.None);
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "未能启动 Codex 调试版。请检查实例管理中的运行实例。");
+            SetRuntimeError(exception.Message, "未能启动 Codex 调试版或同步界面语言。请检查实例管理与兼容设置。");
             return new RuntimeStatus(RuntimeStatusState.Error, null, null, exception.Message, null);
         }
         finally
@@ -712,8 +1044,33 @@ public partial class MainWindow : Window
             return;
         }
 
-        var draft = SkinDraft.CreateNew($"skin-{Guid.NewGuid():N}"[..13], "新建皮肤");
+        var draft = SkinCreation.Create($"skin-{Guid.NewGuid():N}"[..13], "新建皮肤", SkinAppearance.Light);
         EnterEditor(draft, isNew: true);
+    }
+
+    private void CreateCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isEditing || _isBusy || _selectedPackage is not { } package)
+        {
+            return;
+        }
+
+        var id = CreateUniqueCopyId(package.Id);
+        var draft = SkinCreation.CreateCopy(package, id, $"{package.Name} 副本");
+        EnterEditor(draft, isNew: true);
+    }
+
+    private string CreateUniqueCopyId(string sourceId)
+    {
+        var stem = sourceId.Length > 45 ? sourceId[..45] : sourceId;
+        var candidate = $"{stem}-copy";
+        var suffix = 2;
+        while (_store.ContainsId(candidate))
+        {
+            candidate = $"{stem}-copy-{suffix++}";
+        }
+
+        return candidate;
     }
 
     private void EditSkinButton_Click(object sender, RoutedEventArgs e)
@@ -733,6 +1090,18 @@ public partial class MainWindow : Window
         _isEditing = true;
         _editorResourcesChanged = false;
         SkinEditor.SetDraft(draft, isNew);
+        SkinEditor_EditorModeChanged(SkinEditor, EventArgs.Empty);
+        _originalTransitionSequence++;
+        OriginalImageLayer.BeginAnimation(OpacityProperty, null);
+        _showingOriginal = false;
+        OriginalImageLayer.Visibility = Visibility.Collapsed;
+        OriginalImageLayer.Opacity = 1;
+        OriginalImageSource.Source = null;
+        OriginalButton.Content = "原图";
+        if (PreviewOriginalBaseCheckBox.IsChecked == true)
+        {
+            PreviewOriginalBaseCheckBox.IsChecked = false;
+        }
         WorkspaceLeftColumn.Width = new GridLength(380);
         TransitionVisibility(LibraryBorder, Visibility.Collapsed, 145);
         TransitionVisibility(EditorPanel, Visibility.Visible, 165);
@@ -752,8 +1121,15 @@ public partial class MainWindow : Window
         SkinList.IsEnabled = false;
         SearchBox.IsEnabled = false;
         _ = _previewRenderer?.SetComponentSelectionModeAsync(true);
+        _ = _previewRenderer?.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
         UpdateRuntimeControls();
+        UpdateTransparencyControls();
         QueueEditorPreviewUpdate(resourcesChanged: false);
+        if (!_previewClosed && _previewInitialized && !_previewInitializationFailed)
+        {
+            PreviewBrowser.Visibility = Visibility.Visible;
+        }
+        QueuePreviewActivityUpdate();
     }
 
     private void ExitEditor(bool restoreSavedPreview)
@@ -768,6 +1144,8 @@ public partial class MainWindow : Window
         Interlocked.Increment(ref _editorPreviewSequence);
         _editorResourcesChanged = false;
         _ = _previewRenderer?.SetComponentSelectionModeAsync(false);
+        _ = _previewRenderer?.SetBackgroundPositionModeAsync(false);
+        SkinEditor.SetBackgroundFocusEditing(false);
         TransitionVisibility(SkinEditor, Visibility.Collapsed, 135);
         TransitionVisibility(EditorPanel, Visibility.Collapsed, 135);
         TransitionVisibility(LibraryBorder, Visibility.Visible, 160);
@@ -787,6 +1165,7 @@ public partial class MainWindow : Window
         SearchBox.IsEnabled = !_isBusy;
         _editOriginalPackage = null;
         _editOriginalId = null;
+        UpdateTransparencyControls();
         UpdateRuntimeControls();
         if (restoreSavedPreview && _selectedPackage is { } package && !_previewClosed)
         {
@@ -817,6 +1196,56 @@ public partial class MainWindow : Window
         SelectPreviewValue(PreviewAppearanceBox, appearance);
         SelectPreviewValue(PreviewSceneBox, scene);
         QueueEditorPreviewUpdate(resourcesChanged: false);
+    }
+
+    private void SkinEditor_EditorModeChanged(object? sender, EventArgs e)
+    {
+        if (!_isEditing)
+        {
+            return;
+        }
+
+        if (SkinEditor.IsCreationMode)
+        {
+            SelectPreviewValue(PreviewAppearanceBox, "skin");
+            SelectPreviewValue(PreviewSceneBox, "home");
+            QueueEditorPreviewUpdate(resourcesChanged: false);
+        }
+        else
+        {
+            SkinEditor_ScopeChanged(sender, e);
+        }
+    }
+
+    private async void SkinEditor_BackgroundFocusModeChanged(object? sender, EventArgs e)
+    {
+        if (_previewRenderer is { } renderer)
+        {
+            await renderer.SetBackgroundPositionModeAsync(_isEditing && SkinEditor.IsBackgroundFocusEditing);
+        }
+    }
+
+    private void PreviewRenderer_BackgroundFocusChanged(object? sender, PreviewBackgroundFocusEventArgs e)
+    {
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (!_isEditing || !SkinEditor.IsBackgroundFocusEditing)
+            {
+                return;
+            }
+
+            if (e.Phase == "begin")
+            {
+                SkinEditor.BeginBackgroundFocusGesture();
+                return;
+            }
+
+            SkinEditor.SetBackgroundFocus(e.FocusX, e.FocusY);
+            if (e.Phase == "end")
+            {
+                SkinEditor.EndBackgroundFocusGesture();
+            }
+        });
     }
 
     private static void SelectPreviewValue(ComboBox control, string tag)
@@ -915,7 +1344,7 @@ public partial class MainWindow : Window
             if (asCopy && !SkinEditor.IsNew &&
                 string.Equals(ReadDraftId(), _editOriginalId, StringComparison.OrdinalIgnoreCase))
             {
-                SkinEditor.SetSkinId($"{ReadDraftId()}-copy");
+                SkinEditor.SetSkinId(CreateUniqueCopyId(ReadDraftId()));
             }
 
             SkinEditor.PruneDraftResources();
@@ -925,6 +1354,12 @@ public partial class MainWindow : Window
             var replace = !asCopy && !SkinEditor.IsNew && isOriginalId;
             if (exists && !replace)
             {
+                if (SkinEditor.IsNew || asCopy)
+                {
+                    SkinEditor.SetValidationError($"皮肤 ID“{package.Id}”已经存在，请修改 ID 后再保存。新建皮肤和副本不会替换已有内容。");
+                    return false;
+                }
+
                 var answer = MessageBox.Show(
                     this,
                     $"皮肤 ID“{package.Id}”已经存在。确认后会替换现有皮肤。",
@@ -1178,6 +1613,7 @@ public partial class MainWindow : Window
         {
             renderer.CurrentResolvedSkinChanged -= PreviewRenderer_CurrentResolvedSkinChanged;
             renderer.ComponentSelected -= PreviewRenderer_ComponentSelected;
+            renderer.BackgroundFocusChanged -= PreviewRenderer_BackgroundFocusChanged;
             renderer.Dispose();
             _previewRenderer = null;
         }
@@ -1215,6 +1651,7 @@ public partial class MainWindow : Window
         _previewRenderer = renderer;
         renderer.CurrentResolvedSkinChanged += PreviewRenderer_CurrentResolvedSkinChanged;
         renderer.ComponentSelected += PreviewRenderer_ComponentSelected;
+        renderer.BackgroundFocusChanged += PreviewRenderer_BackgroundFocusChanged;
         try
         {
             SetPreviewStatus("正在打开本地预览…", persistent: true);
@@ -1227,6 +1664,7 @@ public partial class MainWindow : Window
                 _editorResourcesChanged = true;
                 await UpdateEditorPreviewAsync();
                 await renderer.SetComponentSelectionModeAsync(true);
+                await renderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
             }
             else if (_selectedPackage is { } package)
             {
@@ -1632,6 +2070,23 @@ public partial class MainWindow : Window
         }
 
         var followsTheme = PreviewTransparencyFollowCheckBox.IsChecked == true;
+        PreviewTransparencyFollowCheckBox.IsEnabled = !_isBusy && !_isEditing;
+        if (_isEditing)
+        {
+            PreviewTransparencyInput.IsEnabled = false;
+            if (PreviewTransparencyValue is not null)
+            {
+                PreviewTransparencyValue.Text = "编辑中使用草稿默认值";
+            }
+
+            if (PreviewTransparencyError is not null)
+            {
+                PreviewTransparencyError.Visibility = Visibility.Collapsed;
+            }
+
+            return;
+        }
+
         PreviewTransparencyInput.IsEnabled = !_isBusy && !followsTheme;
         if (followsTheme)
         {
@@ -1650,7 +2105,7 @@ public partial class MainWindow : Window
 
     private string? GetResolvedThemeTransparency()
     {
-        if (_selectedPackage is null || _previewRenderer?.CurrentResolvedSkin is not { } resolved ||
+        if ((!_isEditing && _selectedPackage is null) || _previewRenderer?.CurrentResolvedSkin is not { } resolved ||
             !resolved.Tokens.TryGetValue("material.fillOpacity", out var fillOpacity) ||
             fillOpacity.Kind != SkinValueKind.Ratio || fillOpacity.Number is not { } alpha ||
             !double.IsFinite(alpha) || alpha is < 0 or > 1)
@@ -1677,6 +2132,7 @@ public partial class MainWindow : Window
             Appearance: appearance,
             SidebarVisible: PreviewSidebarCheckBox.IsChecked == true,
             UserTransparency: PreviewTransparencyFollowCheckBox.IsChecked == true
+                || _isEditing
                 ? null
                 : _previewTransparency,
             ShowOriginalBase: PreviewOriginalBaseCheckBox.IsChecked == true);
@@ -1711,7 +2167,18 @@ public partial class MainWindow : Window
             await _previewRenderer!.InitializeAsync();
             _previewInitialized = true;
             FitPreviewBrowser();
-            if (_selectedPackage is null)
+            if (_isEditing)
+            {
+                _editorResourcesChanged = true;
+                await UpdateEditorPreviewAsync();
+                await _previewRenderer!.SetComponentSelectionModeAsync(true);
+                await _previewRenderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
+            }
+            else if (_selectedPackage is { } package)
+            {
+                await RenderPreviewAsync(package);
+            }
+            else
             {
                 SetPreviewStatus("选择皮肤以显示预览", persistent: true);
             }
@@ -1747,6 +2214,17 @@ public partial class MainWindow : Window
             if (sequence == Volatile.Read(ref _runtimeStatusSequence))
             {
                 DisplayRuntimeStatus(status);
+                if (_readRuntimeStatusOnLoad && _runtimeStatusReader is null &&
+                    !_startupCompatibilityReconciled &&
+                    status.State == RuntimeStatusState.Connected &&
+                    status.ConnectedInstance is not null &&
+                    _compatibilitySettingsLoaded)
+                {
+                    _startupCompatibilityReconciled = true;
+                    await ConfigureCompatibilityForCurrentTargetAsync(
+                        _compatibilityOptions,
+                        CancellationToken.None);
+                }
             }
         }
         catch (Exception exception)
@@ -2673,7 +3151,7 @@ public partial class MainWindow : Window
         PreviewAppearanceBox.IsEnabled = !busy;
         PreviewSidebarCheckBox.IsEnabled = !busy;
         PreviewOriginalBaseCheckBox.IsEnabled = !busy;
-        PreviewTransparencyFollowCheckBox.IsEnabled = !busy;
+        PreviewTransparencyFollowCheckBox.IsEnabled = !busy && !_isEditing;
         UpdateTransparencyControls();
         UpdateRuntimeControls();
     }

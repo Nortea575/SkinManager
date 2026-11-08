@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Xml.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -156,6 +157,7 @@ internal static class Program
         var managerInstanceDelay = ReadManagerInstanceDelay(args);
         var motionOnly = args.Contains("--motion-only", StringComparer.OrdinalIgnoreCase);
         var chatReplyOnly = args.Contains("--chat-reply-only", StringComparer.OrdinalIgnoreCase);
+        var creationOnly = args.Contains("--creation-only", StringComparer.OrdinalIgnoreCase);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
         if (!chatReplyOnly)
@@ -191,6 +193,10 @@ internal static class Program
                 {
                     await MotionBehaviorChecks.RunAsync();
                 }
+                else if (creationOnly)
+                {
+                    await RunCreationOnlyAsync();
+                }
                 else
                 {
                     await RunAsync(chatReplyOnly);
@@ -217,10 +223,26 @@ internal static class Program
         return _exitCode;
     }
 
+    private static async Task RunCreationOnlyAsync()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "SkinManagerCreation", Guid.NewGuid().ToString("N"));
+        _cleanupRoot = testRoot;
+        Directory.CreateDirectory(testRoot);
+        var screenshotDirectory = FindTestOutputDirectory();
+        Directory.CreateDirectory(screenshotDirectory);
+        BackgroundCropChecks.Run();
+        await CreationWorkflowChecks.RunAsync(
+            testRoot,
+            App.ReadEmbeddedBasePackage(),
+            ReadEmbeddedPackage("Ayanami"),
+            ReadEmbeddedPackage("Saya"),
+            screenshotDirectory);
+    }
+
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 0),
-            "更新比较读取公开软件版本 1.1.0");
+        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 1),
+            "更新比较读取公开软件版本 1.1.1");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -230,11 +252,11 @@ internal static class Program
         store.Save(SkinPackageReader.ReadZipBytes(ayanamiBytes), replaceExisting: false);
         store.Save(SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")), replaceExisting: false);
 
-        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 1, 0));
+        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 1, 1));
         var updateCoordinator = new UpdateCoordinator(
             updateClient,
             Path.Combine(reviewRoot, "updates"),
-            new Version(1, 1, 0));
+            new Version(1, 1, 1));
         updateCoordinator.AutomaticCheckAndDownload = false;
         var fakeInstances = new FakeCodexInstanceService(
         [
@@ -262,6 +284,7 @@ internal static class Program
             ShowActivated = !captureScreenshots,
             ShowInTaskbar = !captureScreenshots
         };
+        ConfigureFakeCompatibility(window);
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         window.Closed += (_, _) => closed.TrySetResult();
         window.Show();
@@ -357,6 +380,7 @@ internal static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize
         };
+        ConfigureFakeCompatibility(window);
 
         var deadline = DateTime.UtcNow.AddSeconds(15);
         DateTime? dialogLoadedAt = null;
@@ -2213,6 +2237,7 @@ internal static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize
         };
+        ConfigureFakeCompatibility(window);
         window.Show();
         try
         {
@@ -2674,6 +2699,9 @@ internal static class Program
                 "最小窗口右侧详情无页面级横向溢出");
             var applyButton = FindNamed<Button>(window, "ApplyRuntimeButton");
             var restoreButton = FindNamed<Button>(window, "RemoveRuntimeButton");
+            Check(AutomationProperties.GetName(restoreButton) == "恢复原生外观" &&
+                  restoreButton.ToolTip?.ToString()?.Contains("固定简体中文设置保持不变", StringComparison.Ordinal) == true,
+                "恢复原生按钮只表示外观回退，并说明语言设置继续保留");
             var controlsRemainVisible = new[] { applyButton, restoreButton }.All(button =>
             {
                 if (!button.IsVisible || button.ActualWidth <= 0 || button.ActualHeight <= 0)
@@ -3385,7 +3413,7 @@ internal static class Program
         Check(signature.AsSpan().SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), "預覽截圖是有效 PNG");
     }
 
-    private static async Task SaveManagerWindowScreenshotAsync(MainWindow window, WebView2 browser, string path)
+    internal static async Task SaveManagerWindowScreenshotAsync(MainWindow window, WebView2 browser, string path)
     {
         if (window.Content is not FrameworkElement content)
         {
@@ -4672,6 +4700,23 @@ internal static class Program
                 }
             }
         }
+    }
+
+    private static void ConfigureFakeCompatibility(MainWindow window)
+    {
+        window.SetCompatibilityConfiguratorForTesting((request, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = request.Options.ForceSimplifiedChinese
+                ? RuntimeCompatibilityState.Applied
+                : RuntimeCompatibilityState.Disabled;
+            return Task.FromResult(new RuntimeCompatibilityResult(
+                state,
+                request.Endpoint,
+                "Preview fake compatibility result.",
+                true,
+                request.ExpectedInstance));
+        });
     }
 
     private static CodexInstance CreateFakeInstance(

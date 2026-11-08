@@ -1,4 +1,5 @@
 using System.IO;
+using System.Globalization;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -97,6 +98,7 @@ public sealed class ThemePreviewRenderer : IDisposable
     private bool _isSuspended;
     private bool _currentDocumentReady;
     private bool _componentSelectionMode;
+    private bool _backgroundPositionMode;
     private long _displayRequestSequence;
     private ResolvedSkin? _currentResolvedSkin;
 
@@ -115,6 +117,7 @@ public sealed class ThemePreviewRenderer : IDisposable
     public ResolvedSkin? CurrentResolvedSkin => _currentResolvedSkin;
     public event EventHandler? CurrentResolvedSkinChanged;
     public event EventHandler<PreviewComponentSelectedEventArgs>? ComponentSelected;
+    public event EventHandler<PreviewBackgroundFocusEventArgs>? BackgroundFocusChanged;
     public List<string> ServedResourcePaths { get; } = [];
     public List<string> ServedBaseResourcePaths { get; } = [];
     public List<string> ServedSkinResourcePaths { get; } = [];
@@ -256,15 +259,70 @@ public sealed class ThemePreviewRenderer : IDisposable
     {
         ThrowIfDisposed();
         _componentSelectionMode = enabled;
-        if (_currentDocument is not { } document || _initializationTask is not { IsCompletedSuccessfully: true } initialization)
+        if (_initializationTask is not { IsCompletedSuccessfully: true } initialization)
         {
             return;
         }
 
-        var core = await initialization;
-        if (ReferenceEquals(_currentDocument, document) && !_disposed)
+        await _displayGate.WaitAsync();
+        try
         {
-            await core.ExecuteScriptAsync(BuildComponentSelectionScript(enabled, document.Generation));
+            if (!_currentDocumentReady || _currentDocument is not { } document || _disposed)
+            {
+                return;
+            }
+
+            var core = await initialization;
+            if (ReferenceEquals(_currentDocument, document) && !_disposed)
+            {
+                await core.ExecuteScriptAsync(BuildComponentSelectionScript(
+                    _componentSelectionMode && !_backgroundPositionMode,
+                    document.Generation));
+            }
+        }
+        finally
+        {
+            _displayGate.Release();
+        }
+    }
+
+    public async Task SetBackgroundPositionModeAsync(bool enabled)
+    {
+        ThrowIfDisposed();
+        _backgroundPositionMode = enabled;
+        if (_initializationTask is not { IsCompletedSuccessfully: true } initialization)
+        {
+            return;
+        }
+
+        await _displayGate.WaitAsync();
+        try
+        {
+            if (!_currentDocumentReady || _currentDocument is not { } document || _disposed)
+            {
+                return;
+            }
+
+            var core = await initialization;
+            if (!ReferenceEquals(_currentDocument, document) || _disposed)
+            {
+                return;
+            }
+
+            if (_backgroundPositionMode)
+            {
+                await core.ExecuteScriptAsync(BuildComponentSelectionScript(false, document.Generation));
+                await core.ExecuteScriptAsync(BuildBackgroundPositionScript(true, document.Generation));
+            }
+            else
+            {
+                await core.ExecuteScriptAsync(BuildBackgroundPositionScript(false, document.Generation));
+                await core.ExecuteScriptAsync(BuildComponentSelectionScript(_componentSelectionMode, document.Generation));
+            }
+        }
+        finally
+        {
+            _displayGate.Release();
         }
     }
 
@@ -293,6 +351,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         _isSuspended = false;
         _currentDocumentReady = false;
         _componentSelectionMode = false;
+        _backgroundPositionMode = false;
         Interlocked.Increment(ref _displayRequestSequence);
         _navigationCompletion?.TrySetCanceled();
         if (_webView.CoreWebView2 is { } core)
@@ -351,9 +410,20 @@ public sealed class ThemePreviewRenderer : IDisposable
                 return IsLatestDisplayRequest(requestSequence) && ReferenceEquals(_currentDocument, updatedDocument);
             }
 
+            var previousDocument = _currentDocument;
+            var clearPreviousBackgroundPositionMode = _currentDocumentReady && previousDocument is not null && _backgroundPositionMode;
             _currentDocument = requestedDocument;
             _currentDocumentReady = false;
             SetCurrentResolvedSkin(null);
+
+            if (clearPreviousBackgroundPositionMode && previousDocument is not null)
+            {
+                await core.ExecuteScriptAsync(BuildBackgroundPositionScript(false, previousDocument.Generation));
+                if (!IsLatestDisplayRequest(requestSequence))
+                {
+                    return false;
+                }
+            }
 
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             _navigationCompletion = completion;
@@ -477,6 +547,8 @@ public sealed class ThemePreviewRenderer : IDisposable
         var payload = NativeSkinStyleBuilder.Build(resolvedSkin, imageUrl);
         if (!isCurrent()) return;
         await core.ExecuteScriptAsync(NativeSkinStyleBuilder.BuildApplyScript(payload));
+        if (!isCurrent()) return;
+        await core.ExecuteScriptAsync(BuildBackgroundPositionScript(_backgroundPositionMode, document.Generation));
         if (isCurrent())
         {
             SetCurrentResolvedSkin(resolvedSkin);
@@ -567,6 +639,280 @@ public sealed class ThemePreviewRenderer : IDisposable
                 ? `[data-skin-part] { cursor: crosshair !important; } [data-skin-editor-picked="true"] { outline: 2px solid {{accentCssColor}} !important; outline-offset: -2px !important; }`
                 : "";
               if (!picker.enabled) document.querySelectorAll("[data-skin-editor-picked]").forEach(item => item.removeAttribute("data-skin-editor-picked"));
+            })()
+            """;
+    }
+
+    private static string BuildBackgroundPositionScript(bool enabled, string generation)
+    {
+        var enabledJson = JsonSerializer.Serialize(enabled);
+        var generationJson = JsonSerializer.Serialize(generation);
+        return $$"""
+            (() => {
+              if (location.protocol !== "https:" || location.hostname !== "{{PreviewDocumentBuilder.PreviewHost}}" ||
+                  !/^\/([0-9a-f]{32})\/base\//i.test(location.pathname)) return;
+              const generation = {{generationJson}};
+              if (!location.pathname.toLowerCase().startsWith(`/${generation.toLowerCase()}/base/`)) return;
+
+              const key = "__SKIN_MANAGER_BACKGROUND_POSITION__";
+              const layerId = "skin-manager-background-position-layer";
+              const styleId = "skin-manager-background-position-style";
+              let mode = window[key];
+              if (!{{enabledJson}}) {
+                if (mode) {
+                  mode.enabled = false;
+                  mode.finish("end", true);
+                  mode.uninstall();
+                }
+                document.getElementById(layerId)?.remove();
+                document.getElementById(styleId)?.remove();
+                delete window[key];
+                return;
+              }
+              if (!mode) {
+                mode = window[key] = { enabled: false, generation: "", active: null, installed: false };
+                mode.backgroundUrl = (image) => {
+                  const value = getComputedStyle(image).backgroundImage.trim();
+                  const match = /^url\((?:"([^"]+)"|'([^']+)'|([^)]*))\)$/.exec(value);
+                  return (match?.[1] || match?.[2] || match?.[3] || "").trim();
+                };
+                mode.readFocus = (image) => {
+                  const value = getComputedStyle(image).backgroundPosition || image.style.backgroundPosition;
+                  const axes = value.trim().split(/\s+/);
+                  const readAxis = (part, axis) => {
+                    if (/^-?(?:\d+\.?\d*|\.\d+)%$/.test(part)) return Number.parseFloat(part) / 100;
+                    const word = part.toLowerCase();
+                    if (word === "center") return 0.5;
+                    return axis === 0
+                      ? (word === "right" ? 1 : 0)
+                      : (word === "bottom" ? 1 : 0);
+                  };
+                  return {
+                    x: Math.min(1, Math.max(0, readAxis(axes[0] || "0%", 0))),
+                    y: Math.min(1, Math.max(0, readAxis(axes[1] || "0%", 1))),
+                  };
+                };
+                mode.measure = async (image, expectedUrl) => {
+                  const url = mode.backgroundUrl(image);
+                  if (!url || url !== expectedUrl) return null;
+                  const probe = new Image();
+                  probe.src = url;
+                  try {
+                    if (!(probe.complete && probe.naturalWidth > 0)) await probe.decode();
+                  } catch {
+                    return null;
+                  }
+                  if (probe.naturalWidth <= 0 || probe.naturalHeight <= 0 || mode.backgroundUrl(image) !== expectedUrl) return null;
+
+                  const bounds = image.getBoundingClientRect();
+                  const viewportWidth = bounds.width;
+                  const viewportHeight = bounds.height;
+                  if (viewportWidth <= 0 || viewportHeight <= 0) return null;
+                  const size = getComputedStyle(image).backgroundSize.trim().toLowerCase().split(",")[0].trim();
+                  let renderedWidth = probe.naturalWidth;
+                  let renderedHeight = probe.naturalHeight;
+                  if (size === "cover" || size === "contain") {
+                    const scaleX = viewportWidth / probe.naturalWidth;
+                    const scaleY = viewportHeight / probe.naturalHeight;
+                    const scale = size === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+                    renderedWidth *= scale;
+                    renderedHeight *= scale;
+                  } else if (size && size !== "auto" && size !== "auto auto") {
+                    const values = size.split(/\s+/);
+                    const resolveSize = (value, viewport) => {
+                      if (!value || value === "auto") return null;
+                      if (value.endsWith("%")) return viewport * Number.parseFloat(value) / 100;
+                      const parsed = Number.parseFloat(value);
+                      return Number.isFinite(parsed) ? parsed : null;
+                    };
+                    const width = resolveSize(values[0], viewportWidth);
+                    const height = resolveSize(values[1], viewportHeight);
+                    if (width !== null && height !== null) {
+                      renderedWidth = width;
+                      renderedHeight = height;
+                    } else if (width !== null) {
+                      const scale = width / probe.naturalWidth;
+                      renderedWidth = width;
+                      renderedHeight *= scale;
+                    } else if (height !== null) {
+                      const scale = height / probe.naturalHeight;
+                      renderedWidth *= scale;
+                      renderedHeight = height;
+                    }
+                  }
+                  return {
+                    spanX: viewportWidth - renderedWidth,
+                    spanY: viewportHeight - renderedHeight,
+                  };
+                };
+                mode.post = (phase, active) => {
+                  const focusX = Math.min(1, Math.max(0, active.focusX));
+                  const focusY = Math.min(1, Math.max(0, active.focusY));
+                  window.chrome?.webview?.postMessage(
+                    `skin-manager-background-focus|${mode.generation}|${phase}|${focusX.toFixed(6)}|${focusY.toFixed(6)}`,
+                  );
+                };
+                mode.apply = (active) => {
+                  active.image.style.backgroundPosition = `${(active.focusX * 100).toFixed(4)}% ${(active.focusY * 100).toFixed(4)}%`;
+                };
+                mode.finish = (phase, force = false) => {
+                  const active = mode.active;
+                  if (!active) return;
+                  if (!active.geometry && !force) {
+                    active.pendingFinish = phase;
+                    return;
+                  }
+                  mode.active = null;
+                  try { active.layer.releasePointerCapture(active.pointerId); } catch { }
+                  mode.post(phase, active);
+                };
+                mode.onPointerDown = (event) => {
+                  if (!mode.enabled || !event.isPrimary || event.button !== 0) return;
+                  const layer = mode.layer;
+                  if (!layer || event.target !== layer || document.elementFromPoint(event.clientX, event.clientY) !== layer) return;
+                  const image = document.querySelector("#skin-manager-background .skin-manager-image");
+                  if (!image || !image.style.backgroundImage) return;
+                  const imageUrl = mode.backgroundUrl(image);
+                  if (!imageUrl) return;
+                  const focus = mode.readFocus(image);
+                  const active = {
+                    image,
+                    layer,
+                    imageUrl,
+                    pointerId: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    lastX: event.clientX,
+                    lastY: event.clientY,
+                    focusX: focus.x,
+                    focusY: focus.y,
+                    startFocusX: focus.x,
+                    startFocusY: focus.y,
+                    geometry: null,
+                    pendingFinish: null,
+                  };
+                  mode.active = active;
+                  try { layer.setPointerCapture(event.pointerId); } catch { }
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  mode.post("begin", active);
+                  mode.measure(image, imageUrl).then((geometry) => {
+                    if (mode.active !== active) return;
+                    if (!geometry) {
+                      mode.finish("end", true);
+                      return;
+                    }
+                    active.geometry = geometry;
+                    const movedX = active.lastX - active.startX;
+                    const movedY = active.lastY - active.startY;
+                    if (Math.abs(geometry.spanX) > 0.5) active.focusX = Math.min(1, Math.max(0, active.startFocusX + movedX / geometry.spanX));
+                    if (Math.abs(geometry.spanY) > 0.5) active.focusY = Math.min(1, Math.max(0, active.startFocusY + movedY / geometry.spanY));
+                    if (movedX !== 0 || movedY !== 0) {
+                      mode.apply(active);
+                      mode.post("move", active);
+                    }
+                    if (active.pendingFinish) mode.finish(active.pendingFinish);
+                  }).catch(() => {
+                    if (mode.active === active) mode.finish("end", true);
+                  });
+                };
+                mode.onPointerMove = (event) => {
+                  const active = mode.active;
+                  if (!active || active.pointerId !== event.pointerId || active.pendingFinish) return;
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  if (active.geometry) {
+                    const deltaX = event.clientX - active.lastX;
+                    const deltaY = event.clientY - active.lastY;
+                    if (Math.abs(active.geometry.spanX) > 0.5) active.focusX = Math.min(1, Math.max(0, active.focusX + deltaX / active.geometry.spanX));
+                    if (Math.abs(active.geometry.spanY) > 0.5) active.focusY = Math.min(1, Math.max(0, active.focusY + deltaY / active.geometry.spanY));
+                    mode.apply(active);
+                    mode.post("move", active);
+                  }
+                  active.lastX = event.clientX;
+                  active.lastY = event.clientY;
+                };
+                mode.onPointerUp = (event) => {
+                  const active = mode.active;
+                  if (active?.pointerId === event.pointerId) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    const deltaX = event.clientX - active.lastX;
+                    const deltaY = event.clientY - active.lastY;
+                    if (active.geometry) {
+                      if (Math.abs(active.geometry.spanX) > 0.5) active.focusX = Math.min(1, Math.max(0, active.focusX + deltaX / active.geometry.spanX));
+                      if (Math.abs(active.geometry.spanY) > 0.5) active.focusY = Math.min(1, Math.max(0, active.focusY + deltaY / active.geometry.spanY));
+                      if (deltaX !== 0 || deltaY !== 0) {
+                        mode.apply(active);
+                        mode.post("move", active);
+                      }
+                    }
+                    active.lastX = event.clientX;
+                    active.lastY = event.clientY;
+                    mode.finish("end");
+                  }
+                };
+                mode.onPointerCancel = (event) => {
+                  const active = mode.active;
+                  if (active?.pointerId === event.pointerId) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    active.lastX = event.clientX;
+                    active.lastY = event.clientY;
+                    mode.finish("end");
+                  }
+                };
+                mode.onLostPointerCapture = (event) => {
+                  if (mode.active?.pointerId === event.pointerId) mode.finish("end");
+                };
+                mode.install = () => {
+                  if (mode.installed) return;
+                  document.addEventListener("pointerdown", mode.onPointerDown, true);
+                  document.addEventListener("pointermove", mode.onPointerMove, true);
+                  document.addEventListener("pointerup", mode.onPointerUp, true);
+                  document.addEventListener("pointercancel", mode.onPointerCancel, true);
+                  document.addEventListener("lostpointercapture", mode.onLostPointerCapture, true);
+                  mode.installed = true;
+                };
+                mode.uninstall = () => {
+                  if (!mode.installed) return;
+                  document.removeEventListener("pointerdown", mode.onPointerDown, true);
+                  document.removeEventListener("pointermove", mode.onPointerMove, true);
+                  document.removeEventListener("pointerup", mode.onPointerUp, true);
+                  document.removeEventListener("pointercancel", mode.onPointerCancel, true);
+                  document.removeEventListener("lostpointercapture", mode.onLostPointerCapture, true);
+                  mode.installed = false;
+                };
+              }
+
+              const background = document.getElementById("skin-manager-background");
+              const image = background?.querySelector(".skin-manager-image") || null;
+              const imageUrl = image ? mode.backgroundUrl(image) : "";
+              if (mode.active && (mode.active.image !== image || mode.active.imageUrl !== imageUrl)) {
+                mode.finish("end", true);
+              }
+              mode.enabled = true;
+              mode.generation = generation;
+              let layer = document.getElementById(layerId);
+              if (!layer) {
+                layer = document.createElement("div");
+                layer.id = layerId;
+                layer.setAttribute("aria-hidden", "true");
+                Object.assign(layer.style, {
+                  position: "fixed",
+                  inset: "0",
+                  zIndex: "2147483647",
+                  background: "transparent",
+                  pointerEvents: "auto",
+                  cursor: "grab",
+                  touchAction: "none",
+                  userSelect: "none",
+                });
+                (document.body || document.documentElement).appendChild(layer);
+              }
+              mode.layer = layer;
+              mode.install();
+              if (mode.active && mode.active.image === image) mode.apply(mode.active);
             })()
             """;
     }
@@ -775,9 +1121,25 @@ public sealed class ThemePreviewRenderer : IDisposable
         if (parts.Length == 3 &&
             parts[0].Equals("skin-manager-component", StringComparison.Ordinal) &&
             parts[1].Equals(document.Generation, StringComparison.Ordinal) &&
-            _componentSelectionMode && SelectableParts.Contains(parts[2]))
+            _componentSelectionMode && !_backgroundPositionMode && SelectableParts.Contains(parts[2]))
         {
             ComponentSelected?.Invoke(this, new PreviewComponentSelectedEventArgs(parts[2]));
+            return;
+        }
+
+        if (parts.Length == 5 &&
+            parts[0].Equals("skin-manager-background-focus", StringComparison.Ordinal) &&
+            parts[1].Equals(document.Generation, StringComparison.Ordinal) &&
+            (parts[2] is "begin" or "move" or "end") &&
+            (_backgroundPositionMode || parts[2] == "end") &&
+            document.Package is not null &&
+            _currentResolvedSkin?.Background?.ImagePath is not null &&
+            double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var focusX) &&
+            double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var focusY) &&
+            double.IsFinite(focusX) && double.IsFinite(focusY) &&
+            focusX is >= 0 and <= 1 && focusY is >= 0 and <= 1)
+        {
+            BackgroundFocusChanged?.Invoke(this, new PreviewBackgroundFocusEventArgs(parts[2], focusX, focusY));
             return;
         }
 
@@ -892,4 +1254,11 @@ public sealed class ThemePreviewRenderer : IDisposable
 public sealed class PreviewComponentSelectedEventArgs(string componentId) : EventArgs
 {
     public string ComponentId { get; } = componentId;
+}
+
+public sealed class PreviewBackgroundFocusEventArgs(string phase, double focusX, double focusY) : EventArgs
+{
+    public string Phase { get; } = phase;
+    public double FocusX { get; } = focusX;
+    public double FocusY { get; } = focusY;
 }

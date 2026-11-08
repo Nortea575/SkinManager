@@ -11,7 +11,8 @@ internal enum AgentOperation
     Apply,
     Remove,
     Stop,
-    GetStatus
+    GetStatus,
+    ConfigureCompatibility
 }
 
 internal sealed class AgentCommand
@@ -19,6 +20,7 @@ internal sealed class AgentCommand
     public Guid RequestId { get; init; }
     public AgentOperation Operation { get; init; }
     public RuntimeApplyRequest? ApplyRequest { get; init; }
+    public RuntimeCompatibilityRequest? CompatibilityRequest { get; init; }
 }
 
 internal sealed class AgentResponse
@@ -31,8 +33,9 @@ internal sealed class AgentResponse
     public bool? IsDebugPortOpen { get; init; }
     public int AppliedTargetCount { get; init; }
     public CodexProcessIdentity? ConnectedInstance { get; init; }
+    public RuntimeCompatibilityResult? CompatibilityResult { get; init; }
 
-    public RuntimeStatus ToStatus() => new(State, SkinId, Endpoint, Message, IsDebugPortOpen, AppliedTargetCount, ConnectedInstance);
+    public RuntimeStatus ToStatus() => new(State, SkinId, Endpoint, Message, IsDebugPortOpen, AppliedTargetCount, ConnectedInstance, CompatibilityResult);
 
     public static AgentResponse From(Guid requestId, RuntimeStatus status) => new()
     {
@@ -43,7 +46,21 @@ internal sealed class AgentResponse
         Message = status.Message,
         IsDebugPortOpen = status.IsDebugPortOpen,
         AppliedTargetCount = status.AppliedTargetCount,
-        ConnectedInstance = status.ConnectedInstance
+        ConnectedInstance = status.ConnectedInstance,
+        CompatibilityResult = status.CompatibilityResult
+    };
+
+    public static AgentResponse From(Guid requestId, RuntimeStatus status, RuntimeCompatibilityResult compatibilityResult) => new()
+    {
+        RequestId = requestId,
+        State = status.State,
+        SkinId = status.SkinId,
+        Endpoint = status.Endpoint,
+        Message = status.Message,
+        IsDebugPortOpen = status.IsDebugPortOpen,
+        AppliedTargetCount = status.AppliedTargetCount,
+        ConnectedInstance = status.ConnectedInstance,
+        CompatibilityResult = compatibilityResult
     };
 }
 

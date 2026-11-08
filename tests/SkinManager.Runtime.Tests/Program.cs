@@ -14,6 +14,9 @@ internal static class Program
         try
         {
             await MagpieCompatibilityServiceTests.RunAsync();
+            CompatibilitySettingsStoreTests.Run();
+            await LocaleCompatibilityScriptTests.RunAsync();
+            await TestLocaleCompatibilityLifecycleAsync();
             await TestDebugClientLaunchAsync();
             await TestCodexInstanceEnumerationAndActionsAsync();
             await TestExpectedInstanceAndPipeIdentityAsync();
@@ -31,6 +34,177 @@ internal static class Program
         {
             Console.Error.WriteLine(ex);
             return 1;
+        }
+    }
+
+    private static async Task TestLocaleCompatibilityLifecycleAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "SkinManager-LocaleLifecycle-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var untouchedStore = new LocaleOverrideSnapshotStore(Path.Combine(root, "no-intent", "locale-state.json"));
+            untouchedStore.CaptureIfMissing("fr-FR");
+            var untouchedNative = new FakeLocaleSettings();
+            await using (var fake = new FakeCdpServer
+            {
+                InitialTargets =
+                [
+                    new { targetId = "codex-main", type = "page", url = "app://codex/home" },
+                    new { targetId = "ordinary-web", type = "page", url = "https://example.com/" },
+                    new { targetId = "codex-iframe", type = "iframe", url = "app://codex/embedded" }
+                ],
+                EvaluateResponse = untouchedNative.Evaluate
+            })
+            await using (var coordinator = new RuntimeCoordinator(new FakeIdentityVerifier(), untouchedStore))
+            {
+                var applied = await coordinator.HandleAsync(new AgentCommand
+                {
+                    RequestId = Guid.NewGuid(),
+                    Operation = AgentOperation.Apply,
+                    ApplyRequest = Request("null-compat", "apply();", "restore();", fake.Endpoint.ToString())
+                }, CancellationToken.None);
+                Assert(applied.State == RuntimeStatusState.Connected && applied.CompatibilityResult is null &&
+                    untouchedNative.Locale == "fr-FR" && untouchedStore.Load()?.OriginalValue == "fr-FR",
+                    "Apply with Compatibility=null preserves an existing restore snapshot without disabling locale intent");
+                var attached = fake.Commands.Where(command => command.Method == "Target.attachToTarget")
+                    .Select(command => command.Parameters.GetProperty("targetId").GetString()).ToArray();
+                Assert(attached.SequenceEqual(["codex-main"]) &&
+                    !fake.Commands.Any(command => command.Method == "Runtime.evaluate" && HasExpression(command, "SM:locale-")),
+                    "compatibility and skin automation ignore browser pages, child frames, and locale snapshots without explicit intent");
+                var removed = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.Remove }, CancellationToken.None);
+                Assert(removed.State == RuntimeStatusState.Stopped && !coordinator.HasActiveSession && untouchedStore.Load()?.OriginalValue == "fr-FR" &&
+                    !fake.Commands.Any(command => command.Method == "Runtime.evaluate" && HasExpression(command, "SM:locale-restore")),
+                    "Remove with no explicit compatibility intent disconnects without restoring a stale locale snapshot");
+            }
+
+            var snapshotStore = new LocaleOverrideSnapshotStore(Path.Combine(root, "toggle", "locale-state.json"));
+            var native = new FakeLocaleSettings { BridgeReady = false };
+            await using (var fake = new FakeCdpServer
+            {
+                InitialTargets =
+                [
+                    new { targetId = "codex-main", type = "page", url = "app://codex/home" },
+                    new { targetId = "ordinary-web", type = "page", url = "https://example.com/" },
+                    new { targetId = "codex-iframe", type = "iframe", url = "app://codex/embedded" }
+                ],
+                EvaluateResponse = native.Evaluate
+            })
+            await using (var coordinator = new RuntimeCoordinator(new FakeIdentityVerifier(), snapshotStore))
+            {
+                var enabled = new RuntimeCompatibilityOptions(ForceSimplifiedChinese: true);
+                var request = new RuntimeCompatibilityRequest { Endpoint = fake.Endpoint.ToString(), ExpectedInstance = FakeConnectedIdentity, Options = enabled };
+                var pending = await coordinator.ConfigureCompatibilityAsync(request, CancellationToken.None);
+                Assert(pending.State == RuntimeCompatibilityState.Pending && coordinator.HasActiveSession && snapshotStore.Load() is null,
+                    "compatibility-only connection reports Pending until the native bridge is ready and does not claim a write");
+                var preludeSources = fake.Commands.Where(command => command.Method == "Page.addScriptToEvaluateOnNewDocument")
+                    .Select(command => command.Parameters.GetProperty("source").GetString()!)
+                    .Where(source => source.Contains("SM:locale-hook", StringComparison.Ordinal)).ToArray();
+                Assert(preludeSources.Length >= 2 && preludeSources[^1] != preludeSources[^2],
+                    "changing compatibility generations replaces the early-document script before reuse");
+                Assert(fake.Commands.Where(command => command.Method == "Target.attachToTarget")
+                    .All(command => command.Parameters.GetProperty("targetId").GetString() == "codex-main"),
+                    "only the verified top-level Codex app page receives compatibility CDP commands");
+
+                native.BridgeReady = true;
+                var beforeLoad = fake.LastSequence;
+                await fake.SendEventAsync("Page.loadEventFired", new { timestamp = 2.0 }, "session-codex-main");
+                await fake.WaitForCommandAsync(command => command.Sequence > beforeLoad && command.Method == "Runtime.evaluate" && HasExpression(command, "SM:locale-write"));
+                RuntimeStatus? updated = null;
+                for (var attempt = 0; attempt < 30; attempt++)
+                {
+                    updated = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.GetStatus }, CancellationToken.None);
+                    if (updated.CompatibilityResult?.State == RuntimeCompatibilityState.Applied)
+                        break;
+                    await Task.Delay(10);
+                }
+                Assert(updated?.CompatibilityResult?.State == RuntimeCompatibilityState.Applied && native.Locale == "zh-CN" &&
+                    snapshotStore.Load()?.OriginalValue == "fr-FR",
+                    "a later ready Codex document writes zh-CN and preserves the first original locale snapshot");
+
+                var hookBeforeNewSession = fake.Commands.Where(command => command.Method == "Page.addScriptToEvaluateOnNewDocument")
+                    .Select(command => command.Parameters.GetProperty("source").GetString()!)
+                    .Last(source => source.Contains("SM:locale-hook", StringComparison.Ordinal));
+                var reenabled = await coordinator.ConfigureCompatibilityAsync(request, CancellationToken.None);
+                var hookAfterGeneration = fake.Commands.Where(command => command.Method == "Page.addScriptToEvaluateOnNewDocument")
+                    .Select(command => command.Parameters.GetProperty("source").GetString()!)
+                    .Last(source => source.Contains("SM:locale-hook", StringComparison.Ordinal));
+                Assert(reenabled.State == RuntimeCompatibilityState.Applied && hookAfterGeneration != hookBeforeNewSession && native.WriteCount == 1 &&
+                    snapshotStore.Load()?.OriginalValue == "fr-FR",
+                    "re-enabling uses a fresh generation without overwriting the original locale or issuing a duplicate write");
+
+                var apply = await coordinator.HandleAsync(new AgentCommand
+                {
+                    RequestId = Guid.NewGuid(),
+                    Operation = AgentOperation.Apply,
+                    ApplyRequest = Request("skin-with-compat", "apply();", "restore();", fake.Endpoint.ToString())
+                }, CancellationToken.None);
+                Assert(apply.State == RuntimeStatusState.Connected && apply.CompatibilityResult?.State == RuntimeCompatibilityState.Applied &&
+                    fake.Commands.Count(command => command.Method == "Target.setDiscoverTargets") == 1,
+                    "skin Apply reuses the existing compatibility CDP session and carries its separate result");
+
+                fake.ErrorMessage = "Cannot find context with specified id";
+                fake.ErrorCommand = command => command.Method == "Runtime.evaluate" && HasExpression(command, "SM:locale-read");
+                var contextCleared = await coordinator.ConfigureCompatibilityAsync(request, CancellationToken.None);
+                var skinAfterContextClear = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.GetStatus }, CancellationToken.None);
+                Assert(contextCleared.State == RuntimeCompatibilityState.Pending && coordinator.HasActiveSession &&
+                    skinAfterContextClear.State == RuntimeStatusState.Connected && skinAfterContextClear.AppliedTargetCount == 1,
+                    "a context-cleared locale read reports Pending without damaging the applied skin connection");
+                fake.ErrorCommand = null;
+                var recovered = await coordinator.ConfigureCompatibilityAsync(request, CancellationToken.None);
+                Assert(recovered.State == RuntimeCompatibilityState.Applied && coordinator.HasActiveSession,
+                    "a later document can finish the compatibility update on the existing CDP session");
+
+                var bindingName = fake.Commands.Last(command => command.Method == "Runtime.addBinding").Parameters.GetProperty("name").GetString()!;
+                var skinScript = fake.Commands.Last(command => command.Method == "Page.addScriptToEvaluateOnNewDocument" &&
+                    command.Parameters.GetProperty("source").GetString()!.Contains("apply();", StringComparison.Ordinal));
+                var oldSkinToken = GetAppliedToken(skinScript);
+                var removed = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.Remove }, CancellationToken.None);
+                await fake.SendEventAsync("Runtime.bindingCalled", new { name = bindingName, payload = oldSkinToken }, "session-codex-main");
+                await Task.Delay(30);
+                var afterStaleBinding = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.GetStatus }, CancellationToken.None);
+                Assert(removed.State == RuntimeStatusState.Connected && coordinator.HasActiveSession && removed.AppliedTargetCount == 0 &&
+                    afterStaleBinding.AppliedTargetCount == 0 && removed.CompatibilityResult?.State == RuntimeCompatibilityState.Applied,
+                    "Remove clears the skin and ignores delayed skin bindings while keeping forced-language CDP active");
+
+                var stopped = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.Stop }, CancellationToken.None);
+                Assert(stopped.State == RuntimeStatusState.Stopped && !coordinator.HasActiveSession && native.Locale == "zh-CN" && snapshotStore.Load()?.OriginalValue == "fr-FR",
+                    "explicit Stop removes runtime hooks but retains the user's active zh-CN setting and its restorable original value");
+
+                native.BridgeReady = false;
+                var pendingDisable = await coordinator.ConfigureCompatibilityAsync(request with { Options = new RuntimeCompatibilityOptions() }, CancellationToken.None);
+                Assert(pendingDisable.State == RuntimeCompatibilityState.Pending && coordinator.HasActiveSession && native.Locale == "zh-CN" && snapshotStore.Load()?.OriginalValue == "fr-FR",
+                    "an explicit off request keeps its restore snapshot while the native settings bridge is unavailable");
+                native.BridgeReady = true;
+                var beforeRestore = fake.LastSequence;
+                await fake.SendEventAsync("Page.loadEventFired", new { timestamp = 3.0 }, "session-codex-main");
+                await fake.WaitForCommandAsync(command => command.Sequence > beforeRestore && command.Method == "Runtime.evaluate" && HasExpression(command, "SM:locale-restore"));
+                RuntimeStatus? restoredStatus = null;
+                for (var attempt = 0; attempt < 40; attempt++)
+                {
+                    restoredStatus = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.GetStatus }, CancellationToken.None);
+                    if (!coordinator.HasActiveSession)
+                        break;
+                    await Task.Delay(10);
+                }
+                Assert(restoredStatus?.State == RuntimeStatusState.Stopped && !coordinator.HasActiveSession && native.Locale == "fr-FR" && snapshotStore.Load() is null,
+                    "a later ready document restores the original locale and stops the idle compatibility session");
+
+                var beforeNewSession = fake.Commands.Where(command => command.Method == "Page.addScriptToEvaluateOnNewDocument")
+                    .Select(command => command.Parameters.GetProperty("source").GetString()!)
+                    .Last(source => source.Contains("SM:locale-hook", StringComparison.Ordinal));
+                var enabledAgain = await coordinator.ConfigureCompatibilityAsync(request, CancellationToken.None);
+                var afterNewSession = fake.Commands.Where(command => command.Method == "Page.addScriptToEvaluateOnNewDocument")
+                    .Select(command => command.Parameters.GetProperty("source").GetString()!)
+                    .Last(source => source.Contains("SM:locale-hook", StringComparison.Ordinal));
+                Assert(enabledAgain.State == RuntimeCompatibilityState.Applied && beforeNewSession != afterNewSession,
+                    "a new CDP session receives a unique compatibility generation even when its local counter restarts");
+                await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.Stop }, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
         }
     }
 
@@ -1055,6 +1229,50 @@ internal sealed class FakeCodexInstancePlatform : ICodexInstancePlatform
 
 internal sealed record FakeCommand(int Sequence, int Id, string Method, JsonElement Parameters, string? SessionId);
 
+internal sealed class FakeLocaleSettings
+{
+    public string? Locale { get; private set; } = "fr-FR";
+    public bool BridgeReady { get; set; } = true;
+    public int WriteCount { get; private set; }
+
+    public object? Evaluate(FakeCommand command)
+    {
+        if (command.Method != "Runtime.evaluate" || !command.Parameters.TryGetProperty("expression", out var expressionElement))
+            return null;
+        var expression = expressionElement.GetString() ?? string.Empty;
+        if (expression.Contains("SM:locale-hook", StringComparison.Ordinal))
+        {
+            var enabled = !expression.Contains("enabled=false", StringComparison.Ordinal);
+            if (!enabled)
+                return new { state = "disabled" };
+            return BridgeReady
+                ? new { state = "hooked", hookInstalled = true }
+                : new { state = "pending" };
+        }
+        if (expression.Contains("SM:locale-read", StringComparison.Ordinal))
+            return BridgeReady ? new { state = "ready", value = Locale } : new { state = "pending" };
+        if (expression.Contains("SM:locale-write", StringComparison.Ordinal))
+        {
+            if (!BridgeReady)
+                return new { state = "pending" };
+            Locale = "zh-CN";
+            WriteCount++;
+            return new { state = "applied", value = Locale };
+        }
+        if (expression.Contains("SM:locale-restore", StringComparison.Ordinal))
+        {
+            if (!BridgeReady)
+                return new { state = "pending" };
+            if (Locale != "zh-CN")
+                return new { state = "preserved", value = Locale };
+            Locale = "fr-FR";
+            WriteCount++;
+            return new { state = "restored", value = Locale };
+        }
+        return null;
+    }
+}
+
 internal sealed class FakeCdpServer : IAsyncDisposable
 {
     private readonly HttpListener _listener = new();
@@ -1080,6 +1298,7 @@ internal sealed class FakeCdpServer : IAsyncDisposable
     public string? ErrorMethod { get; init; }
     public string ErrorMessage { get; set; } = "fake protocol error";
     public Func<FakeCommand, bool>? ErrorCommand { get; set; }
+    public Func<FakeCommand, object?>? EvaluateResponse { get; set; }
     public bool EvaluateValue { get; set; } = true;
     public bool ExceptionOnNextEvaluate { get; set; }
     public int LastSequence => Volatile.Read(ref _sequence);
@@ -1257,6 +1476,11 @@ internal sealed class FakeCdpServer : IAsyncDisposable
             {
                 ExceptionOnNextEvaluate = false;
                 await SendResponseAsync(new { id = command.Id, result = new { result = new { type = "undefined" }, exceptionDetails = new { text = "fake JavaScript exception" } } }, socket);
+                return;
+            }
+            if (EvaluateResponse?.Invoke(command) is { } evaluatedValue)
+            {
+                await SendResponseAsync(new { id = command.Id, result = new { result = new { type = "object", value = evaluatedValue } } }, socket);
                 return;
             }
             await SendResponseAsync(new { id = command.Id, result = new { result = new { type = "boolean", value = EvaluateValue } } }, socket);

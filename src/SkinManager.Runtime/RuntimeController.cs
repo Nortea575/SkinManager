@@ -27,8 +27,9 @@ public sealed class RuntimeStatus : EventArgs
     public bool? IsDebugPortOpen { get; }
     public int AppliedTargetCount { get; }
     public CodexProcessIdentity? ConnectedInstance { get; }
+    public RuntimeCompatibilityResult? CompatibilityResult { get; }
 
-    public RuntimeStatus(RuntimeStatusState state, string? skinId, string? endpoint, string? message, bool? isDebugPortOpen, int appliedTargetCount = 0, CodexProcessIdentity? connectedInstance = null)
+    public RuntimeStatus(RuntimeStatusState state, string? skinId, string? endpoint, string? message, bool? isDebugPortOpen, int appliedTargetCount = 0, CodexProcessIdentity? connectedInstance = null, RuntimeCompatibilityResult? compatibilityResult = null)
     {
         State = state;
         SkinId = skinId;
@@ -37,6 +38,7 @@ public sealed class RuntimeStatus : EventArgs
         IsDebugPortOpen = isDebugPortOpen;
         AppliedTargetCount = appliedTargetCount;
         ConnectedInstance = connectedInstance;
+        CompatibilityResult = compatibilityResult;
     }
 
     internal static RuntimeStatus Stopped(string? message = null) => new(RuntimeStatusState.Stopped, null, null, message, null);
@@ -50,6 +52,7 @@ public sealed record RuntimeApplyRequest
     public required string RemoveScript { get; init; }
     public string Endpoint { get; init; } = "http://127.0.0.1:9335";
     public CodexProcessIdentity? ExpectedInstance { get; init; }
+    public RuntimeCompatibilityOptions? Compatibility { get; init; }
 }
 
 public sealed record DebugClientLaunchOptions(int Port = 9335);
@@ -93,6 +96,86 @@ public sealed class RuntimeController
             return Publish(RuntimeStatus.Error("皮肤运行脚本、恢复脚本和皮肤 ID 均不能为空。", request.SkinId, request.Endpoint));
 
         return await SendAsync(AgentOperation.Apply, request, startAgent: true, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<RuntimeCompatibilityResult> ConfigureCompatibilityAsync(
+        RuntimeCompatibilityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        Uri endpoint;
+        try
+        {
+            if (!Uri.TryCreate(request.Endpoint, UriKind.Absolute, out endpoint!))
+                throw new ArgumentException("调试端点不是有效的绝对 URI。", nameof(request));
+            CdpBrowserClient.ValidateEndpoint(endpoint);
+        }
+        catch (Exception ex) when (ex is ArgumentException or UriFormatException)
+        {
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, request.Endpoint, ex.Message);
+        }
+
+        using var commandTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        commandTimeout.CancelAfter(AgentResponseTimeout);
+        var commandToken = commandTimeout.Token;
+        var acquiredGate = false;
+        try
+        {
+            await _commandGate.WaitAsync(commandToken).ConfigureAwait(false);
+            acquiredGate = true;
+            NamedPipeClientStream? pipe = await TryConnectAsync(TimeSpan.FromMilliseconds(250), commandToken).ConfigureAwait(false);
+            if (pipe is null)
+            {
+                if (!File.Exists(_agentExecutablePath))
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), $"找不到后台程序：{_agentExecutablePath}");
+                StartAgentIfNeeded();
+                pipe = await TryConnectAsync(TimeSpan.FromSeconds(12), commandToken).ConfigureAwait(false);
+            }
+
+            if (pipe is null)
+                return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Pending, endpoint.ToString(), "语言设置等待后台连接就绪。", false);
+
+            await using (pipe.ConfigureAwait(false))
+            {
+                var requestId = Guid.NewGuid();
+                var command = new AgentCommand
+                {
+                    RequestId = requestId,
+                    Operation = AgentOperation.ConfigureCompatibility,
+                    CompatibilityRequest = request with { Endpoint = endpoint.ToString() }
+                };
+                var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+                await writer.WriteLineAsync(JsonSerializer.Serialize(command, AgentPipeProtocol.JsonOptions).AsMemory(), commandToken).ConfigureAwait(false);
+                var line = await reader.ReadLineAsync(commandToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(line))
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), "后台程序已断开，未收到语言设置结果。");
+                var response = JsonSerializer.Deserialize<AgentResponse>(line, AgentPipeProtocol.JsonOptions);
+                if (response is null || response.RequestId != requestId)
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), "后台程序返回了不匹配的语言设置响应。");
+                return response.CompatibilityResult ?? new RuntimeCompatibilityResult(
+                    RuntimeCompatibilityState.Failed,
+                    endpoint.ToString(),
+                    "后台程序未返回语言设置状态。",
+                    response.IsDebugPortOpen,
+                    response.ConnectedInstance);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw;
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.TimedOut, endpoint.ToString(), $"语言设置操作在 {AgentResponseTimeout.TotalSeconds:0} 秒内未完成。");
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or JsonException or InvalidOperationException or Win32Exception)
+        {
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), $"语言设置后台通信失败：{ex.Message}");
+        }
+        finally
+        {
+            if (acquiredGate)
+                _commandGate.Release();
+        }
     }
 
     public Task<RuntimeStatus> RemoveAsync(CancellationToken cancellationToken = default) =>

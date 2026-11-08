@@ -117,7 +117,7 @@
                 </Button>
                 <Button x:Name="CompatibilityEntryButton" Margin="6,0,0,0" Padding="9,5"
                         Click="CompatibilityEntryButton_Click"
-                        ToolTip="检查 Magpie 与调试版 Codex 的兼容状态。"
+                        ToolTip="设置 Codex 界面语言，并查看 Magpie 启动方式。"
                         AutomationProperties.Name="兼容设置">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M12,2 L20,5 V11 C20,16 16.5,19 12,21 C7.5,19 4,16 4,11 V5 Z M9,12 L11,14 L15,10"
@@ -314,6 +314,8 @@
                                     ToolTip="导出或删除当前皮肤">
                                 <Button.ContextMenu>
                                     <ContextMenu>
+                        <MenuItem x:Name="CreateCopyMenuItem" Header="以此为基础创建" Click="CreateCopyButton_Click" />
+                        <Separator />
                                         <MenuItem x:Name="ExportMenuItem" Header="导出皮肤…" Click="ExportButton_Click" />
                                         <Separator />
                                         <MenuItem x:Name="DeleteMenuItem" Header="删除皮肤…" Click="DeleteButton_Click"
@@ -552,7 +554,8 @@
                                 </Button>
                                 <Button x:Name="RemoveRuntimeButton" Content="恢复原生" Margin="6,0,0,0"
                                         Padding="10,6" Click="RemoveRuntimeButton_Click"
-                                        AutomationProperties.Name="恢复原生并断开连接" />
+                                        AutomationProperties.Name="恢复原生外观"
+                                        ToolTip="只移除皮肤外观；已保存的固定简体中文设置保持不变。" />
                                 <Button x:Name="CancelRuntimeActionButton" Content="取消操作" Margin="6,0,0,0"
                                         Padding="10,6" Visibility="Collapsed"
                                         Click="CancelRuntimeActionButton_Click" />
@@ -588,7 +591,7 @@
                                          TextChanged="RuntimePortInput_TextChanged" />
                                 <Button x:Name="LaunchDebugButton" Content="只启动调试版" Margin="8,0,6,0"
                                         Padding="10,6" Click="LaunchDebugButton_Click"
-                                        ToolTip="仅启动Codex调试版，不应用皮肤；不会自动关闭或重启已运行的应用。" />
+                                        ToolTip="启动并核验调试版目标，按保存设置同步界面语言；不应用皮肤，也不会自动关闭或重启已运行的应用。" />
                                 <Button x:Name="LocateConnectedWindowButton" Content="定位已连接窗口"
                                         Padding="10,6" Click="LocateConnectedWindowButton_Click"
                                         ToolTip="按当前连接的进程身份定位窗口。" />

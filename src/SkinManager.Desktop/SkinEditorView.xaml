@@ -11,8 +11,6 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="9" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="7" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="8" />
@@ -33,25 +31,191 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="2" Margin="1,0,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="74" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="编辑范围" FontSize="11"
-                       Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-            <ComboBox x:Name="ScopeInput" Grid.Column="1" SelectedIndex="0"
-                      SelectionChanged="ScopeInput_SelectionChanged"
-                      ToolTip="元数据始终属于基础包；颜色、背景与组件覆盖写入所选范围">
-                <ComboBoxItem Content="基础" Tag="base" />
-                <ComboBoxItem Content="浅色变体" Tag="light" />
-                <ComboBoxItem Content="深色变体" Tag="dark" />
-                <ComboBoxItem Content="首页场景" Tag="home" />
-                <ComboBoxItem Content="对话场景" Tag="conversation" />
-            </ComboBox>
-        </Grid>
+        <TabControl x:Name="EditorModeTabs" Grid.Row="2" BorderThickness="0" Background="Transparent"
+                    SelectedIndex="0" SelectionChanged="EditorModeTabs_SelectionChanged">
+            <TabControl.Resources>
+                <Style TargetType="{x:Type TabItem}">
+                    <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
+                    <Setter Property="Padding" Value="11,6" />
+                    <Setter Property="Margin" Value="0,0,5,0" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TabItem">
+                                <Border x:Name="TabSurface" Background="Transparent" BorderBrush="Transparent"
+                                        BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter ContentSource="Header" HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" RecognizesAccessKey="True" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="TabSurface" Property="Background" Value="{StaticResource SoftSurface}" />
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="TabSurface" Property="Background" Value="{StaticResource PanelSurface}" />
+                                        <Setter TargetName="TabSurface" Property="BorderBrush" Value="{StaticResource ControlLine}" />
+                                        <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="TabSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </TabControl.Resources>
+            <TabItem Header="创作">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="1,10,5,8">
+                        <TextBlock Text="从素材开始" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="选择背景图片，或用纯色开始。"
+                                   FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                   TextWrapping="Wrap" Margin="0,3,0,8" />
+                        <TextBlock x:Name="CreationBackgroundPathText" Text="可拖入 PNG 或 JPG，也可使用纯色背景"
+                                   FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                   TextTrimming="CharacterEllipsis" ToolTip="可拖入 PNG 或 JPG，也可使用纯色背景"
+                                   Margin="0,0,0,6" />
+                        <Border x:Name="BackgroundDropZone" Padding="8" Margin="0,0,0,7"
+                                Background="{StaticResource PanelSurface}" BorderBrush="{StaticResource ControlLine}"
+                                BorderThickness="1" CornerRadius="8" AllowDrop="True"
+                                DragOver="BackgroundDropZone_DragOver" Drop="BackgroundDropZone_Drop">
+                            <TextBlock Text="拖放背景图片到这里" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                       HorizontalAlignment="Center" TextAlignment="Center" />
+                        </Border>
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button x:Name="CreationChooseBackgroundButton" Content="选择图片" Padding="9,5"
+                                    Click="ChooseBackgroundButton_Click" />
+                        <Button x:Name="CreationUseColorButton" Content="使用纯色" Padding="9,5" Margin="5,0,0,0"
+                                    Click="CreationUseColorButton_Click" />
+                        </WrapPanel>
+                        <Grid x:Name="CreationBackgroundColorPanel" Margin="0,0,0,8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="34" /></Grid.RowDefinitions>
+                            <TextBlock Text="纯色背景" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                            <DockPanel Grid.Row="1" Margin="0,3,0,0" LastChildFill="True">
+                                <Button x:Name="CreationBackgroundPickerButton" Width="38" Padding="3" Margin="0,0,6,0"
+                                        Click="CreationBackgroundPickerButton_Click" ToolTip="从色板选择背景色"
+                                        AutomationProperties.Name="选择背景色">
+                                    <Border x:Name="CreationBackgroundSwatch" Width="22" Height="22" CornerRadius="4"
+                                            Background="#F7F9FC" BorderBrush="{StaticResource ControlLine}" BorderThickness="1" />
+                                </Button>
+                                <TextBox x:Name="CreationBackgroundHexInput" VerticalContentAlignment="Center" Padding="8,0"
+                                         TextChanged="CreationBackgroundHexInput_TextChanged"
+                                         ToolTip="输入背景底色 HEX，例如 #F7F9FC" AutomationProperties.Name="背景色 HEX" />
+                            </DockPanel>
+                        </Grid>
 
-        <TabControl x:Name="EditorTabs" Grid.Row="4" BorderThickness="0" Background="Transparent"
+                        <TextBlock Text="整体明暗" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                        <ComboBox x:Name="CreationAppearanceInput" Margin="0,3,0,8"
+                                  SelectionChanged="CreationAppearanceInput_SelectionChanged"
+                                  AutomationProperties.Name="创作明暗">
+                            <ComboBoxItem Content="浅色" Tag="light" />
+                            <ComboBoxItem Content="深色" Tag="dark" />
+                        </ComboBox>
+
+                        <TextBlock Text="主色" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                        <DockPanel Margin="0,3,0,7" LastChildFill="True">
+                            <Button x:Name="CreationAccentPickerButton" Width="38" Padding="3" Margin="0,0,6,0"
+                                    Click="CreationAccentPickerButton_Click" ToolTip="从色板选择主色"
+                                    AutomationProperties.Name="选择主色">
+                                <Border x:Name="CreationAccentSwatch" Width="22" Height="22" CornerRadius="4"
+                                        Background="#3B82F6" BorderBrush="{StaticResource ControlLine}" BorderThickness="1" />
+                            </Button>
+                            <TextBox x:Name="CreationAccentHexInput" VerticalContentAlignment="Center" Padding="8,0"
+                                     TextChanged="CreationAccentHexInput_TextChanged"
+                                     ToolTip="输入十六进制颜色，例如 #3B82F6" AutomationProperties.Name="主色 HEX" />
+                        </DockPanel>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="面板透明度" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                            <TextBlock x:Name="PanelTransparencyValue" Grid.Column="1" Text="28%" FontSize="11"
+                                       Foreground="{StaticResource PrimaryText}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Slider x:Name="PanelTransparencySlider" Minimum="0" Maximum="100" Value="28"
+                                TickFrequency="1" IsSnapToTickEnabled="False"
+                                ValueChanged="PanelTransparencySlider_ValueChanged"
+                                PreviewMouseLeftButtonDown="CreationSlider_PreviewMouseLeftButtonDown"
+                                PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
+                                PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
+                                LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
+                                AutomationProperties.Name="面板透明度" />
+
+                        <Grid Margin="0,5,0,8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="圆角" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                            <TextBlock x:Name="CornerRadiusValue" Grid.Column="1" Text="16 px" FontSize="11"
+                                       Foreground="{StaticResource PrimaryText}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Slider x:Name="CornerRadiusSlider" Minimum="0" Maximum="32" Value="16"
+                                TickFrequency="1" IsSnapToTickEnabled="False"
+                                ValueChanged="CornerRadiusSlider_ValueChanged"
+                                PreviewMouseLeftButtonDown="CreationSlider_PreviewMouseLeftButtonDown"
+                                PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
+                                PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
+                                LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
+                                AutomationProperties.Name="圆角" />
+
+                        <StackPanel x:Name="BackgroundTreatmentPanel">
+                        <Grid Margin="0,5,0,8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="背景明暗" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                            <TextBlock x:Name="BackgroundDarknessValue" Grid.Column="1" Text="8%" FontSize="11"
+                                       Foreground="{StaticResource PrimaryText}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Slider x:Name="BackgroundDarknessSlider" Minimum="0" Maximum="100" Value="8"
+                                TickFrequency="1" IsSnapToTickEnabled="False"
+                                ValueChanged="BackgroundDarknessSlider_ValueChanged"
+                                PreviewMouseLeftButtonDown="CreationSlider_PreviewMouseLeftButtonDown"
+                                PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
+                                PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
+                                LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
+                                AutomationProperties.Name="背景明暗" />
+                        <TextBlock Text="增加遮罩后，背景更柔和，便于阅读。"
+                                   FontSize="10" Foreground="{StaticResource SecondaryText}"
+                                   TextWrapping="Wrap" Margin="0,0,0,9" />
+                        </StackPanel>
+                        <StackPanel x:Name="BackgroundFocusPanel">
+                        <CheckBox x:Name="BackgroundFocusModeCheckBox" Content="调整背景位置"
+                                  Margin="0,5,0,0" Checked="BackgroundFocusModeCheckBox_Changed"
+                                  Unchecked="BackgroundFocusModeCheckBox_Changed"
+                                  AutomationProperties.Name="调整背景位置" />
+                        <TextBlock Text="开启后拖动右侧预览调整焦点；关闭后可在精细编辑中点击组件。"
+                                   FontSize="10" Foreground="{StaticResource SecondaryText}"
+                                   TextWrapping="Wrap" Margin="0,3,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="精细编辑">
+                <Grid Margin="1,5,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="82" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="写入范围" FontSize="11"
+                                   Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                        <ComboBox x:Name="ScopeInput" Grid.Column="1" SelectedIndex="0"
+                                  SelectionChanged="ScopeInput_SelectionChanged"
+                                  ToolTip="元数据始终属于基础包；颜色、背景与组件覆盖写入当前范围">
+                            <ComboBoxItem Content="基础 · 整体默认" Tag="base" />
+                            <ComboBoxItem Content="浅色变体" Tag="light" />
+                            <ComboBoxItem Content="深色变体" Tag="dark" />
+                            <ComboBoxItem Content="首页场景" Tag="home" />
+                            <ComboBoxItem Content="对话场景" Tag="conversation" />
+                        </ComboBox>
+                    </Grid>
+                    <TextBlock Grid.Row="1" Text="下方修改写入所选范围；右侧预览切换仅用于查看。留空即可恢复跟随。"
+                               FontSize="10" Foreground="{StaticResource SecondaryText}"
+                               TextWrapping="Wrap" Margin="0,2,0,0" />
+
+        <TabControl x:Name="EditorTabs" Grid.Row="2" BorderThickness="0" Background="Transparent"
                     SelectionChanged="EditorTabs_SelectionChanged">
             <TabControl.Resources>
                 <Style TargetType="{x:Type TabItem}">
@@ -100,10 +264,10 @@
                             <StackPanel Margin="0,7,0,0">
                                 <TextBlock Text="ID" FontSize="11" Foreground="{StaticResource SecondaryText}" />
                                 <TextBox x:Name="IdInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
-                                <TextBlock Text="名称" FontSize="11" Foreground="{StaticResource SecondaryText}" />
-                                <TextBox x:Name="NameInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
                                 <TextBlock Text="版本" FontSize="11" Foreground="{StaticResource SecondaryText}" />
                                 <TextBox x:Name="VersionInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
+                                <TextBlock Text="作者（可选）" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                                <TextBox x:Name="AuthorInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
                                 <TextBlock Text="默认外观" FontSize="11" Foreground="{StaticResource SecondaryText}" />
                                 <ComboBox x:Name="AppearanceInput" Margin="0,3,0,6" SelectedIndex="0"
                                           SelectionChanged="AppearanceInput_SelectionChanged">
@@ -217,7 +381,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="组件">
+            <TabItem x:Name="ComponentsTab" Header="组件">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
                         <TextBlock Text="组件样式" FontSize="13" FontWeight="SemiBold" />
@@ -277,22 +441,38 @@
                 </ScrollViewer>
             </TabItem>
         </TabControl>
+                </Grid>
+            </TabItem>
+        </TabControl>
 
-        <TextBlock x:Name="ValidationErrorText" Grid.Row="5" FontSize="11" Foreground="{StaticResource ErrorText}"
+        <TextBlock x:Name="ValidationErrorText" Grid.Row="3" FontSize="11" Foreground="{StaticResource ErrorText}"
                    TextWrapping="Wrap" MaxHeight="42" Visibility="Collapsed" />
 
-        <Grid Grid.Row="7">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="7" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="7" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Button x:Name="SaveAsButton" Grid.Column="0" Content="另存为" Padding="6,6" Click="SaveAsButton_Click" />
-            <Button x:Name="CancelButton" Grid.Column="2" Content="取消" Padding="6,6" Click="CancelButton_Click" />
-            <Button x:Name="SaveButton" Grid.Column="4" Content="保存" Style="{StaticResource PrimaryButton}" Padding="6,6"
-                    Click="SaveButton_Click" />
+        <Grid Grid.Row="5">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="7" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <DockPanel Grid.Row="0">
+                <TextBlock Text="皮肤名称" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                           VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBox x:Name="NameInput" MinHeight="34" Padding="8,5" VerticalContentAlignment="Center"
+                         TextChanged="Metadata_TextChanged" AutomationProperties.Name="皮肤名称" />
+            </DockPanel>
+            <Grid x:Name="SaveActionsGrid" Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="7" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="7" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="SaveAsButton" Grid.Column="0" Content="另存为" Padding="6,6" Click="SaveAsButton_Click" />
+                <Button x:Name="CancelButton" Grid.Column="2" Content="取消" Padding="6,6" Click="CancelButton_Click" />
+                <Button x:Name="SaveButton" Grid.Column="4" Content="保存" Style="{StaticResource PrimaryButton}" Padding="6,6"
+                        Click="SaveButton_Click" />
+            </Grid>
         </Grid>
 
         <Popup x:Name="ColorPalettePopup" Placement="Bottom" AllowsTransparency="True"

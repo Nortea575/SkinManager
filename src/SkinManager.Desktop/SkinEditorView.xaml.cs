@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -26,9 +27,13 @@ public partial class SkinEditorView : UserControl
     private readonly Stack<JsonObject> _redo = new();
     private SkinDraft? _draft;
     private SkinEditorField? _activeColorField;
+    private SkinEditorField? _creationAccentField;
+    private SkinEditorField? _creationBackgroundField;
     private string _baseline = "{}";
     private bool _loading;
     private bool _isNew;
+    private bool _historyGestureActive;
+    private bool _gestureSnapshotPushed;
 
     public SkinEditorView()
     {
@@ -70,22 +75,44 @@ public partial class SkinEditorView : UserControl
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => WindowMotion.AttachBehaviors(EditorTabs));
     }
 
+    private void EditorModeTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || !ReferenceEquals(e.OriginalSource, EditorModeTabs))
+        {
+            return;
+        }
+
+        if (EditorModeTabs.SelectedIndex != 0 && BackgroundFocusModeCheckBox.IsChecked == true)
+        {
+            BackgroundFocusModeCheckBox.IsChecked = false;
+        }
+
+        EditorModeChanged?.Invoke(this, EventArgs.Empty);
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => WindowMotion.AttachBehaviors(EditorModeTabs));
+    }
+
     public event EventHandler<SkinEditorChangedEventArgs>? DraftChanged;
     public event EventHandler? ScopeChanged;
     public event EventHandler? SaveRequested;
     public event EventHandler? CancelRequested;
     public event EventHandler? SaveAsRequested;
+    public event EventHandler? BackgroundFocusModeChanged;
+    public event EventHandler? EditorModeChanged;
 
     public SkinDraft Draft => _draft ?? throw new InvalidOperationException("皮肤草稿尚未初始化。");
     public string SelectedScope => (ScopeInput.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "base";
     public bool IsDirty => _draft is not null && !string.Equals(_baseline, Draft.Manifest.ToJsonString(), StringComparison.Ordinal);
     public bool IsNew => _isNew;
+    public bool IsCreationMode => EditorModeTabs.SelectedIndex == 0;
+    public bool IsBackgroundFocusEditing => EditorModeTabs.SelectedIndex == 0 && BackgroundFocusModeCheckBox.IsChecked == true;
 
     public void SetDraft(SkinDraft draft, bool isNew)
     {
         ArgumentNullException.ThrowIfNull(draft);
         _draft = draft;
         _isNew = isNew;
+        _historyGestureActive = false;
+        _gestureSnapshotPushed = false;
         _undo.Clear();
         _redo.Clear();
         _baseline = draft.Manifest.ToJsonString();
@@ -93,10 +120,15 @@ public partial class SkinEditorView : UserControl
         try
         {
             EditorTitle.Text = isNew ? "新建皮肤" : "编辑皮肤";
+            SaveButton.Content = isNew ? "创建皮肤" : "保存修改";
+            SetSaveActionsLayout(isNew);
+            EditorModeTabs.SelectedIndex = isNew ? 0 : 1;
+            BackgroundFocusModeCheckBox.IsChecked = false;
             ScopeInput.SelectedIndex = 0;
             LoadMetadata();
             LoadTokenFields();
             LoadBackgroundFields();
+            LoadCreationControls();
             ComponentInput.SelectedValue = "window";
             ComponentStateInput.SelectedIndex = 0;
             AddComponentPropertyInput.SelectedIndex = 0;
@@ -118,11 +150,51 @@ public partial class SkinEditorView : UserControl
         _baseline = Draft.Manifest.ToJsonString();
         _undo.Clear();
         _redo.Clear();
+        _historyGestureActive = false;
+        _gestureSnapshotPushed = false;
         _isNew = false;
         EditorTitle.Text = "编辑皮肤";
+        SaveButton.Content = "保存修改";
+        SetSaveActionsLayout(isNew: false);
         PruneDraftResources();
         UpdateHistoryControls();
         UpdateDirtyState();
+    }
+
+    public void BeginBackgroundFocusGesture()
+    {
+        if (_historyGestureActive)
+        {
+            return;
+        }
+
+        _historyGestureActive = true;
+        _gestureSnapshotPushed = false;
+    }
+
+    public void SetBackgroundFocus(double focusX, double focusY)
+    {
+        if (_draft is null)
+        {
+            return;
+        }
+
+        SetManifestValue(["background", "focusX"], JsonValue.Create(Math.Clamp(focusX, 0, 1)), resourcesChanged: false);
+        SetManifestValue(["background", "focusY"], JsonValue.Create(Math.Clamp(focusY, 0, 1)), resourcesChanged: false);
+    }
+
+    public void EndBackgroundFocusGesture()
+    {
+        _historyGestureActive = false;
+        _gestureSnapshotPushed = false;
+    }
+
+    public void SetBackgroundFocusEditing(bool enabled)
+    {
+        if (!enabled && BackgroundFocusModeCheckBox.IsChecked == true)
+        {
+            BackgroundFocusModeCheckBox.IsChecked = false;
+        }
     }
 
     public void SetSkinId(string value)
@@ -141,7 +213,13 @@ public partial class SkinEditorView : UserControl
         if (SkinDefinitionCatalog.Components.Any(item => item.Id == componentId && item.EditorVisible))
         {
             ComponentInput.SelectedValue = componentId;
-            EditorTabs.SelectedIndex = 2;
+            EditorModeTabs.SelectedIndex = 1;
+            var componentsTab = EditorTabs.Items.OfType<TabItem>()
+                .FirstOrDefault(item => item.Name == "ComponentsTab");
+            if (componentsTab is not null)
+            {
+                EditorTabs.SelectedItem = componentsTab;
+            }
         }
     }
 
@@ -162,11 +240,87 @@ public partial class SkinEditorView : UserControl
         IdInput.Text = ReadString(Draft.Manifest, "id") ?? string.Empty;
         NameInput.Text = ReadString(Draft.Manifest, "name") ?? string.Empty;
         VersionInput.Text = ReadString(Draft.Manifest, "version") ?? "1.0.0";
+        AuthorInput.Text = ReadString(Draft.Manifest, "author") ?? string.Empty;
         var appearance = ReadString(Draft.Manifest, "appearance") ?? "system";
         AppearanceInput.SelectedItem = AppearanceInput.Items.Cast<ComboBoxItem>()
             .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), appearance, StringComparison.OrdinalIgnoreCase))
             ?? AppearanceInput.Items[0];
         UpdateMetadataSummary();
+    }
+
+    private void LoadCreationControls()
+    {
+        if (_draft is null)
+        {
+            return;
+        }
+
+        var tokens = Draft.Manifest["tokens"] as JsonObject;
+        var background = Draft.Manifest["background"] as JsonObject;
+        var appearance = ReadString(Draft.Manifest, "appearance") == "dark" ? "dark" : "light";
+        CreationAppearanceInput.SelectedItem = CreationAppearanceInput.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), appearance, StringComparison.OrdinalIgnoreCase))
+            ?? CreationAppearanceInput.Items[0];
+
+        var accent = ReadString(tokens, "color.accent") ?? (appearance == "dark" ? "#9AB3DF" : "#2563EB");
+        var windowColor = ReadString(tokens, "color.surface.window") ?? (appearance == "dark" ? "#202735" : "#F7F9FC");
+        var backgroundColor = ResolveCreationBackgroundColor(ReadString(background, "color"), tokens, windowColor);
+        _creationAccentField = new SkinEditorField(["tokens", "color.accent"], "主色", accent, string.Empty,
+            isColor: true, isNumeric: false, SkinFieldDisplayTransform.None, OnFieldValueChanged);
+        _creationBackgroundField = new SkinEditorField(["background", "color"], "背景底色", backgroundColor, string.Empty,
+            isColor: true, isNumeric: false, SkinFieldDisplayTransform.None, OnFieldValueChanged);
+        CreationAccentPickerButton.Tag = _creationAccentField;
+        CreationBackgroundPickerButton.Tag = _creationBackgroundField;
+        CreationAccentHexInput.Text = accent;
+        CreationBackgroundHexInput.Text = backgroundColor;
+        CreationAccentSwatch.Background = _creationAccentField.SwatchBrush;
+        CreationBackgroundSwatch.Background = _creationBackgroundField.SwatchBrush;
+
+        var fillOpacity = ReadNumber(tokens?["material.fillOpacity"], appearance == "dark" ? 0.40 : 0.28);
+        PanelTransparencySlider.Value = Math.Clamp((1 - fillOpacity) * 100, 0, 100);
+        PanelTransparencyValue.Text = $"{Math.Round(PanelTransparencySlider.Value):0}%";
+        var panelRadius = ReadNumber(tokens?["radius.control"], ReadNumber(tokens?["radius.panel"], 16));
+        CornerRadiusSlider.Value = Math.Clamp(panelRadius, 0, 32);
+        CornerRadiusValue.Text = $"{Math.Round(CornerRadiusSlider.Value):0} px";
+        var overlayOpacity = ReadNumber(background?["overlayOpacity"],
+            SkinCreation.GetDefaultOverlayOpacity(appearance == "dark" ? SkinAppearance.Dark : SkinAppearance.Light));
+        BackgroundDarknessSlider.Value = Math.Clamp(overlayOpacity * 100, 0, 100);
+        BackgroundDarknessValue.Text = $"{Math.Round(BackgroundDarknessSlider.Value):0}%";
+
+        var imagePath = ReadString(background, "image");
+        var hasImage = !string.IsNullOrWhiteSpace(imagePath);
+        CreationBackgroundPathText.Text = hasImage ? "已选择背景图片" : "可拖入 PNG 或 JPG，也可使用纯色背景";
+        CreationBackgroundPathText.ToolTip = hasImage
+            ? "背景图片已添加，可调整背景明暗与位置。"
+            : "可拖入 PNG 或 JPG，也可使用纯色背景";
+        CreationBackgroundHexInput.IsEnabled = !hasImage;
+        CreationBackgroundPickerButton.IsEnabled = !hasImage;
+        CreationBackgroundColorPanel.Visibility = hasImage ? Visibility.Collapsed : Visibility.Visible;
+        CreationUseColorButton.Visibility = hasImage ? Visibility.Visible : Visibility.Collapsed;
+        BackgroundTreatmentPanel.Visibility = hasImage ? Visibility.Visible : Visibility.Collapsed;
+        BackgroundFocusPanel.Visibility = hasImage ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasImage)
+        {
+            BackgroundFocusModeCheckBox.IsChecked = false;
+        }
+    }
+
+    private static string ResolveCreationBackgroundColor(string? value, JsonObject? tokens, string fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && value.StartsWith('{') && value.EndsWith('}'))
+        {
+            return ReadString(tokens, value[1..^1]) ?? fallback;
+        }
+
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static double ReadNumber(JsonNode? node, double fallback)
+    {
+        var value = ReadScalar(node, string.Empty, out _);
+        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)
+            ? number
+            : fallback;
     }
 
     private void LoadTokenFields()
@@ -307,11 +461,20 @@ public partial class SkinEditorView : UserControl
             nameof(IdInput) => "id",
             nameof(NameInput) => "name",
             nameof(VersionInput) => "version",
+            nameof(AuthorInput) => "author",
             _ => string.Empty
         };
         if (key.Length > 0)
         {
-            SetMetadata(key, input.Text.Trim());
+            var value = input.Text.Trim();
+            if (key == "author" && value.Length == 0)
+            {
+                SetManifestValue([key], null, resourcesChanged: false);
+            }
+            else
+            {
+                SetMetadata(key, value);
+            }
         }
     }
 
@@ -320,6 +483,149 @@ public partial class SkinEditorView : UserControl
         if (!_loading && _draft is not null && AppearanceInput.SelectedItem is ComboBoxItem item && item.Tag is string appearance)
         {
             SetManifestValue(["appearance"], JsonValue.Create(appearance), resourcesChanged: false);
+        }
+    }
+
+    private void CreationAppearanceInput_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || _draft is null || CreationAppearanceInput.SelectedItem is not ComboBoxItem item ||
+            item.Tag is not string appearance)
+        {
+            return;
+        }
+
+        var target = appearance == "dark" ? SkinAppearance.Dark : SkinAppearance.Light;
+        if (string.Equals(ReadString(Draft.Manifest, "appearance"), appearance, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        SkinCreation.ChangeAppearance(Draft, target);
+        _redo.Clear();
+        _loading = true;
+        try
+        {
+            LoadMetadata();
+            LoadTokenFields();
+            LoadBackgroundFields();
+            LoadCreationControls();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        UpdateHistoryControls();
+        UpdateDirtyState();
+        DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(resourcesChanged: false));
+    }
+
+    private void CreationAccentHexInput_TextChanged(object sender, TextChangedEventArgs e) =>
+        UpdateCreationColor(_creationAccentField, CreationAccentHexInput.Text);
+
+    private void CreationBackgroundHexInput_TextChanged(object sender, TextChangedEventArgs e) =>
+        UpdateCreationColor(_creationBackgroundField, CreationBackgroundHexInput.Text);
+
+    private void CreationAccentPickerButton_Click(object sender, RoutedEventArgs e) =>
+        OpenCreationColorPicker(CreationAccentPickerButton, _creationAccentField);
+
+    private void CreationBackgroundPickerButton_Click(object sender, RoutedEventArgs e) =>
+        OpenCreationColorPicker(CreationBackgroundPickerButton, _creationBackgroundField);
+
+    private void OpenCreationColorPicker(Button button, SkinEditorField? field)
+    {
+        if (field is null)
+        {
+            return;
+        }
+
+        _activeColorField = field;
+        PaletteHexInput.Text = field.Value;
+        ColorPalettePopup.PlacementTarget = button;
+        ColorPalettePopup.IsOpen = true;
+    }
+
+    private void UpdateCreationColor(SkinEditorField? field, string value)
+    {
+        if (_loading || _draft is null || field is null || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (!CssColorParser.TryParse(value.Trim(), out _))
+        {
+            SetValidationError("请输入有效的 HEX 或 RGB 颜色，例如 #3B82F6。");
+            return;
+        }
+
+        field.Value = value.Trim();
+        if (ReferenceEquals(field, _creationAccentField))
+        {
+            CreationAccentSwatch.Background = field.SwatchBrush;
+        }
+        else if (ReferenceEquals(field, _creationBackgroundField))
+        {
+            CreationBackgroundSwatch.Background = field.SwatchBrush;
+        }
+    }
+
+    private void PanelTransparencySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loading || _draft is null)
+        {
+            return;
+        }
+
+        var value = (int)Math.Round(PanelTransparencySlider.Value);
+        PanelTransparencyValue.Text = $"{value}%";
+        SetManifestValue(["tokens", "material.fillOpacity"], JsonValue.Create((100 - value) / 100d), resourcesChanged: false);
+    }
+
+    private void CornerRadiusSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loading || _draft is null)
+        {
+            return;
+        }
+
+        var value = Math.Round(CornerRadiusSlider.Value);
+        CornerRadiusValue.Text = $"{value:0} px";
+        SetManifestValue(["tokens", "radius.panel"], JsonValue.Create(value), resourcesChanged: false);
+        SetManifestValue(["tokens", "radius.control"], JsonValue.Create(value), resourcesChanged: false);
+    }
+
+    private void BackgroundDarknessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_loading || _draft is null)
+        {
+            return;
+        }
+
+        var value = (int)Math.Round(BackgroundDarknessSlider.Value);
+        BackgroundDarknessValue.Text = $"{value}%";
+        SetManifestValue(["background", "overlayOpacity"], JsonValue.Create(value / 100d), resourcesChanged: false);
+    }
+
+    private void CreationSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => BeginBackgroundFocusGesture();
+    private void CreationSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndBackgroundFocusGesture();
+    private void CreationSlider_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End)
+        {
+            BeginBackgroundFocusGesture();
+        }
+    }
+
+    private void CreationSlider_PreviewKeyUp(object sender, KeyEventArgs e) => EndBackgroundFocusGesture();
+    private void CreationSlider_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => EndBackgroundFocusGesture();
+    private void CreationSlider_LostMouseCapture(object sender, MouseEventArgs e) => EndBackgroundFocusGesture();
+
+    private void BackgroundFocusModeCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_loading || BackgroundFocusModeCheckBox.IsChecked != true)
+        {
+            BackgroundFocusModeChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -372,6 +678,17 @@ public partial class SkinEditorView : UserControl
         if (_loading || _draft is null)
         {
             return;
+        }
+
+        if (ReferenceEquals(field, _creationAccentField))
+        {
+            CreationAccentHexInput.Text = field.Value;
+            CreationAccentSwatch.Background = field.SwatchBrush;
+        }
+        else if (ReferenceEquals(field, _creationBackgroundField))
+        {
+            CreationBackgroundHexInput.Text = field.Value;
+            CreationBackgroundSwatch.Background = field.SwatchBrush;
         }
 
         if (string.IsNullOrWhiteSpace(field.Value))
@@ -436,7 +753,18 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        PushUndoSnapshot();
+        if (_historyGestureActive)
+        {
+            if (!_gestureSnapshotPushed)
+            {
+                PushUndoSnapshot();
+                _gestureSnapshotPushed = true;
+            }
+        }
+        else
+        {
+            PushUndoSnapshot();
+        }
         if (value is null)
         {
             RemoveNode(Draft.Manifest, path);
@@ -479,10 +807,10 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        var previousImage = ReadString(Draft.Manifest["background"] as JsonObject, "image");
+        var previousImages = GetImageReferences(Draft.Manifest);
         _redo.Push(Draft.Manifest.DeepClone().AsObject());
         RestoreManifest(_undo.Pop());
-        FinishHistoryMove(previousImage);
+        FinishHistoryMove(previousImages);
     }
 
     private void RedoButton_Click(object sender, RoutedEventArgs e)
@@ -492,10 +820,10 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        var previousImage = ReadString(Draft.Manifest["background"] as JsonObject, "image");
+        var previousImages = GetImageReferences(Draft.Manifest);
         _undo.Push(Draft.Manifest.DeepClone().AsObject());
         RestoreManifest(_redo.Pop());
-        FinishHistoryMove(previousImage);
+        FinishHistoryMove(previousImages);
     }
 
     private void RestoreManifest(JsonObject snapshot)
@@ -510,6 +838,7 @@ public partial class SkinEditorView : UserControl
             LoadMetadata();
             LoadTokenFields();
             LoadBackgroundFields();
+            LoadCreationControls();
             LoadComponentFields();
             ClearValidationError();
         }
@@ -521,13 +850,13 @@ public partial class SkinEditorView : UserControl
         PruneDraftResources();
     }
 
-    private void FinishHistoryMove(string? previousImage)
+    private void FinishHistoryMove(IReadOnlySet<string> previousImages)
     {
-        var currentImage = ReadString(Draft.Manifest["background"] as JsonObject, "image");
+        var currentImages = GetImageReferences(Draft.Manifest);
         UpdateHistoryControls();
         UpdateDirtyState();
         DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(
-            !string.Equals(previousImage, currentImage, StringComparison.Ordinal)));
+            !previousImages.SetEquals(currentImages)));
     }
 
     private void UpdateHistoryControls()
@@ -539,10 +868,37 @@ public partial class SkinEditorView : UserControl
     private void UpdateDirtyState()
     {
         var dirty = IsDirty;
-        DirtyStateText.Text = dirty ? "未保存的修改" : "草稿已保存";
+        DirtyStateText.Text = dirty ? "未保存的修改" : _isNew ? "尚未保存到皮肤库" : "草稿已保存";
         DirtyStateText.Foreground = dirty
             ? (Brush)FindResource("WarningText")
             : (Brush)FindResource("SecondaryText");
+    }
+
+    private void SetSaveActionsLayout(bool isNew)
+    {
+        if (isNew)
+        {
+            SaveAsButton.Visibility = Visibility.Collapsed;
+            SaveActionsGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            SaveActionsGrid.ColumnDefinitions[1].Width = new GridLength(7);
+            SaveActionsGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            SaveActionsGrid.ColumnDefinitions[3].Width = new GridLength(0);
+            SaveActionsGrid.ColumnDefinitions[4].Width = new GridLength(0);
+            Grid.SetColumn(CancelButton, 0);
+            Grid.SetColumn(SaveButton, 2);
+        }
+        else
+        {
+            SaveAsButton.Visibility = Visibility.Visible;
+            SaveActionsGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            SaveActionsGrid.ColumnDefinitions[1].Width = new GridLength(7);
+            SaveActionsGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            SaveActionsGrid.ColumnDefinitions[3].Width = new GridLength(7);
+            SaveActionsGrid.ColumnDefinitions[4].Width = new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(SaveAsButton, 0);
+            Grid.SetColumn(CancelButton, 2);
+            Grid.SetColumn(SaveButton, 4);
+        }
     }
 
     private void ChooseBackgroundButton_Click(object sender, RoutedEventArgs e)
@@ -564,22 +920,52 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
+        SetBackgroundImageFromFile(dialog.FileName);
+    }
+
+    private void BackgroundDropZone_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void BackgroundDropZone_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } paths)
+        {
+            SetBackgroundImageFromFile(paths[0]);
+        }
+
+        e.Handled = true;
+    }
+
+    internal void SetBackgroundImageFromFile(string path)
+    {
+        if (_draft is null)
+        {
+            return;
+        }
+
         try
         {
-            var info = new FileInfo(dialog.FileName);
+            var info = new FileInfo(path);
             if (info.Length == 0 || info.Length > 50L * 1024 * 1024)
             {
                 throw new InvalidDataException("背景图片必须小于 50 MB 且不能为空。");
             }
 
-            var bytes = File.ReadAllBytes(dialog.FileName);
+            var bytes = File.ReadAllBytes(path);
             _ = PreviewImageCropper.ReadDimensions(bytes);
             PushUndoSnapshot();
-            SetBackgroundImageInScope(bytes, Path.GetFileName(dialog.FileName));
+            SetBackgroundImageInScope(bytes, Path.GetFileName(path));
             _redo.Clear();
             PruneDraftResources();
             _loading = true;
-            try { LoadBackgroundFields(); }
+            try
+            {
+                LoadBackgroundFields();
+                LoadCreationControls();
+            }
             finally { _loading = false; }
             UpdateHistoryControls();
             UpdateDirtyState();
@@ -594,7 +980,7 @@ public partial class SkinEditorView : UserControl
 
     private void SetBackgroundImageInScope(byte[] bytes, string originalName)
     {
-        if (SelectedScope == "base")
+        if (EditorModeTabs.SelectedIndex == 0 || SelectedScope == "base")
         {
             Draft.SetBackgroundImage(bytes, originalName);
             return;
@@ -625,17 +1011,45 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        var previousImage = ReadString(GetScopedObject("background"), "image");
+        var previousImages = GetImageReferences(Draft.Manifest);
         PushUndoSnapshot();
         RemoveNode(Draft.Manifest, imagePath);
         _redo.Clear();
         PruneDraftResources();
         _loading = true;
-        try { LoadBackgroundFields(); }
+        try
+        {
+            LoadBackgroundFields();
+            LoadCreationControls();
+        }
         finally { _loading = false; }
         UpdateHistoryControls();
         UpdateDirtyState();
-        DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(!string.IsNullOrEmpty(previousImage)));
+        DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(!previousImages.SetEquals(GetImageReferences(Draft.Manifest))));
+    }
+
+    private void CreationUseColorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_draft is null || _creationBackgroundField is null)
+        {
+            return;
+        }
+
+        BeginBackgroundFocusGesture();
+        SetManifestValue(["background", "image"], null, resourcesChanged: true);
+        SetManifestValue(["background", "color"], JsonValue.Create(_creationBackgroundField.Value), resourcesChanged: false);
+        EndBackgroundFocusGesture();
+        _loading = true;
+        try
+        {
+            LoadBackgroundFields();
+            LoadCreationControls();
+        }
+        finally
+        {
+            _loading = false;
+        }
+        PruneDraftResources();
     }
 
     private void AddComponentPropertyButton_Click(object sender, RoutedEventArgs e)
@@ -734,6 +1148,35 @@ public partial class SkinEditorView : UserControl
 
     private static string? ReadString(JsonObject? parent, string key) =>
         parent?[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    private static HashSet<string> GetImageReferences(JsonObject manifest)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddImageReference(manifest["background"] as JsonObject, result);
+        foreach (var sectionName in new[] { "variants", "scenes" })
+        {
+            if (manifest[sectionName] is not JsonObject section)
+            {
+                continue;
+            }
+
+            foreach (var patch in section.Select(pair => pair.Value).OfType<JsonObject>())
+            {
+                AddImageReference(patch["background"] as JsonObject, result);
+            }
+        }
+
+        return result;
+    }
+
+    private static void AddImageReference(JsonObject? background, ISet<string> result)
+    {
+        var path = ReadString(background, "image");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            result.Add(path);
+        }
+    }
 
     private static string ReadScalar(JsonNode? node, string fallback, out bool numeric)
     {

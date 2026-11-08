@@ -83,7 +83,13 @@ internal static class AgentHost
 
                 using var responseTimeout = CancellationTokenSource.CreateLinkedTokenSource(hostLifetime.Token);
                 responseTimeout.CancelAfter(TimeSpan.FromSeconds(5));
-                var responseLine = JsonSerializer.Serialize(AgentResponse.From(command.RequestId, status), AgentPipeProtocol.JsonOptions);
+                var compatibilityResult = operation is AgentOperation.Apply or AgentOperation.ConfigureCompatibility
+                    ? coordinator.LastCompatibilityResult
+                    : null;
+                var response = compatibilityResult is null
+                    ? AgentResponse.From(command.RequestId, status)
+                    : AgentResponse.From(command.RequestId, status, compatibilityResult);
+                var responseLine = JsonSerializer.Serialize(response, AgentPipeProtocol.JsonOptions);
                 try
                 {
                     await writer.WriteLineAsync(responseLine.AsMemory(), responseTimeout.Token).ConfigureAwait(false);
@@ -95,7 +101,7 @@ internal static class AgentHost
                 }
 
                 responseLine = string.Empty;
-                var shouldExit = operation is AgentOperation.Remove or AgentOperation.Stop ||
+                var shouldExit = (operation is AgentOperation.Remove or AgentOperation.Stop or AgentOperation.ConfigureCompatibility) && !coordinator.HasActiveSession ||
                     operation == AgentOperation.Apply && !coordinator.HasActiveSession;
                 command = null;
                 if (shouldExit)

@@ -240,7 +240,7 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
         methodValue.ValueEquals("Page.loadEventFired") ||
         methodValue.ValueEquals("Page.frameNavigated");
 
-    private static void ValidateEndpoint(Uri endpoint)
+    internal static void ValidateEndpoint(Uri endpoint)
     {
         if (!endpoint.IsAbsoluteUri || !string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) || !IsLiteralLoopbackHost(endpoint) ||
             endpoint.Port is < 1 or > 65535 || endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0 ||

@@ -116,8 +116,8 @@ internal static class PreviewImageCropper
 
         focusX = double.IsFinite(focusX) ? Math.Clamp(focusX, 0, 1) : 0.5;
         focusY = double.IsFinite(focusY) ? Math.Clamp(focusY, 0, 1) : 0.5;
-        var x = (int)Math.Round(focusX * sourceWidth - cropWidth / 2d);
-        var y = (int)Math.Round(focusY * sourceHeight - cropHeight / 2d);
+        var x = (int)Math.Round((sourceWidth - cropWidth) * focusX, MidpointRounding.AwayFromZero);
+        var y = (int)Math.Round((sourceHeight - cropHeight) * focusY, MidpointRounding.AwayFromZero);
         x = Math.Clamp(x, 0, sourceWidth - cropWidth);
         y = Math.Clamp(y, 0, sourceHeight - cropHeight);
 
