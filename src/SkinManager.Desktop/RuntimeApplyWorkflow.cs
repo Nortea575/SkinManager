@@ -40,26 +40,56 @@ internal sealed class RuntimeApplyWorkflow
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (selectedTarget is not null)
-        {
-            return await ApplyToSelectedTargetAsync(request, port, selectedTarget, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (hasActiveConnection)
-        {
-            var connectedRequest = activeConnectedInstance is null
-                ? request
-                : request with { ExpectedInstance = activeConnectedInstance };
-            return await _apply(connectedRequest, cancellationToken).ConfigureAwait(false);
-        }
-
         if (_instances is null)
         {
             return Error("无法核验 Codex 实例身份。请使用“管理实例”选择窗口后再应用。", request.Endpoint);
         }
 
         var instances = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        var latestSelectedTarget = selectedTarget is null
+            ? null
+            : instances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
+        if (latestSelectedTarget is not null)
+        {
+            if (latestSelectedTarget.IsExitResidual)
+            {
+                return Error("所选调试实例已退出，但仍有后台进程残留。请在“管理实例”中检查并处理后再启动。", request.Endpoint);
+            }
+
+            if (latestSelectedTarget.Kind != CodexInstanceKind.Debug || latestSelectedTarget.DebugPort != port)
+            {
+                return Error("所选实例的类型或调试端口已变化。请刷新实例列表并重新选择。", request.Endpoint);
+            }
+
+            if (!latestSelectedTarget.CanConnect || string.IsNullOrWhiteSpace(latestSelectedTarget.DebugEndpoint))
+            {
+                return Error(DescribeUnavailableTarget(latestSelectedTarget), request.Endpoint);
+            }
+
+            var selectedMatchesActive = hasActiveConnection && activeConnectedInstance is not null &&
+                SameIdentity(latestSelectedTarget.Identity, activeConnectedInstance);
+            return await ApplyToFreshTargetAsync(
+                request, latestSelectedTarget, cancellationToken, preserveRequestEndpoint: selectedMatchesActive).ConfigureAwait(false);
+        }
+
+        if (hasActiveConnection && activeConnectedInstance is not null)
+        {
+            var activeTarget = instances.FirstOrDefault(instance => SameIdentity(instance.Identity, activeConnectedInstance));
+            if (activeTarget is { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int activePort, DebugEndpoint: { Length: > 0 } } &&
+                activePort == port)
+            {
+                return await ApplyToFreshTargetAsync(request, activeTarget, cancellationToken, preserveRequestEndpoint: true).ConfigureAwait(false);
+            }
+        }
+
         var running = GetRunningInstances(instances);
+        if (instances.FirstOrDefault(instance => instance.IsExitResidual) is { } residual)
+        {
+            return Error(
+                $"检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）。请在“管理实例”中检查并处理后再启动。",
+                request.Endpoint);
+        }
+
         var matchingTargets = FindConnectableDebugTargets(running, port);
         var samePortTargets = running
             .Where(instance => instance.Kind == CodexInstanceKind.Debug && instance.DebugPort == port)
@@ -67,6 +97,12 @@ internal sealed class RuntimeApplyWorkflow
         if (samePortTargets.Length > 1)
         {
             return Error($"端口 {port} 对应多个 Codex 调试实例。请在“管理实例”中选择连接目标。", request.Endpoint);
+        }
+
+        if (samePortTargets.Length == 1 &&
+            (!samePortTargets[0].CanConnect || string.IsNullOrWhiteSpace(samePortTargets[0].DebugEndpoint)))
+        {
+            return Error(DescribeUnavailableTarget(samePortTargets[0]), request.Endpoint);
         }
 
         if (matchingTargets.Count == 1)
@@ -130,7 +166,8 @@ internal sealed class RuntimeApplyWorkflow
         CodexInstance? selectedTarget,
         CodexProcessIdentity? activeConnectedInstance,
         bool hasActiveConnection,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? activeEndpoint = null)
     {
         if (port is < 1 or > 65535)
         {
@@ -144,31 +181,48 @@ internal sealed class RuntimeApplyWorkflow
             return Error("无法核验 Codex 实例身份。请使用“管理实例”选择窗口后重试。", endpoint);
         }
 
-        if (selectedTarget is not null)
-        {
-            return await ConnectToSelectedTargetAsync(selectedTarget, port, endpoint, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (hasActiveConnection)
-        {
-            if (activeConnectedInstance is null)
-            {
-                return Error("当前连接没有可核验的进程身份。请在“管理实例”中重新选择窗口。", endpoint);
-            }
-
-            var currentInstances = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
-            var connectedTarget = currentInstances.FirstOrDefault(instance => SameIdentity(instance.Identity, activeConnectedInstance));
-            if (connectedTarget is not { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int connectedPort } ||
-                connectedPort != port)
-            {
-                return Error("当前连接目标已退出或端口发生变化。请刷新实例后重试。", endpoint);
-            }
-
-            return ConnectedWithoutSkin(connectedTarget, endpoint);
-        }
-
         var initialInstances = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        var latestSelectedTarget = selectedTarget is null
+            ? null
+            : initialInstances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
+        if (latestSelectedTarget is not null)
+        {
+            if (latestSelectedTarget.IsExitResidual)
+            {
+                return Error("所选调试实例已退出，但仍有后台进程残留。请在“管理实例”中检查并处理后再启动。", endpoint);
+            }
+
+            if (latestSelectedTarget.Kind != CodexInstanceKind.Debug || latestSelectedTarget.DebugPort != port)
+            {
+                return Error("所选实例的类型或调试端口已变化。请刷新实例列表并重新选择。", endpoint);
+            }
+
+            var selectedMatchesActive = hasActiveConnection && activeConnectedInstance is not null &&
+                SameIdentity(latestSelectedTarget.Identity, activeConnectedInstance);
+            return latestSelectedTarget.CanConnect && !string.IsNullOrWhiteSpace(latestSelectedTarget.DebugEndpoint)
+                ? ConnectedWithoutSkin(latestSelectedTarget, endpoint,
+                    selectedMatchesActive && IsEndpointForPort(activeEndpoint, port) ? activeEndpoint : null)
+                : Error(DescribeUnavailableTarget(latestSelectedTarget), endpoint);
+        }
+
+        if (hasActiveConnection && activeConnectedInstance is not null)
+        {
+            var activeTarget = initialInstances.FirstOrDefault(instance => SameIdentity(instance.Identity, activeConnectedInstance));
+            if (activeTarget is { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int connectedPort, DebugEndpoint: { Length: > 0 } } &&
+                connectedPort == port)
+            {
+                return ConnectedWithoutSkin(activeTarget, endpoint,
+                    IsEndpointForPort(activeEndpoint, port) ? activeEndpoint : null);
+            }
+        }
+
         var running = GetRunningInstances(initialInstances);
+        if (initialInstances.FirstOrDefault(instance => instance.IsExitResidual) is { } residual)
+        {
+            return Error(
+                $"检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）。请在“管理实例”中检查并处理后再启动。",
+                endpoint);
+        }
         var matchingTargets = FindConnectableDebugTargets(running, port);
         var samePortTargets = running
             .Where(instance => instance.Kind == CodexInstanceKind.Debug && instance.DebugPort == port)
@@ -176,6 +230,12 @@ internal sealed class RuntimeApplyWorkflow
         if (samePortTargets.Length > 1 || matchingTargets.Count > 1)
         {
             return Error($"端口 {port} 对应多个 Codex 调试实例。请在“管理实例”中选择连接目标。", endpoint);
+        }
+
+        if (samePortTargets.Length == 1 &&
+            (!samePortTargets[0].CanConnect || string.IsNullOrWhiteSpace(samePortTargets[0].DebugEndpoint)))
+        {
+            return Error(DescribeUnavailableTarget(samePortTargets[0]), endpoint);
         }
 
         if (matchingTargets.Count == 1)
@@ -221,58 +281,18 @@ internal sealed class RuntimeApplyWorkflow
         return ConnectedWithoutSkin(readyTarget.Target!, endpoint);
     }
 
-    private async Task<RuntimeStatus> ApplyToSelectedTargetAsync(
-        RuntimeApplyRequest request,
-        int port,
-        CodexInstance selectedTarget,
-        CancellationToken cancellationToken)
-    {
-        if (_instances is null)
-        {
-            return Error("无法重新核验所选 Codex 实例。请刷新实例列表后重试。", request.Endpoint);
-        }
-
-        var latestInstances = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
-        var latestTarget = latestInstances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
-        if (latestTarget is not { CanConnect: true, DebugPort: int selectedPort } ||
-            selectedPort != port || latestTarget.Kind != CodexInstanceKind.Debug || latestTarget.IsExitResidual)
-        {
-            return Error(
-                "所选窗口已退出或调试端口已变化，未发送皮肤脚本。请刷新实例列表并重新选择。",
-                request.Endpoint);
-        }
-
-        return await ApplyToFreshTargetAsync(request, latestTarget, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<RuntimeStatus> ConnectToSelectedTargetAsync(
-        CodexInstance selectedTarget,
-        int port,
-        string endpoint,
-        CancellationToken cancellationToken)
-    {
-        var latestInstances = await _instances!.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
-        var latestTarget = latestInstances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
-        if (latestTarget is not { CanConnect: true, DebugPort: int selectedPort } ||
-            selectedPort != port || latestTarget.Kind != CodexInstanceKind.Debug || latestTarget.IsExitResidual)
-        {
-            return Error("所选窗口已退出或调试端口已变化。请刷新实例列表并重新选择。", endpoint);
-        }
-
-        return ConnectedWithoutSkin(latestTarget, endpoint);
-    }
-
     private Task<RuntimeStatus> ApplyToFreshTargetAsync(
         RuntimeApplyRequest request,
         CodexInstance target,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool preserveRequestEndpoint = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var port = target.DebugPort!.Value;
-        var endpoint = $"http://127.0.0.1:{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         return _apply(request with
         {
-            Endpoint = endpoint,
+            Endpoint = preserveRequestEndpoint && IsEndpointForPort(request.Endpoint, target.DebugPort!.Value)
+                ? request.Endpoint
+                : target.DebugEndpoint ?? request.Endpoint,
             ExpectedInstance = target.Identity
         }, cancellationToken);
     }
@@ -329,11 +349,13 @@ internal sealed class RuntimeApplyWorkflow
             endpoint));
     }
 
-    private static RuntimeStatus ConnectedWithoutSkin(CodexInstance target, string endpoint) =>
+    private static RuntimeStatus ConnectedWithoutSkin(CodexInstance target, string endpoint, string? preferredEndpoint = null) =>
         new(
             RuntimeStatusState.Connected,
             null,
-            endpoint,
+            IsEndpointForPort(preferredEndpoint, target.DebugPort ?? 0)
+                ? preferredEndpoint
+                : target.DebugEndpoint ?? endpoint,
             "Codex 调试目标已核验；没有应用皮肤。",
             true,
             0,
@@ -342,9 +364,39 @@ internal sealed class RuntimeApplyWorkflow
     private static List<CodexInstance> GetRunningInstances(IReadOnlyList<CodexInstance> instances) =>
         instances.Where(instance => !instance.IsExitResidual).ToList();
 
+    private static bool IsEndpointForPort(string? value, int port) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var endpoint) &&
+        endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback && endpoint.Port == port;
+
+    private static string DescribeUnavailableTarget(CodexInstance target)
+    {
+        if (target.IsExitResidual)
+        {
+            return $"调试实例 PID {target.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留。";
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.ConnectionMessage))
+        {
+            return target.ConnectionMessage;
+        }
+
+        if (target.DebugPort is not int port || port is < 1 or > 65535)
+        {
+            return $"调试实例 PID {target.Identity.ProcessId} 没有有效的调试端口。请刷新实例列表检查启动参数。";
+        }
+
+        if (target.CanConnect && string.IsNullOrWhiteSpace(target.DebugEndpoint))
+        {
+            return $"调试实例 PID {target.Identity.ProcessId} 的监听端口已响应，但 Runtime 未返回经过身份核验的 Endpoint。请刷新实例列表后重试。";
+        }
+
+        return $"调试实例 PID {target.Identity.ProcessId} 声明了端口 {port}，但尚未核验到由该进程拥有的可连接端口。请刷新列表；若端口由其他进程占用，请先处理占用进程。";
+    }
+
     private static List<CodexInstance> FindConnectableDebugTargets(IEnumerable<CodexInstance> instances, int port) =>
         instances.Where(instance => instance.Kind == CodexInstanceKind.Debug &&
                                     instance.CanConnect &&
+                                    !string.IsNullOrWhiteSpace(instance.DebugEndpoint) &&
                                     !instance.IsExitResidual &&
                                     instance.DebugPort == port)
             .ToList();

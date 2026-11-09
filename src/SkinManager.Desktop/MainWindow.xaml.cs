@@ -77,9 +77,12 @@ public partial class MainWindow : Window
     private long _originalTransitionSequence;
     private long _runtimeStatusSequence;
     private readonly DispatcherTimer _editorPreviewTimer;
+    private readonly DispatcherTimer _runtimeStatusRefreshTimer;
     private CodexInstance? _selectedConnectionInstance;
     private RuntimeStatus? _lastRuntimeStatus;
     private CodexProcessIdentity? _lastConnectedInstance;
+    private bool _runtimeStatusRefreshInProgress;
+    private bool _windowClosed;
     private CancellationTokenSource? _runtimeActionCancellation;
     private bool _settingInstancePort;
     private RuntimeCompatibilityOptions _compatibilityOptions = new();
@@ -143,11 +146,13 @@ public partial class MainWindow : Window
         _previewRenderer = new ThemePreviewRenderer(PreviewBrowser, _previewProfileDirectory, basePackage);
         _editorPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
         _editorPreviewTimer.Tick += EditorPreviewTimer_Tick;
+        _runtimeStatusRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _runtimeStatusRefreshTimer.Tick += RuntimeStatusRefreshTimer_Tick;
         PreviewBaseVersion.Text = $"原生静态样板 · {basePackage.SourceVersion}";
         PreviewViewport.ToolTip = $"本地原生样板 {basePackage.SourceVersion} · 离线静态结构预览";
         PreviewBaseVersion.ToolTip = $"依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{basePackage.SourceVersion}";
-        AppVersionLabel.Text = UpdateCoordinator.ReadCurrentVersion().ToString(3);
-        UpdateEntryLabel.Text = _updateCoordinator?.UpdateEntryLabel ?? $"版本与更新 · {UpdateCoordinator.ReadCurrentVersion().ToString(3)}";
+        AppVersionLabel.Text = UpdateCoordinator.ReadCurrentVersionTag();
+        UpdateEntryLabel.Text = _updateCoordinator?.UpdateEntryLabel ?? $"版本与更新 · {UpdateCoordinator.ReadCurrentVersionTag()}";
         if (_updateCoordinator is not null)
         {
             _updateCoordinator.PropertyChanged += UpdateCoordinator_PropertyChanged;
@@ -171,6 +176,7 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Closed += (_, _) =>
         {
+            _windowClosed = true;
             _runtimeActionCancellation?.Cancel();
             if (_updateCoordinator is not null)
             {
@@ -182,6 +188,7 @@ public partial class MainWindow : Window
             _previewStatusSequence++;
             _originalTransitionSequence++;
             _editorPreviewTimer.Stop();
+            _runtimeStatusRefreshTimer.Stop();
             _runtimeController.StatusChanged -= RuntimeController_StatusChanged;
             if (_previewRenderer is { } renderer)
             {
@@ -314,9 +321,15 @@ public partial class MainWindow : Window
     private RuntimeApplyRequest BuildRuntimeApplyRequest(SkinPackage package, int port, double? transparency)
     {
         var selected = _selectedConnectionInstance;
-        if (selected is not null && (!selected.CanConnect || selected.DebugPort != port))
+        var endpoint = selected?.DebugEndpoint;
+        if (_lastRuntimeStatus is
+            { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } activeEndpoint } &&
+            (selected is null || SameProcessIdentity(selected.Identity, connectedIdentity)) &&
+            TryReadRuntimeStatusPort(_lastRuntimeStatus, out var activePort) && activePort == port &&
+            Uri.TryCreate(activeEndpoint, UriKind.Absolute, out var verifiedEndpoint) &&
+            verifiedEndpoint.Scheme == Uri.UriSchemeHttp && verifiedEndpoint.IsLoopback)
         {
-            throw new InvalidOperationException("所选调试实例与连接端口不匹配。请重新选择实例或输入正确端口。");
+            endpoint = verifiedEndpoint.ToString();
         }
 
         return new RuntimeApplyRequest
@@ -324,7 +337,7 @@ public partial class MainWindow : Window
             SkinId = package.Id,
             RuntimeScript = SkinRuntimeCompiler.BuildRuntimeScript(package, transparency),
             RemoveScript = SkinRuntimeCompiler.BuildRemoveScript(),
-            Endpoint = $"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}",
+            Endpoint = endpoint ?? $"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}",
             ExpectedInstance = selected?.Identity,
             Compatibility = _compatibilitySettingsLoaded ? _compatibilityOptions : null
         };
@@ -396,7 +409,7 @@ public partial class MainWindow : Window
             return null;
         }
 
-        var endpoint = $"http://127.0.0.1:{candidate.Value.Port.ToString(CultureInfo.InvariantCulture)}";
+        var endpoint = candidate.Value.Endpoint;
         if (_codexInstanceService is null)
         {
             var missingService = new RuntimeCompatibilityResult(
@@ -437,7 +450,8 @@ public partial class MainWindow : Window
             acquiredGate = true;
             var instances = await _codexInstanceService.GetInstancesAsync(cancellationToken);
             var target = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, candidate.Value.Identity));
-            if (target is not { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort } ||
+            if (target is not
+                { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort, DebugEndpoint: { } verifiedEndpoint } ||
                 debugPort != candidate.Value.Port)
             {
                 var unavailable = new RuntimeCompatibilityResult(
@@ -450,6 +464,8 @@ public partial class MainWindow : Window
                 _compatibilityWindow?.UpdateRuntimePreference(unavailable);
                 return unavailable;
             }
+
+            endpoint = GetActiveEndpointFor(candidate.Value.Identity, candidate.Value.Port) ?? verifiedEndpoint;
 
             var request = new RuntimeCompatibilityRequest
             {
@@ -491,25 +507,36 @@ public partial class MainWindow : Window
         }
     }
 
-    private (CodexProcessIdentity Identity, int Port)? GetCompatibilityTarget()
+    private (CodexProcessIdentity Identity, int Port, string Endpoint)? GetCompatibilityTarget()
     {
-        if (_selectedConnectionInstance is
-            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int selectedDebugPort } selected)
-        {
-            return (selected.Identity, selectedDebugPort);
-        }
-
         if (_lastRuntimeStatus is
             { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } endpointText } &&
             Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) &&
             endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback && endpoint.Port is >= 1 and <= 65535 &&
-            TryReadRuntimePort(out var selectedPort) && endpoint.Port == selectedPort)
+            TryReadRuntimePort(out var selectedPort) && endpoint.Port == selectedPort &&
+            (_selectedConnectionInstance is null || SameProcessIdentity(_selectedConnectionInstance.Identity, connectedIdentity)))
         {
-            return (connectedIdentity, endpoint.Port);
+            return (connectedIdentity, endpoint.Port, endpoint.ToString());
+        }
+
+        if (_selectedConnectionInstance is
+            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int selectedDebugPort, DebugEndpoint: { } selectedEndpoint } selected)
+        {
+            return (selected.Identity, selectedDebugPort, selectedEndpoint);
         }
 
         return null;
     }
+
+    private string? GetActiveEndpointFor(CodexProcessIdentity identity, int port) =>
+        _lastRuntimeStatus is
+            { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } endpointText } &&
+            SameProcessIdentity(connectedIdentity, identity) &&
+            TryReadRuntimeStatusPort(_lastRuntimeStatus, out var connectedPort) && connectedPort == port &&
+            Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) &&
+            endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback
+                ? endpoint.ToString()
+                : null;
 
     private static bool SameProcessIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
         left.ProcessId == right.ProcessId &&
@@ -528,7 +555,8 @@ public partial class MainWindow : Window
             _selectedConnectionInstance,
             activeInstance,
             hasActiveConnection,
-            cancellationToken);
+            cancellationToken,
+            activeEndpoint: hasActiveConnection ? _lastRuntimeStatus?.Endpoint : null);
         if (status.State != RuntimeStatusState.Connected)
         {
             DisplayRuntimeStatus(status);
@@ -631,10 +659,15 @@ public partial class MainWindow : Window
 
     private void RuntimeController_StatusChanged(object? sender, RuntimeStatus status)
     {
+        if (_windowClosed)
+        {
+            return;
+        }
+
         var sequence = Volatile.Read(ref _runtimeStatusSequence);
         _ = Dispatcher.InvokeAsync(() =>
         {
-            if (sequence == Volatile.Read(ref _runtimeStatusSequence))
+            if (!_windowClosed && sequence == Volatile.Read(ref _runtimeStatusSequence))
             {
                 DisplayRuntimeStatus(status);
             }
@@ -668,12 +701,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        var targetText = _selectedConnectionInstance is { CanConnect: true, DebugPort: int debugPort } instance
-            ? $"{(string.IsNullOrWhiteSpace(instance.WindowTitle) ? "调试版 Codex" : instance.WindowTitle)} · PID {instance.Identity.ProcessId} · 端口 {debugPort}"
+        var targetText = _selectedConnectionInstance is { Kind: CodexInstanceKind.Debug, DebugPort: int debugPort } instance
+            ? $"{(string.IsNullOrWhiteSpace(instance.WindowTitle) ? "调试版 Codex" : instance.WindowTitle)} · PID {instance.Identity.ProcessId} · {instance.DebugEndpoint ?? $"端口 {debugPort}"}{(instance.CanConnect && !instance.IsExitResidual ? string.Empty : " · 暂不可连接")}"
             : $"自动查找调试版 · 端口 {RuntimePortInput.Text.Trim()}";
         RuntimeTargetText.Text = targetText;
         RuntimeTargetText.ToolTip = _selectedConnectionInstance is { } selected
-            ? $"{targetText}\n{selected.Identity.ExecutablePath}\n启动时间：{selected.Identity.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+            ? $"{targetText}\n{selected.Identity.ExecutablePath}\n启动时间：{selected.Identity.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}{(string.IsNullOrWhiteSpace(selected.ConnectionMessage) ? string.Empty : $"\n{selected.ConnectionMessage}")}"
             : targetText;
 
         var hasLiveConnectionIdentity = _lastRuntimeStatus is
@@ -720,8 +753,10 @@ public partial class MainWindow : Window
             Owner = this
         };
         var accepted = dialog.ShowDialog() == true;
-        if (accepted && dialog.SelectedForConnection is { } instance && instance.CanConnect && instance.DebugPort is int debugPort)
+        if (accepted && dialog.SelectedForConnection is
+            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort, DebugEndpoint: { } debugEndpoint } instance)
         {
+            Interlocked.Increment(ref _runtimeStatusSequence);
             _selectedConnectionInstance = instance;
             _settingInstancePort = true;
             RuntimePortInput.Text = debugPort.ToString(CultureInfo.InvariantCulture);
@@ -744,10 +779,9 @@ public partial class MainWindow : Window
                 }
                 catch (Exception exception)
                 {
-                    var endpoint = $"http://127.0.0.1:{debugPort.ToString(CultureInfo.InvariantCulture)}";
                     var failed = new RuntimeCompatibilityResult(
                         RuntimeCompatibilityState.Failed,
-                        endpoint,
+                        debugEndpoint,
                         exception.Message,
                         false,
                         instance.Identity);
@@ -2155,6 +2189,7 @@ public partial class MainWindow : Window
         RefreshList();
         if (_readRuntimeStatusOnLoad)
         {
+            _runtimeStatusRefreshTimer.Start();
             _ = RefreshRuntimeStatusAsync();
         }
         if (_previewClosed)
@@ -2207,14 +2242,63 @@ public partial class MainWindow : Window
 
     private async Task RefreshRuntimeStatusAsync()
     {
+        if (_windowClosed || !_readRuntimeStatusOnLoad || _runtimeStatusRefreshInProgress || _runtimeOperationInProgress)
+        {
+            return;
+        }
+
+        _runtimeStatusRefreshInProgress = true;
         var sequence = Volatile.Read(ref _runtimeStatusSequence);
         try
         {
             var status = await (_runtimeStatusReader?.Invoke(CancellationToken.None) ?? _runtimeController.GetStatusAsync());
-            if (sequence == Volatile.Read(ref _runtimeStatusSequence))
+            if (CanApplyRuntimeRefresh(sequence))
             {
-                DisplayRuntimeStatus(status);
-                if (_readRuntimeStatusOnLoad && _runtimeStatusReader is null &&
+                if (_codexInstanceService is not null)
+                {
+                    var instances = await _codexInstanceService.GetInstancesAsync();
+                    if (!CanApplyRuntimeRefresh(sequence))
+                    {
+                        return;
+                    }
+
+                    if (_selectedConnectionInstance is { } selected)
+                    {
+                        var latestSelected = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, selected.Identity));
+                        _selectedConnectionInstance = latestSelected;
+                    }
+
+                    if ((status.State is RuntimeStatusState.Connected or RuntimeStatusState.Applying) &&
+                        status.ConnectedInstance is { } connectedIdentity)
+                    {
+                        var connectedTarget = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, connectedIdentity));
+                        if (connectedTarget is not
+                            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int connectedPort, DebugEndpoint: { Length: > 0 } } ||
+                            !TryReadRuntimeStatusPort(status, out var statusPort) || connectedPort != statusPort)
+                        {
+                            if (_selectedConnectionInstance is { } selectedTarget &&
+                                SameProcessIdentity(selectedTarget.Identity, connectedIdentity))
+                            {
+                                _selectedConnectionInstance = null;
+                            }
+
+                            status = new RuntimeStatus(
+                                RuntimeStatusState.Stopped,
+                                null,
+                                null,
+                                "当前连接对应的 Codex 实例已退出或调试端口不再由该进程持有。可重新启动或选择实例。",
+                                null);
+                        }
+                    }
+                }
+
+                if (CanApplyRuntimeRefresh(sequence))
+                {
+                    DisplayRuntimeStatus(status);
+                }
+
+                if (CanApplyRuntimeRefresh(sequence) &&
+                    _readRuntimeStatusOnLoad && _runtimeStatusReader is null &&
                     !_startupCompatibilityReconciled &&
                     status.State == RuntimeStatusState.Connected &&
                     status.ConnectedInstance is not null &&
@@ -2229,12 +2313,22 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            if (sequence == Volatile.Read(ref _runtimeStatusSequence))
+            if (CanApplyRuntimeRefresh(sequence))
             {
                 SetRuntimeError(exception.Message, "无法读取当前连接状态。");
             }
         }
+        finally
+        {
+            _runtimeStatusRefreshInProgress = false;
+        }
     }
+
+    private bool CanApplyRuntimeRefresh(long sequence) =>
+        !_windowClosed && !_runtimeOperationInProgress && sequence == Volatile.Read(ref _runtimeStatusSequence);
+
+    private async void RuntimeStatusRefreshTimer_Tick(object? sender, EventArgs e) =>
+        await RefreshRuntimeStatusAsync();
 
     private async Task RenderPreviewAsync(SkinPackage package)
     {

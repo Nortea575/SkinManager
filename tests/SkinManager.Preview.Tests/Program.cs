@@ -149,6 +149,7 @@ internal static class Program
     {
         var reviewUi = args.Contains("--review-ui", StringComparer.OrdinalIgnoreCase);
         var reviewCapture = args.Contains("--review-capture", StringComparer.OrdinalIgnoreCase);
+        var updateChannelOnly = args.Contains("--update-channel-only", StringComparer.OrdinalIgnoreCase);
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
         var marketLivePreviewImages = args.Contains("--market-live-preview-images", StringComparer.OrdinalIgnoreCase);
         var managerInstanceOnly = args.Contains("--manager-instance-only", StringComparer.OrdinalIgnoreCase);
@@ -158,9 +159,10 @@ internal static class Program
         var motionOnly = args.Contains("--motion-only", StringComparer.OrdinalIgnoreCase);
         var chatReplyOnly = args.Contains("--chat-reply-only", StringComparer.OrdinalIgnoreCase);
         var creationOnly = args.Contains("--creation-only", StringComparer.OrdinalIgnoreCase);
+        var connectionOnly = args.Contains("--connection-only", StringComparer.OrdinalIgnoreCase);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
-        if (!chatReplyOnly)
+        if (!chatReplyOnly && !connectionOnly && !updateChannelOnly)
         {
             VerifyPackagedThemeFonts();
             VerifyThemeTextContrast();
@@ -196,6 +198,14 @@ internal static class Program
                 else if (creationOnly)
                 {
                     await RunCreationOnlyAsync();
+                }
+                else if (connectionOnly)
+                {
+                    await RunConnectionOnlyAsync();
+                }
+                else if (updateChannelOnly)
+                {
+                    await UpdateChannelChecks.RunAsync();
                 }
                 else
                 {
@@ -239,10 +249,195 @@ internal static class Program
             screenshotDirectory);
     }
 
+    private static async Task RunConnectionOnlyAsync()
+    {
+        await RuntimeApplyWorkflowTests.RunAsync();
+        var testRoot = Path.Combine(Path.GetTempPath(), "SkinManagerConnectionOnly", Guid.NewGuid().ToString("N"));
+        _cleanupRoot = testRoot;
+        Directory.CreateDirectory(testRoot);
+        var screenshotDirectory = Path.Combine(FindTestOutputDirectory(), "connection-only");
+        Directory.CreateDirectory(screenshotDirectory);
+
+        var store = new SkinStore(Path.Combine(testRoot, "skins"));
+        store.Initialize();
+        var ayanami = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami"));
+        store.Save(ayanami, replaceExisting: false);
+
+        var connectedTarget = CreateFakeInstance(8401, 9335, CodexInstanceKind.Debug, canConnect: true, "Codex · IPv6 调试目标")
+            with { DebugEndpoint = "http://[::1]:9335/" };
+        var fakeInstances = new FakeCodexInstanceService([connectedTarget]);
+        var staleConnectedStatus = new RuntimeStatus(
+            RuntimeStatusState.Connected,
+            ayanami.Id,
+            "http://[::1]:9335/",
+            "离线测试：运行时仍保留旧连接快照。",
+            true,
+            1,
+            connectedTarget.Identity);
+        var fakeStatusReadCount = 0;
+        var window = new MainWindow(
+            store,
+            App.ReadEmbeddedBasePackage(),
+            Path.Combine(testRoot, "browser-profile"),
+            readRuntimeStatusOnLoad: true,
+            codexInstanceService: fakeInstances,
+            runtimeStatusReader: _ =>
+            {
+                fakeStatusReadCount++;
+                return Task.FromResult(staleConnectedStatus);
+            })
+        {
+            Width = 1240,
+            Height = 840,
+            Left = -2_000,
+            Top = -2_000,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize
+        };
+        window.Show();
+        try
+        {
+            var skinList = FindNamed<ListBox>(window, "SkinList");
+            await WaitUntilAsync(() => Task.FromResult(window.IsLoaded && skinList.Items.Count > 0),
+                "连接专项主窗口加载离线皮肤样例");
+            skinList.SelectedItem = skinList.Items.Cast<object>().Single(item => GetRowId(item) == ayanami.Id);
+            var browser = FindNamed<WebView2>(window, "PreviewBrowser");
+            var renderer = GetWindowRenderer(window);
+            await WaitUntilAsync(() => Task.FromResult(browser.CoreWebView2 is not null && renderer.CurrentResolvedSkin is not null),
+                "连接专项主窗口预览初始化");
+            await WaitUntilAsync(() => Task.FromResult(
+                    FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "已连接并已应用"),
+                "主窗显示已连接的离线调试实例");
+            var selectedTargetField = typeof(MainWindow).GetField("_selectedConnectionInstance", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(MainWindow).FullName, "_selectedConnectionInstance");
+            selectedTargetField.SetValue(window, connectedTarget);
+            InvokeWindowMethod(window, "UpdateRuntimeTargetSummary");
+            await SaveManagerWindowScreenshotAsync(
+                window, browser, Path.Combine(screenshotDirectory, "01-已连接.png"));
+
+            var readsBeforeAlternateAddress = fakeStatusReadCount;
+            fakeInstances.Instances =
+            [connectedTarget with { DebugEndpoint = "http://127.0.0.1:9335/" }];
+            await WaitUntilAsync(() => Task.FromResult(
+                    fakeStatusReadCount > readsBeforeAlternateAddress &&
+                    FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "已连接并已应用" &&
+                    FindNamed<TextBlock>(window, "RuntimeTargetText").Text.Contains("127.0.0.1:9335", StringComparison.Ordinal)),
+                "同一进程发现另一个可用地址时保留当前 IPv6 连接状态");
+            Check(FindNamed<TextBlock>(window, "RuntimeConnectedTargetText").Text == $"PID {connectedTarget.Identity.ProcessId}",
+                "同进程地址变化不会清除仍有效的当前连接身份");
+
+            RuntimeCompatibilityRequest? compatibilityRequest = null;
+            window.SetCompatibilityConfiguratorForTesting((request, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                compatibilityRequest = request;
+                return Task.FromResult(new RuntimeCompatibilityResult(
+                    RuntimeCompatibilityState.Applied,
+                    request.Endpoint,
+                    "fake IPv6 compatibility applied",
+                    true,
+                    request.ExpectedInstance));
+            });
+            await InvokeWindowAsync(
+                window,
+                "ConfigureCompatibilityForCurrentTargetAsync",
+                new RuntimeCompatibilityOptions(),
+                CancellationToken.None,
+                true);
+            Check(compatibilityRequest?.Endpoint == "http://[::1]:9335/" &&
+                  compatibilityRequest.ExpectedInstance == connectedTarget.Identity,
+                "同一调试进程存在 IPv4 首选地址时，语言兼容请求仍沿用当前 IPv6 Endpoint");
+
+            fakeInstances.Instances = [];
+            await WaitUntilAsync(() => Task.FromResult(
+                    FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "未连接" &&
+                    FindNamed<TextBlock>(window, "RuntimePrimaryActionText").Text == "启动并应用"),
+                "主窗轮询发现目标退出后清除旧连接并恢复启动按钮");
+            Check(FindNamed<TextBlock>(window, "RuntimeStatusMessage").Text.Contains("已退出", StringComparison.Ordinal),
+                "目标退出后主窗说明连接目标已退出");
+            await SaveManagerWindowScreenshotAsync(
+                window, browser, Path.Combine(screenshotDirectory, "02-实例退出-可启动.png"));
+        }
+        finally
+        {
+            AllowTestWindowClose(window);
+            window.Close();
+        }
+
+        var ipv6Target = CreateFakeInstance(8402, 9335, CodexInstanceKind.Debug, canConnect: true, "Codex · IPv6 调试实例")
+            with { DebugEndpoint = "http://[::1]:9335/" };
+        var unavailableTarget = CreateFakeInstance(8403, 9444, CodexInstanceKind.Debug, canConnect: false, "Codex · 调试参数未就绪");
+        var instanceService = new FakeCodexInstanceService([ipv6Target, unavailableTarget]);
+        var instanceWindow = new InstancesWindow(instanceService, unavailableTarget.Identity)
+        {
+            Width = 920,
+            Height = 560,
+            Left = -2_000,
+            Top = -2_000,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize
+        };
+        instanceWindow.Show();
+        try
+        {
+            await WaitUntilAsync(() => Task.FromResult(instanceWindow.IsLoaded && instanceWindow.Instances.Count == 2),
+                "实例窗口加载 IPv6 可连接目标和不可连接目标");
+            var list = FindNamed<ListView>(instanceWindow, "InstanceList");
+            var ipv6Row = FindInstanceRow(list, ipv6Target.Identity);
+            list.SelectedItem = ipv6Row;
+            Check(FindNamed<Button>(instanceWindow, "UseInstanceButton").IsEnabled &&
+                  RowProperty(ipv6Row, "ConnectionText") == "IPv6 · 可连接" &&
+                  FindNamed<TextBlock>(instanceWindow, "ActionStatus").Text.Contains("[::1]:9335", StringComparison.Ordinal),
+                "核验到的 IPv6 Endpoint 显示在目标状态中，且可以选择连接");
+            await SaveWindowScreenshotAsync(
+                instanceWindow, Path.Combine(screenshotDirectory, "03-IPv6目标可选择.png"));
+
+            list.SelectedItem = FindInstanceRow(list, unavailableTarget.Identity);
+            var unavailableRow = FindInstanceRow(list, unavailableTarget.Identity);
+            Check(RowProperty(unavailableRow, "ConnectionText") == "不可连接" &&
+                  !FindNamed<Button>(instanceWindow, "UseInstanceButton").IsEnabled &&
+                  FindNamed<TextBlock>(instanceWindow, "ActionStatus").Text.Contains("端口 9444", StringComparison.Ordinal),
+                "不可连接调试实例显示端口归属原因并禁用选择");
+            await SaveWindowScreenshotAsync(
+                instanceWindow, Path.Combine(screenshotDirectory, "04-不可连接原因可见.png"));
+
+            instanceService.Instances =
+            [
+                ipv6Target,
+                unavailableTarget with
+                {
+                    CanConnect = true,
+                    DebugEndpoint = "http://[::1]:9444/",
+                    ConnectionMessage = null
+                }
+            ];
+            FindNamed<Button>(instanceWindow, "RefreshButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => Task.FromResult(FindNamed<Button>(instanceWindow, "UseInstanceButton").IsEnabled),
+                "刷新后重新核验并恢复可连接按钮");
+            Check(RowProperty(FindInstanceRow(list, unavailableTarget.Identity), "ConnectionText") == "当前连接",
+                "当前连接标记会跟随刷新后的实际可连接状态更新");
+            FindNamed<Button>(instanceWindow, "UseInstanceButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => Task.FromResult(instanceWindow.SelectedForConnection?.Identity == unavailableTarget.Identity),
+                "使用实例按钮再次核验后接受当前可连接目标");
+            Check(instanceWindow.SelectedForConnection?.CanConnect == true,
+                "实例窗口返回刷新后的可连接状态，而非旧行快照");
+        }
+        finally
+        {
+            instanceWindow.Close();
+        }
+
+        Console.WriteLine($"连接专项回归和离线截图已输出：{screenshotDirectory}");
+    }
+
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 1),
-            "更新比较读取公开软件版本 1.1.1");
+        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 2),
+            "更新比较读取公开软件版本 1.1.2");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -252,11 +447,11 @@ internal static class Program
         store.Save(SkinPackageReader.ReadZipBytes(ayanamiBytes), replaceExisting: false);
         store.Save(SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")), replaceExisting: false);
 
-        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 1, 1));
+        var updateClient = new FakeUpdateClient(Path.Combine(reviewRoot, "downloads"), new Version(1, 1, 2));
         var updateCoordinator = new UpdateCoordinator(
             updateClient,
             Path.Combine(reviewRoot, "updates"),
-            new Version(1, 1, 1));
+            new Version(1, 1, 2));
         updateCoordinator.AutomaticCheckAndDownload = false;
         var fakeInstances = new FakeCodexInstanceService(
         [
@@ -1038,8 +1233,8 @@ internal static class Program
             var otherDebugRow = FindInstanceRow(list, otherDebug.Identity);
             var unavailableRow = FindInstanceRow(list, unavailableDebug.Identity);
             Check(RowProperty(connectedRow, "ConnectionText") == "当前连接" &&
-                  RowProperty(otherDebugRow, "ConnectionText") == "—",
-                "实例列表仅按RuntimeStatus中的身份标记当前连接，不按端口或本地选择推断");
+                  RowProperty(otherDebugRow, "ConnectionText") == "可连接",
+                "实例列表仅按RuntimeStatus中的身份标记当前连接，并明确标记已核验可连接目标");
 
             list.SelectedItem = ordinaryRow;
             Check(!FindNamed<Button>(window, "UseInstanceButton").IsEnabled &&
@@ -1047,8 +1242,9 @@ internal static class Program
                 "普通实例可以定位或关闭，但不能作为皮肤连接目标");
             list.SelectedItem = unavailableRow;
             Check(RowProperty(unavailableRow, "KindText") == "调试版" &&
-                  !FindNamed<Button>(window, "UseInstanceButton").IsEnabled,
-                "调试实例即使监听器尚未就绪仍显示调试类型并禁用连接");
+                  !FindNamed<Button>(window, "UseInstanceButton").IsEnabled &&
+                  FindNamed<TextBlock>(window, "ActionStatus").Text.Contains("端口 9444", StringComparison.Ordinal),
+                "调试实例已显示调试类型，且不可连接时给出端口原因并禁用连接");
 
             list.SelectedItem = otherDebugRow;
             FindNamed<Button>(window, "LocateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -1968,7 +2164,7 @@ internal static class Program
         Check(FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked == true &&
               installButton.Visibility == Visibility.Visible && installButton.IsVisible && installButton.IsEnabled &&
               releaseNotes.Text == updateClient.Release.Notes && notesScroll?.ScrollableHeight > 0 &&
-              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.1.1",
+              FindNamed<TextBlock>(updateWindow, "ReleaseVersionText").Text == "可用版本：1.1.1（正式版）",
             "500×520 更新窗限制长发布说明滚动，安装按钮可见可用且版本只显示一次");
         await SaveWindowScreenshotAsync(updateWindow, Path.Combine(screenshotDirectory, "版本与更新窗口.png"));
         FindNamed<CheckBox>(updateWindow, "AutomaticCheckBox").IsChecked = false;
@@ -2398,7 +2594,7 @@ internal static class Program
             await openInstancesOperation.Task;
             selectionTimer.Stop();
             WindowMotion.AnimationEnabledOverrideForTests = previousAnimationOverride;
-            Check(instanceSelectionError is null && connectedMarker == "当前连接" && targetMarker == "—",
+            Check(instanceSelectionError is null && connectedMarker == "当前连接" && targetMarker == "可连接",
                 $"实例对话框依据真实连接身份显示标识：{instanceSelectionError ?? $"connected={connectedMarker}, target={targetMarker}"}");
             Check(FindNamed<TextBox>(window, "RuntimePortInput").Text == selectedDebug.DebugPort?.ToString() &&
                   FindNamed<TextBlock>(window, "RuntimeTargetText").Text.Contains($"PID {selectedDebug.Identity.ProcessId}", StringComparison.Ordinal) &&
@@ -2413,7 +2609,8 @@ internal static class Program
                 .GetMethod("BuildRuntimeApplyRequest", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?.Invoke(window, [ayanami, selectedDebug.DebugPort!.Value, null])
                 ?? throw new MissingMethodException(typeof(MainWindow).FullName, "BuildRuntimeApplyRequest"));
-            Check(buildRequest.Endpoint.EndsWith($":{selectedDebug.DebugPort}", StringComparison.Ordinal) &&
+            Check(Uri.TryCreate(buildRequest.Endpoint, UriKind.Absolute, out var selectedEndpoint) &&
+                  selectedEndpoint.IsLoopback && selectedEndpoint.Port == selectedDebug.DebugPort &&
                   buildRequest.ExpectedInstance == selectedDebug.Identity,
                 "所选调试目标将其身份写入ExpectedInstance，端口写入连接端点");
 
@@ -3485,7 +3682,7 @@ internal static class Program
         Check(output.Length > 10_000, $"輸出管理器窗口截圖 {Path.GetFileName(path)}");
     }
 
-    private static async Task SaveWindowScreenshotAsync(Window window, string path)
+    internal static async Task SaveWindowScreenshotAsync(Window window, string path)
     {
         if (window.Content is not FrameworkElement content)
         {
@@ -4489,6 +4686,19 @@ internal static class Program
         method.Invoke(window, arguments);
     }
 
+    private static async Task<object?> InvokeWindowAsync(MainWindow window, string name, params object?[] arguments)
+    {
+        var method = typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(typeof(MainWindow).FullName, name);
+        if (method.Invoke(window, arguments) is not Task task)
+        {
+            throw new InvalidOperationException($"窗口方法 {name} 未返回可等待的 Task。");
+        }
+
+        await task;
+        return task.GetType().IsGenericType ? task.GetType().GetProperty("Result")?.GetValue(task) : null;
+    }
+
     private static async Task<string> ReadWindowPageAsync(WebView2 browser)
     {
         if (browser.CoreWebView2 is null)
@@ -4735,7 +4945,11 @@ internal static class Program
             $"C:\\FakeCodex\\Profile-{processId}")
         {
             Kind = kind,
-            CanConnect = canConnect
+            CanConnect = canConnect,
+            DebugEndpoint = canConnect && debugPort is int port ? $"http://127.0.0.1:{port}/" : null,
+            ConnectionMessage = canConnect || debugPort is null
+                ? null
+                : $"调试端口 {debugPort} 没有由此 Codex 进程监听。请刷新列表后重试。"
         };
 
     private sealed class FakeCodexInstanceService(IEnumerable<CodexInstance> instances) : ICodexInstanceService

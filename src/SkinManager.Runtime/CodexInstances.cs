@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.ComponentModel;
 using Microsoft.Win32.SafeHandles;
+using System.Net;
 
 namespace SkinManager.Runtime;
 
@@ -22,6 +23,8 @@ public sealed record CodexInstance(
 {
     public CodexInstanceKind Kind { get; init; } = DebugPort is null ? CodexInstanceKind.Normal : CodexInstanceKind.Debug;
     public bool CanConnect { get; init; } = DebugPort is >= 1 and <= 65535;
+    public string? DebugEndpoint { get; init; }
+    public string? ConnectionMessage { get; init; }
     public CodexProcessExitSnapshot? PendingExitSnapshot { get; init; }
     public bool IsExitResidual { get; init; }
 }
@@ -54,7 +57,7 @@ internal interface ICodexInstancePlatform
     CodexProcessIdentity? GetIdentity(int processId);
     bool IsCodexIdentity(CodexProcessIdentity identity);
     IReadOnlyList<CodexWindowInfo> GetVisibleTopLevelWindows(int processId);
-    bool IsUniqueListenerOwnedByProcess(int port, int processId);
+    IReadOnlyList<CodexListenerEndpoint> GetLoopbackListenerEndpoints(int port);
     bool RestoreAndForeground(CodexProcessIdentity expectedIdentity, long windowHandle);
     IReadOnlyList<CodexProcessRelation> EnumerateProcessRelations(CancellationToken cancellationToken);
     CodexProcessObservation ObserveProcess(int processId);
@@ -68,19 +71,24 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
     private static readonly TimeSpan ClosePollInterval = TimeSpan.FromMilliseconds(250);
     private readonly ICodexInstancePlatform _platform;
     private readonly TimeSpan _closeWait;
+    private readonly Func<Uri, CancellationToken, Task<bool>> _isSupportedEndpoint;
     private readonly object _pendingExitGate = new();
     private readonly Dictionary<CodexProcessIdentity, CodexInstance> _pendingExits = [];
 
     public WindowsCodexInstanceService() : this(new WindowsCodexInstancePlatform(), DefaultCloseWait) { }
 
-    internal WindowsCodexInstanceService(ICodexInstancePlatform platform, TimeSpan? closeWait = null)
+    internal WindowsCodexInstanceService(
+        ICodexInstancePlatform platform,
+        TimeSpan? closeWait = null,
+        Func<Uri, CancellationToken, Task<bool>>? isSupportedEndpoint = null)
     {
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
         _closeWait = closeWait ?? DefaultCloseWait;
+        _isSupportedEndpoint = isSupportedEndpoint ?? CdpBrowserClient.IsSupportedEndpointAsync;
     }
 
     public Task<IReadOnlyList<CodexInstance>> GetInstancesAsync(CancellationToken cancellationToken = default) =>
-        Task.Run<IReadOnlyList<CodexInstance>>(() =>
+        Task.Run<IReadOnlyList<CodexInstance>>(async () =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = new List<CodexInstance>();
@@ -93,10 +101,12 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                     continue;
 
                 var port = GetOptionValue(arguments, "--remote-debugging-port");
+                var debugAddress = GetOptionValue(arguments, "--remote-debugging-address");
                 var hasDebugOption = HasOption(arguments, "--remote-debugging-port");
                 int? debugPort = int.TryParse(port, out var parsedPort) && parsedPort is >= 1 and <= 65535 ? parsedPort : null;
-                var canConnect = debugPort is { } requestedPort &&
-                    _platform.IsUniqueListenerOwnedByProcess(requestedPort, candidate.Identity.ProcessId);
+                var (debugEndpoint, connectionMessage) = debugPort is { } requestedPort
+                    ? await FindConnectableEndpointAsync(requestedPort, candidate.Identity.ProcessId, debugAddress, cancellationToken).ConfigureAwait(false)
+                    : (null, hasDebugOption ? "调试端口参数缺失或无效。请使用 1 到 65535 之间的端口重新启动调试版。" : null);
 
                 var windows = _platform.GetVisibleTopLevelWindows(candidate.Identity.ProcessId);
                 var window = windows.FirstOrDefault();
@@ -108,7 +118,9 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                     GetOptionValue(arguments, "--user-data-dir"))
                 {
                     Kind = hasDebugOption ? CodexInstanceKind.Debug : CodexInstanceKind.Normal,
-                    CanConnect = canConnect
+                    CanConnect = debugEndpoint is not null,
+                    DebugEndpoint = debugEndpoint,
+                    ConnectionMessage = connectionMessage
                 });
             }
 
@@ -145,6 +157,57 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
 
             return result.OrderBy(instance => instance.Identity.ProcessId).ToArray();
         }, cancellationToken);
+
+    private async Task<(string? Endpoint, string? Message)> FindConnectableEndpointAsync(
+        int port,
+        int processId,
+        string? requestedAddress,
+        CancellationToken cancellationToken)
+    {
+        var listeners = _platform.GetLoopbackListenerEndpoints(port);
+        var endpoints = listeners
+            .Where(listener => listener.ProcessId == processId)
+            .Select(listener => listener.ToLoopbackEndpoint(port))
+            .Where(endpoint => endpoint is not null)
+            .Select(endpoint => endpoint!)
+            .Distinct()
+            .OrderBy(endpoint => GetEndpointPreference(endpoint, requestedAddress))
+            .ToArray();
+
+        if (endpoints.Length == 0)
+            return (null, $"调试端口 {port} 没有由此 Codex 进程监听。请确认调试版窗口仍在运行且端口一致。 ");
+
+        var ambiguousEndpoint = false;
+        foreach (var endpoint in endpoints)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var owners = listeners
+                .Where(listener => listener.ToLoopbackEndpoint(port) == endpoint)
+                .Select(listener => listener.ProcessId)
+                .Distinct()
+                .ToArray();
+            if (owners.Length != 1 || owners[0] != processId)
+            {
+                ambiguousEndpoint = true;
+                continue;
+            }
+            if (await _isSupportedEndpoint(endpoint, cancellationToken).ConfigureAwait(false))
+                return (endpoint.ToString(), null);
+        }
+
+        if (ambiguousEndpoint)
+            return (null, $"调试端口 {port} 的 loopback 地址由多个进程监听，无法安全连接。请关闭占用端口的其他服务后刷新。 ");
+        return (null, $"调试端口 {port} 虽由此进程监听，但没有返回有效的 Codex CDP 服务。请检查调试端口是否被其他服务占用。 ");
+    }
+
+    private static int GetEndpointPreference(Uri endpoint, string? requestedAddress)
+    {
+        if (IPAddress.TryParse(requestedAddress, out var preferredAddress) &&
+            IPAddress.TryParse(endpoint.DnsSafeHost, out var endpointAddress) &&
+            preferredAddress.AddressFamily == endpointAddress.AddressFamily)
+            return 0;
+        return endpoint.HostNameType == UriHostNameType.IPv4 ? 1 : 2;
+    }
 
     public Task<CodexLocateResult> LocateAsync(CodexInstance instance, CancellationToken cancellationToken = default) => Task.Run(() =>
     {
@@ -1000,7 +1063,8 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
         return windows;
     }
 
-    public bool IsUniqueListenerOwnedByProcess(int port, int processId) => WindowsCodexIdentityVerifier.IsUniqueListenerOwnedByProcess(port, processId);
+    public IReadOnlyList<CodexListenerEndpoint> GetLoopbackListenerEndpoints(int port) =>
+        WindowsCodexIdentityVerifier.GetLoopbackListenerEndpoints(port);
 
     public bool RestoreAndForeground(CodexProcessIdentity expectedIdentity, long windowHandle)
     {

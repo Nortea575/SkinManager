@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -9,15 +10,19 @@ using SkinManager.Runtime;
 
 internal static class Program
 {
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
         try
         {
+            if (args.Contains("--live-discovery", StringComparer.Ordinal))
+                return await RunLiveDiscoveryAsync();
+
             await MagpieCompatibilityServiceTests.RunAsync();
             CompatibilitySettingsStoreTests.Run();
             await LocaleCompatibilityScriptTests.RunAsync();
             await TestLocaleCompatibilityLifecycleAsync();
             await TestDebugClientLaunchAsync();
+            await TestAgentRestartAfterExitRaceAsync();
             await TestCodexInstanceEnumerationAndActionsAsync();
             await TestExpectedInstanceAndPipeIdentityAsync();
             await TestIgnoredLargeEventsAndPayloadAllocationsAsync();
@@ -35,6 +40,34 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static async Task<int> RunLiveDiscoveryAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("--live-discovery 仅支持 Windows。");
+            return 2;
+        }
+
+        var instances = await new WindowsCodexInstanceService().GetInstancesAsync();
+        var debugInstances = instances.Where(instance => instance.Kind == CodexInstanceKind.Debug).ToArray();
+        if (debugInstances.Length == 0)
+        {
+            Console.WriteLine("未发现带远程调试参数的 Codex 实例。");
+            return 0;
+        }
+
+        foreach (var instance in debugInstances)
+        {
+            Console.WriteLine($"PID={instance.Identity.ProcessId}; StartedAtUtc={instance.Identity.StartedAtUtc:O}");
+            Console.WriteLine($"Path={instance.Identity.ExecutablePath}");
+            Console.WriteLine($"Port={instance.DebugPort?.ToString() ?? "无效"}; CanConnect={instance.CanConnect}; Endpoint={instance.DebugEndpoint ?? "无"}");
+            if (!string.IsNullOrWhiteSpace(instance.ConnectionMessage))
+                Console.WriteLine($"Message={instance.ConnectionMessage}");
+        }
+
+        return debugInstances.Any(instance => instance.CanConnect) ? 0 : 1;
     }
 
     private static async Task TestLocaleCompatibilityLifecycleAsync()
@@ -297,6 +330,73 @@ internal static class Program
         new(Path.Combine(Path.GetTempPath(), "SkinManager.Agent.launch-tests.exe"),
             "SkinManager.Runtime.Tests.Launch." + Guid.NewGuid().ToString("N"), launchPlatform);
 
+    private static async Task TestAgentRestartAfterExitRaceAsync()
+    {
+        var executablePath = Path.Combine(Path.GetTempPath(), "SkinManager.Agent.recovery-tests." + Guid.NewGuid().ToString("N") + ".exe");
+        await File.WriteAllTextAsync(executablePath, "test placeholder");
+        try
+        {
+            var pipeName = "SkinManager.Runtime.Tests.AgentRecovery." + Guid.NewGuid().ToString("N");
+            var runningChecks = 0;
+            var startCalls = 0;
+            Task<AgentCommand>? servedCommand = null;
+            var responseStatus = new RuntimeStatus(RuntimeStatusState.Connected, "recovered-skin", "http://127.0.0.1:19450/", "connected", true);
+            var controller = new RuntimeController(
+                executablePath,
+                pipeName,
+                agentRunningProbe: () => Interlocked.Increment(ref runningChecks) == 1,
+                startAgentOverride: () =>
+                {
+                    Interlocked.Increment(ref startCalls);
+                    servedCommand = ServeAgentOnceAsync(pipeName, responseStatus);
+                },
+                agentPipeConnectTimeout: TimeSpan.FromMilliseconds(250));
+
+            var status = await controller.ApplyAsync(Request("recovered-skin", "apply();", "restore();"));
+            var command = await servedCommand!.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert(status.State == RuntimeStatusState.Connected && status.SkinId == "recovered-skin" && startCalls == 1,
+                "Apply retries Agent startup once after the previously running Agent exits");
+            Assert(command.Operation == AgentOperation.Apply && command.ApplyRequest?.SkinId == "recovered-skin",
+                "the recovered pipe receives one Apply request without automatic command replay");
+
+            var failedPipe = "SkinManager.Runtime.Tests.AgentRecoveryFailure." + Guid.NewGuid().ToString("N");
+            var failedChecks = 0;
+            var failedStarts = 0;
+            var failedController = new RuntimeController(
+                executablePath,
+                failedPipe,
+                agentRunningProbe: () => Interlocked.Increment(ref failedChecks) == 1,
+                startAgentOverride: () => Interlocked.Increment(ref failedStarts),
+                agentPipeConnectTimeout: TimeSpan.FromMilliseconds(100));
+            var failedStatus = await failedController.ApplyAsync(Request("failed-start", "apply();", "restore();"));
+            Assert(failedStatus.State == RuntimeStatusState.Error && failedStatus.Message!.Contains("未发送本次皮肤请求", StringComparison.Ordinal) &&
+                !failedStatus.Message.Contains("没有运行中的皮肤连接", StringComparison.Ordinal) && failedStarts == 1,
+                "an unavailable Agent pipe after the bounded retry returns a clear startup error");
+        }
+        finally
+        {
+            File.Delete(executablePath);
+        }
+    }
+
+    private static async Task<AgentCommand> ServeAgentOnceAsync(string pipeName, RuntimeStatus status)
+    {
+        await using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await server.WaitForConnectionAsync(timeout.Token);
+        using var reader = new StreamReader(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+        using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+        var line = await reader.ReadLineAsync(timeout.Token);
+        if (string.IsNullOrWhiteSpace(line))
+            throw new InvalidOperationException("Fake Agent did not receive an Apply command.");
+        var command = JsonSerializer.Deserialize<AgentCommand>(line, AgentPipeProtocol.JsonOptions)
+            ?? throw new InvalidOperationException("Fake Agent could not parse the Apply command.");
+        var response = JsonSerializer.Serialize(AgentResponse.From(command.RequestId, status), AgentPipeProtocol.JsonOptions);
+        await writer.WriteLineAsync(response.AsMemory(), timeout.Token);
+        return command;
+    }
+
     private static async Task TestCodexInstanceEnumerationAndActionsAsync()
     {
         var path = FakeCodexExecutablePath;
@@ -335,10 +435,11 @@ internal static class Program
         platform.Windows[4102] = [new CodexWindowInfo(14102, "Codex debug waiting"), new CodexWindowInfo(14103, "Other owned window")];
         platform.Windows[4103] = [new CodexWindowInfo(14104, "Codex debug ready")];
         platform.Windows[4104] = [new CodexWindowInfo(14105, "Renderer")];
-        platform.ListenerOwners[19442] = [4999];
-        platform.ListenerOwners[19443] = [4103];
+        platform.ListenerEndpoints[19442] = [new CodexListenerEndpoint(4999, IPAddress.Loopback)];
+        platform.ListenerEndpoints[19443] = [new CodexListenerEndpoint(4103, IPAddress.IPv6Loopback)];
 
-        var service = new WindowsCodexInstanceService(platform);
+        var service = new WindowsCodexInstanceService(platform, isSupportedEndpoint: (endpoint, _) =>
+            Task.FromResult(endpoint.Port == 19443 && endpoint.DnsSafeHost == "::1"));
         var instances = await service.GetInstancesAsync();
         Assert(instances.Count == 3, "instance enumeration keeps only verified Codex main processes and excludes child renderers and wrong identities");
         var normalInstance = instances.Single(instance => instance.Identity.ProcessId == 4101);
@@ -352,8 +453,79 @@ internal static class Program
             waitingInstance.UserDataDirectory == @"D:\Profiles\Debug Waiting",
             "a requested debug mode remains labeled Debug while its listener is not owned and ready");
         Assert(readyInstance.Kind == CodexInstanceKind.Debug && readyInstance.CanConnect && readyInstance.DebugPort == 19443 &&
-            readyInstance.UserDataDirectory == @"D:\Profiles\Debug Ready",
-            "debug connectivity is enabled only when the selected process uniquely owns its TCP listener");
+            readyInstance.DebugEndpoint == "http://[::1]:19443/" && readyInstance.UserDataDirectory == @"D:\Profiles\Debug Ready",
+            "debug connectivity uses the loopback address owned by the selected process and verified as a CDP endpoint");
+
+        platform.ListenerEndpoints[19444] = [new CodexListenerEndpoint(4103, IPAddress.Loopback)];
+        platform.Candidates.Add(Candidate(4117, path, $"\"{path}\" --remote-debugging-port=19444"));
+        var identity4107 = platform.Candidates[^1].Identity;
+        platform.CurrentIdentities[4117] = identity4107;
+        platform.Relations.Add(new(4117, 100, "ChatGPT.exe"));
+        platform.Windows[4117] = [new CodexWindowInfo(14117, "Debug wrong PID")];
+        var wrongOwner = (await service.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4117);
+        Assert(!wrongOwner.CanConnect && wrongOwner.DebugEndpoint is null && wrongOwner.ConnectionMessage!.Contains("没有由此 Codex 进程监听", StringComparison.Ordinal),
+            "a debug port owned by another PID is exposed as not connectable with a direct explanation");
+
+        platform.ListenerEndpoints[19445] = [new CodexListenerEndpoint(4118, IPAddress.Loopback)];
+        platform.Candidates.Add(Candidate(4118, path, $"\"{path}\" --remote-debugging-port=19445"));
+        var identity4108 = platform.Candidates[^1].Identity;
+        platform.CurrentIdentities[4118] = identity4108;
+        platform.Relations.Add(new(4118, 100, "ChatGPT.exe"));
+        platform.Windows[4118] = [new CodexWindowInfo(14118, "Debug invalid CDP")];
+        var invalidCdp = new WindowsCodexInstanceService(platform, isSupportedEndpoint: (_, _) => Task.FromResult(false));
+        var invalidEndpoint = (await invalidCdp.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4118);
+        Assert(!invalidEndpoint.CanConnect && invalidEndpoint.DebugEndpoint is null && invalidEndpoint.ConnectionMessage!.Contains("没有返回有效的 Codex CDP 服务", StringComparison.Ordinal),
+            "a same-process listener without a valid CDP response is not presented as usable");
+
+        await using (var cdpServer = new FakeCdpServer())
+        {
+            var cdpPlatform = new FakeCodexInstancePlatform();
+            var cdpCandidate = Candidate(4121, path, $"\"{path}\" --remote-debugging-port={cdpServer.Port}");
+            cdpPlatform.Candidates.Add(cdpCandidate);
+            cdpPlatform.CurrentIdentities[4121] = cdpCandidate.Identity;
+            cdpPlatform.Relations.Add(new(4121, 100, "ChatGPT.exe"));
+            cdpPlatform.ListenerEndpoints[cdpServer.Port] = [new CodexListenerEndpoint(4121, IPAddress.Loopback)];
+            var discovered = (await new WindowsCodexInstanceService(cdpPlatform).GetInstancesAsync()).Single();
+            Assert(discovered.CanConnect && discovered.DebugEndpoint == cdpServer.Endpoint.ToString() && discovered.ConnectionMessage is null,
+                "instance discovery exposes only the loopback endpoint that answers a valid CDP version request");
+        }
+
+        await using (var nonCdpServer = new FakeCdpServer { VersionStatusCode = HttpStatusCode.ServiceUnavailable })
+        {
+            var nonCdpPlatform = new FakeCodexInstancePlatform();
+            var nonCdpCandidate = Candidate(4122, path, $"\"{path}\" --remote-debugging-port={nonCdpServer.Port}");
+            nonCdpPlatform.Candidates.Add(nonCdpCandidate);
+            nonCdpPlatform.CurrentIdentities[4122] = nonCdpCandidate.Identity;
+            nonCdpPlatform.Relations.Add(new(4122, 100, "ChatGPT.exe"));
+            nonCdpPlatform.ListenerEndpoints[nonCdpServer.Port] = [new CodexListenerEndpoint(4122, IPAddress.Loopback)];
+            var notUsable = (await new WindowsCodexInstanceService(nonCdpPlatform).GetInstancesAsync()).Single();
+            Assert(!notUsable.CanConnect && notUsable.DebugEndpoint is null && notUsable.ConnectionMessage!.Contains("没有返回有效的 Codex CDP 服务", StringComparison.Ordinal),
+                "a process-owned HTTP listener with a non-CDP response is distinguished from a usable debug endpoint");
+        }
+
+        platform.ListenerEndpoints[19446] = [
+            new CodexListenerEndpoint(4119, IPAddress.Any),
+            new CodexListenerEndpoint(4119, IPAddress.Loopback)
+        ];
+        var wildcardAndSpecific = Candidate(4119, path, $"\"{path}\" --remote-debugging-port=19446");
+        platform.Candidates.Add(wildcardAndSpecific);
+        platform.CurrentIdentities[4119] = wildcardAndSpecific.Identity;
+        platform.Relations.Add(new(4119, 100, "ChatGPT.exe"));
+        platform.ListenerEndpoints[19447] = [
+            new CodexListenerEndpoint(4120, IPAddress.Any),
+            new CodexListenerEndpoint(4999, IPAddress.Loopback)
+        ];
+        var splitOwners = Candidate(4120, path, $"\"{path}\" --remote-debugging-port=19447");
+        platform.Candidates.Add(splitOwners);
+        platform.CurrentIdentities[4120] = splitOwners.Identity;
+        platform.Relations.Add(new(4120, 100, "ChatGPT.exe"));
+        var wildcardService = new WindowsCodexInstanceService(platform, isSupportedEndpoint: (_, _) => Task.FromResult(true));
+        var wildcardInstance = (await wildcardService.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4119);
+        var splitOwnerInstance = (await wildcardService.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4120);
+        Assert(wildcardInstance.CanConnect && wildcardInstance.DebugEndpoint == "http://127.0.0.1:19446/",
+            "an any-address listener and a specific loopback listener owned by the same process are one endpoint identity");
+        Assert(!splitOwnerInstance.CanConnect && splitOwnerInstance.ConnectionMessage!.Contains("由多个进程监听", StringComparison.Ordinal),
+            "an any-address listener cannot hide a conflicting owner on the specific loopback address");
 
         var located = await service.LocateAsync(waitingInstance);
         Assert(located == CodexLocateResult.Located && platform.LocatedWindows.SequenceEqual([14102L]) &&
@@ -991,6 +1163,21 @@ internal static class Program
             await fake.CloseWebSocketAsync();
             await coordinator.SessionTerminated.WaitAsync(TimeSpan.FromSeconds(3));
             Assert(!coordinator.HasActiveSession, "browser WebSocket loss ends the Agent session without reconnecting");
+            var stoppedAfterDisconnect = await coordinator.HandleAsync(new AgentCommand { RequestId = Guid.NewGuid(), Operation = AgentOperation.GetStatus }, CancellationToken.None);
+            Assert(stoppedAfterDisconnect.State == RuntimeStatusState.Stopped && stoppedAfterDisconnect.SkinId is null &&
+                stoppedAfterDisconnect.Endpoint is null && stoppedAfterDisconnect.ConnectedInstance is null,
+                "browser exit clears the old skin, endpoint, and process identity from cached status");
+
+            await using var replacementFake = new FakeCdpServer();
+            var reconnected = await coordinator.HandleAsync(new AgentCommand
+            {
+                RequestId = Guid.NewGuid(),
+                Operation = AgentOperation.Apply,
+                ApplyRequest = Request("reconnect", "reconnected();", "restore();", replacementFake.Endpoint.ToString())
+            }, CancellationToken.None);
+            Assert(reconnected.State == RuntimeStatusState.Connected && reconnected.Endpoint == replacementFake.Endpoint.ToString() &&
+                reconnected.ConnectedInstance == FakeConnectedIdentity,
+                "a later Apply discards the dead session and can establish a fresh verified connection");
         }
 
         var missingAgent = Path.Combine(Path.GetTempPath(), "SkinManager.Agent.missing." + Guid.NewGuid().ToString("N") + ".exe");
@@ -1003,8 +1190,14 @@ internal static class Program
     private static async Task TestDisconnectAndEndpointRejectionAsync()
     {
         await using (var fake = new FakeCdpServer())
-        await using (var client = await CdpBrowserClient.ConnectAsync(fake.Endpoint, new FakeIdentityVerifier(), CancellationToken.None))
         {
+            var endpointVerifier = new FakeIdentityVerifier();
+            await using var client = await CdpBrowserClient.ConnectAsync(fake.Endpoint, endpointVerifier, CancellationToken.None);
+            Assert(endpointVerifier.VerifiedEndpoints.SequenceEqual([fake.Endpoint, fake.Endpoint]),
+                "the selected loopback endpoint is identity-checked both before and after opening its browser WebSocket");
+            Assert(await CdpBrowserClient.IsSupportedEndpointAsync(fake.Endpoint, CancellationToken.None),
+                "the fast discovery probe recognizes a valid browser CDP endpoint");
+
             await fake.CloseWebSocketAsync();
             var error = await CaptureAsync(async () => await client.Events.Completion.WaitAsync(TimeSpan.FromSeconds(3)));
             Assert(error is IOException, "browser WebSocket disconnect completes the event stream with an error");
@@ -1016,15 +1209,36 @@ internal static class Program
         Assert(nonLoopbackRejected is ArgumentException, "non-loopback endpoints are rejected before any network request");
 
         await using var badResponse = new FakeCdpServer { VersionStatusCode = HttpStatusCode.ServiceUnavailable };
+        Assert(!await CdpBrowserClient.IsSupportedEndpointAsync(badResponse.Endpoint, CancellationToken.None),
+            "the discovery probe rejects an HTTP service without a successful CDP version response");
         var responseError = await CaptureAsync(() => CdpBrowserClient.ConnectAsync(badResponse.Endpoint, new FakeIdentityVerifier(), CancellationToken.None));
         Assert(responseError is InvalidOperationException && responseError.Message.Contains("HTTP 503", StringComparison.Ordinal),
             "non-success /json/version responses fail closed");
 
+        await using var malformedResponse = new FakeCdpServer { VersionJsonOverride = "[]" };
+        Assert(!await CdpBrowserClient.IsSupportedEndpointAsync(malformedResponse.Endpoint, CancellationToken.None),
+            "the discovery probe rejects non-object JSON without failing instance enumeration");
+
         await using var badBrowserSocket = new FakeCdpServer { BrowserWebSocketPath = "/devtools/page/not-a-browser" };
+        Assert(!await CdpBrowserClient.IsSupportedEndpointAsync(badBrowserSocket.Endpoint, CancellationToken.None),
+            "a page WebSocket endpoint is not accepted as the browser CDP endpoint");
         var identityVerifier = new FakeIdentityVerifier();
         var browserSocketError = await CaptureAsync(() => CdpBrowserClient.ConnectAsync(badBrowserSocket.Endpoint, identityVerifier, CancellationToken.None));
-        Assert(browserSocketError is InvalidOperationException && identityVerifier.Calls == 0,
-            "a page WebSocket cannot impersonate the required browser WebSocket identity");
+        Assert(browserSocketError is InvalidOperationException && identityVerifier.Calls == 1,
+            "a page WebSocket cannot impersonate the required browser WebSocket identity after its local owner is checked");
+
+        await using var reusedEndpoint = new FakeCdpServer();
+        var changingIdentityVerifier = new FakeIdentityVerifier
+        {
+            IdentityForCall = call => new BrowserProcessIdentity(
+                call == 1 ? FakeConnectedIdentity.ProcessId : FakeConnectedIdentity.ProcessId + 1,
+                FakeCodexExecutablePath,
+                FakeConnectedIdentity.StartedAtUtc)
+        };
+        var reusedError = await CaptureAsync(() => CdpBrowserClient.ConnectAsync(reusedEndpoint.Endpoint, changingIdentityVerifier, CancellationToken.None));
+        Assert(reusedError is InvalidOperationException && reusedError.Message.Contains("发生变化", StringComparison.Ordinal) &&
+            changingIdentityVerifier.VerifiedEndpoints.SequenceEqual([reusedEndpoint.Endpoint, reusedEndpoint.Endpoint]),
+            "a listener that changes process identity during WebSocket connection is rejected at the same selected address");
     }
 
     private static RuntimeApplyRequest Request(string skinId, string runtimeScript, string removeScript, string? endpoint = null) => new()
@@ -1092,14 +1306,17 @@ internal sealed class FakeIdentityVerifier : ICodexEndpointIdentityVerifier
 {
     public static DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
     public int Calls { get; private set; }
+    public List<Uri> VerifiedEndpoints { get; } = [];
+    public Func<int, BrowserProcessIdentity>? IdentityForCall { get; init; }
 
-    public Task<BrowserProcessIdentity> VerifyListenerAsync(int port, CancellationToken cancellationToken)
+    public Task<BrowserProcessIdentity> VerifyListenerAsync(Uri endpoint, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (port == 9335)
+        if (endpoint.Port == 9335)
             throw new InvalidOperationException("The fake test server must not use the real default endpoint port.");
         Calls++;
-        return Task.FromResult(new BrowserProcessIdentity(4242, Program.FakeCodexExecutablePath, StartedAtUtc));
+        VerifiedEndpoints.Add(endpoint);
+        return Task.FromResult(IdentityForCall?.Invoke(Calls) ?? new BrowserProcessIdentity(4242, Program.FakeCodexExecutablePath, StartedAtUtc));
     }
 }
 
@@ -1110,7 +1327,7 @@ internal sealed class FakeCodexInstancePlatform : ICodexInstancePlatform
     public Dictionary<int, CodexProcessIdentity> CurrentIdentities { get; } = [];
     public List<CodexProcessRelation> Relations { get; } = [];
     public Dictionary<int, List<CodexWindowInfo>> Windows { get; } = [];
-    public Dictionary<int, List<int>> ListenerOwners { get; } = [];
+    public Dictionary<int, List<CodexListenerEndpoint>> ListenerEndpoints { get; } = [];
     public List<long> LocatedWindows { get; } = [];
     public List<CodexProcessIdentity> LocatedIdentities { get; } = [];
     public List<CodexProcessIdentity> NativeQuitRequests { get; } = [];
@@ -1171,8 +1388,8 @@ internal sealed class FakeCodexInstancePlatform : ICodexInstancePlatform
     public IReadOnlyList<CodexWindowInfo> GetVisibleTopLevelWindows(int processId) =>
         (Windows.GetValueOrDefault(processId) ?? []).Where(window => window.IsVisible).ToArray();
 
-    public bool IsUniqueListenerOwnedByProcess(int port, int processId) =>
-        ListenerOwners.TryGetValue(port, out var owners) && owners.Count == 1 && owners[0] == processId;
+    public IReadOnlyList<CodexListenerEndpoint> GetLoopbackListenerEndpoints(int port) =>
+        ListenerEndpoints.GetValueOrDefault(port) ?? [];
 
     public bool RestoreAndForeground(CodexProcessIdentity expectedIdentity, long windowHandle)
     {
@@ -1294,6 +1511,7 @@ internal sealed class FakeCdpServer : IAsyncDisposable
     public Uri Endpoint => new($"http://127.0.0.1:{Port}/");
     public object[] InitialTargets { get; init; } = [];
     public HttpStatusCode VersionStatusCode { get; init; } = HttpStatusCode.OK;
+    public string? VersionJsonOverride { get; init; }
     public string BrowserWebSocketPath { get; init; } = "/devtools/browser/fake-session";
     public string? ErrorMethod { get; init; }
     public string ErrorMessage { get; set; } = "fake protocol error";
@@ -1364,11 +1582,13 @@ internal sealed class FakeCdpServer : IAsyncDisposable
                     context.Response.StatusCode = (int)VersionStatusCode;
                     if (VersionStatusCode == HttpStatusCode.OK)
                     {
-                        var body = JsonSerializer.SerializeToUtf8Bytes(new
-                        {
-                            Browser = "Codex/fake",
-                            webSocketDebuggerUrl = $"ws://127.0.0.1:{Port}{BrowserWebSocketPath}"
-                        });
+                        var body = VersionJsonOverride is null
+                            ? JsonSerializer.SerializeToUtf8Bytes(new
+                            {
+                                Browser = "Codex/fake",
+                                webSocketDebuggerUrl = $"ws://127.0.0.1:{Port}{BrowserWebSocketPath}"
+                            })
+                            : Encoding.UTF8.GetBytes(VersionJsonOverride);
                         context.Response.ContentType = "application/json";
                         context.Response.ContentLength64 = body.Length;
                         await context.Response.OutputStream.WriteAsync(body, _lifetime.Token);

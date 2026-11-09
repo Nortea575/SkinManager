@@ -17,7 +17,7 @@ internal sealed record BrowserProcessIdentity(int ProcessId, string ExecutablePa
 
 internal interface ICodexEndpointIdentityVerifier
 {
-    Task<BrowserProcessIdentity> VerifyListenerAsync(int port, CancellationToken cancellationToken);
+    Task<BrowserProcessIdentity> VerifyListenerAsync(Uri endpoint, CancellationToken cancellationToken);
 }
 
 internal sealed record CdpEvent(string Method, JsonElement Parameters, string? SessionId);
@@ -59,6 +59,10 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
         CodexProcessIdentity? expectedInstance = null)
     {
         ValidateEndpoint(endpoint);
+        var beforeConnect = await identityVerifier.VerifyListenerAsync(endpoint, cancellationToken).ConfigureAwait(false);
+        if (expectedInstance is not null && !MatchesExpectedInstance(beforeConnect, expectedInstance))
+            throw new InvalidOperationException("调试端点实际属于另一个 Codex 实例，未建立连接。请刷新实例列表后重试。");
+
         var handler = new SocketsHttpHandler { UseProxy = false, ConnectTimeout = TimeSpan.FromSeconds(5) };
         using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var response = await httpClient.GetAsync(new Uri(endpoint, "/json/version"), HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
@@ -72,16 +76,13 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
             throw new InvalidOperationException("调试端点缺少有效的 browser WebSocket 地址。 ");
         ValidateBrowserWebSocket(endpoint, browserWebSocketUri);
 
-        var beforeConnect = await identityVerifier.VerifyListenerAsync(endpoint.Port, cancellationToken).ConfigureAwait(false);
-        if (expectedInstance is not null && !MatchesExpectedInstance(beforeConnect, expectedInstance))
-            throw new InvalidOperationException("调试端口实际属于另一个 Codex 实例，未建立连接。请刷新实例列表后重试。");
         var socket = new ClientWebSocket();
         try
         {
             using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             connectTimeout.CancelAfter(TimeSpan.FromSeconds(8));
             await socket.ConnectAsync(browserWebSocketUri, connectTimeout.Token).ConfigureAwait(false);
-            var afterConnect = await identityVerifier.VerifyListenerAsync(endpoint.Port, cancellationToken).ConfigureAwait(false);
+            var afterConnect = await identityVerifier.VerifyListenerAsync(endpoint, cancellationToken).ConfigureAwait(false);
             if (!SameProcess(beforeConnect, afterConnect))
                 throw new InvalidOperationException("调试端口所属进程在连接期间发生变化，已断开以避免连接到复用的端口。 ");
             if (expectedInstance is not null && !MatchesExpectedInstance(afterConnect, expectedInstance))
@@ -248,10 +249,60 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
             throw new ArgumentException("调试端点必须是仅限本机 loopback 的 HTTP 地址，例如 http://127.0.0.1:9335。", nameof(endpoint));
     }
 
+    internal static async Task<bool> IsSupportedEndpointAsync(Uri endpoint, CancellationToken cancellationToken)
+    {
+        ValidateEndpoint(endpoint);
+        using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeTimeout.CancelAfter(TimeSpan.FromMilliseconds(1500));
+        var handler = new SocketsHttpHandler { UseProxy = false, ConnectTimeout = TimeSpan.FromMilliseconds(1200) };
+        using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(1500) };
+        try
+        {
+            using var response = await httpClient.GetAsync(new Uri(endpoint, "/json/version"), HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token).ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.OK)
+                return false;
+
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(probeTimeout.Token).ConfigureAwait(false),
+                cancellationToken: probeTimeout.Token).ConfigureAwait(false);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("Browser", out var browserValue) ||
+                browserValue.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(browserValue.GetString()) ||
+                !document.RootElement.TryGetProperty("webSocketDebuggerUrl", out var wsValue) ||
+                wsValue.ValueKind != JsonValueKind.String ||
+                !Uri.TryCreate(wsValue.GetString(), UriKind.Absolute, out var browserWebSocketUri))
+                return false;
+
+            try
+            {
+                ValidateBrowserWebSocket(endpoint, browserWebSocketUri);
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static void ValidateBrowserWebSocket(Uri endpoint, Uri websocket)
     {
         var segments = websocket.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (!string.Equals(websocket.Scheme, "ws", StringComparison.OrdinalIgnoreCase) || !IsLiteralLoopbackHost(websocket) || websocket.Port != endpoint.Port ||
+            !IPAddress.TryParse(websocket.DnsSafeHost, out var websocketAddress) || !IPAddress.TryParse(endpoint.DnsSafeHost, out var endpointAddress) ||
+            !websocketAddress.Equals(endpointAddress) ||
             websocket.UserInfo.Length != 0 || websocket.Query.Length != 0 || websocket.Fragment.Length != 0 ||
             segments.Length != 3 || segments[0] != "devtools" || segments[1] != "browser" || string.IsNullOrWhiteSpace(segments[2]))
             throw new InvalidOperationException("/json/version 返回的地址不是同一 loopback 端口上的 browser WebSocket。 ");

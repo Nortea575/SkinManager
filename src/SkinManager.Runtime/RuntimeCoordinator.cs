@@ -113,13 +113,20 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
                         LastCompatibilityResult = new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), $"读取语言恢复状态失败：{ex.Message}", true, current.ConnectedInstance);
                     }
                 }
+                if (!current.IsConnected)
+                    return SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；皮肤连接已停止。"));
                 var updateMessage = current.AppliedTargetCount > 0
                     ? "皮肤已应用到已验证的 Codex 页面。"
                     : "连接已验证，Codex 主界面 DOM 标记尚未就绪；脚本会在标记出现后应用。";
                 return SetStatus(new RuntimeStatus(RuntimeStatusState.Connected, request.SkinId, endpoint.ToString(), updateMessage, true, current.AppliedTargetCount, current.ConnectedInstance, LastCompatibilityResult));
             }
 
-            if (_session is not null)
+            if (_session is { IsConnected: false })
+            {
+                await DisposeCurrentSessionAsync().ConfigureAwait(false);
+                SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；旧皮肤连接已清理。"));
+            }
+            else if (_session is not null)
             {
                 try { await _session.RemoveAndStopAsync(cancellationToken).ConfigureAwait(false); }
                 finally { await DisposeCurrentSessionAsync().ConfigureAwait(false); }
@@ -137,7 +144,7 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
             if (!newSession.IsConnected)
             {
                 var disconnectMessage = "Codex browser WebSocket 已断开；不会自动连接复用端口。";
-                SetStatus(RuntimeStatus.Error(disconnectMessage, request.SkinId, endpoint.ToString()));
+                SetStatus(RuntimeStatus.Stopped(disconnectMessage));
                 _sessionTerminated.TrySetResult();
                 await DisposeCurrentSessionAsync().ConfigureAwait(false);
                 return Volatile.Read(ref _status);
@@ -161,6 +168,9 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
                     cancellationToken).ConfigureAwait(false);
             }
 
+            if (!newSession.IsConnected)
+                return SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；皮肤连接已停止。"));
+
             var message = newSession.AppliedTargetCount > 0
                 ? "已连接并应用皮肤。页面只在 app scheme 且包含 Codex DOM 标记时运行脚本。"
                 : "连接已验证，尚无包含 Codex DOM 标记的页面；脚本会在主界面就绪后应用。";
@@ -172,7 +182,10 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            var browserDisconnected = _session is { IsConnected: false };
             await DisposeCurrentSessionAsync().ConfigureAwait(false);
+            if (browserDisconnected)
+                return SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；旧皮肤连接已清理。"));
             if (priorSession is null || ReferenceEquals(priorSession, _session))
                 return SetStatus(RuntimeStatus.Error(ex.Message, request.SkinId, endpoint.ToString()));
             return SetStatus(RuntimeStatus.Error(ex.Message, request.SkinId, endpoint.ToString()));
@@ -208,6 +221,12 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
         catch (Exception ex) when (ex is ArgumentException or UriFormatException)
         {
             return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, request.Endpoint, ex.Message);
+        }
+
+        if (_session is { IsConnected: false })
+        {
+            await DisposeCurrentSessionAsync().ConfigureAwait(false);
+            SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；旧连接已清理。"));
         }
 
         if (_session is { IsConnected: true, HasSkin: true } pinnedSession && pinnedSession.Endpoint != endpoint)
@@ -322,7 +341,7 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
         {
             if (ReferenceEquals(_session, session))
             {
-                SetStatus(RuntimeStatus.Error(message, session.HasSkin ? skinId : null, endpoint.ToString()));
+                SetStatus(RuntimeStatus.Stopped(message));
                 _sessionTerminated.TrySetResult();
             }
         };
@@ -364,6 +383,11 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
 
     private void UpdateConnectedStatus(CdpRuntimeSession session, string? message)
     {
+        if (!session.IsConnected)
+        {
+            SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；皮肤连接已停止。"));
+            return;
+        }
         var current = Volatile.Read(ref _status);
         var statusMessage = message ?? (session.HasSkin ? current.Message : "Codex 语言兼容连接仍在运行。");
         SetStatus(new RuntimeStatus(RuntimeStatusState.Connected, session.HasSkin ? current.SkinId : null, session.Endpoint.ToString(), statusMessage, true, session.AppliedTargetCount, session.ConnectedInstance, LastCompatibilityResult));
@@ -373,6 +397,11 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
     {
         if (_session is null)
             return SetStatus(RuntimeStatus.Stopped(message));
+        if (!_session.IsConnected)
+        {
+            await DisposeCurrentSessionAsync().ConfigureAwait(false);
+            return SetStatus(RuntimeStatus.Stopped(message));
+        }
 
         if (!_hasCompatibilityIntent)
             return await EndSessionAsync(message, cancellationToken).ConfigureAwait(false);
@@ -395,8 +424,11 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
             if (!_compatibilityOptions.ForceSimplifiedChinese && LastCompatibilityResult?.State == RuntimeCompatibilityState.Disabled)
                 return await EndSessionAsync(message, cancellationToken).ConfigureAwait(false);
             var connected = Volatile.Read(ref _session);
-            if (connected is null)
+            if (connected is null || !connected.IsConnected)
+            {
+                await DisposeCurrentSessionAsync().ConfigureAwait(false);
                 return SetStatus(RuntimeStatus.Stopped(message));
+            }
             return SetStatus(new RuntimeStatus(RuntimeStatusState.Connected, null, connected.Endpoint.ToString(),
                 _compatibilityOptions.ForceSimplifiedChinese
                     ? "皮肤已断开，简体中文固定设置保持启用。"
@@ -407,6 +439,11 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            if (_session is { IsConnected: false })
+            {
+                await DisposeCurrentSessionAsync().ConfigureAwait(false);
+                return SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；皮肤连接已停止。"));
+            }
             return SetStatus(RuntimeStatus.Error($"移除皮肤或处理语言兼容连接失败：{ex.Message}", _status.SkinId, _status.Endpoint));
         }
     }
@@ -419,8 +456,8 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
     private Task<RuntimeStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (_session is not { IsConnected: true } && _status.State is RuntimeStatusState.Connected or RuntimeStatusState.Applying)
-            return Task.FromResult(SetStatus(RuntimeStatus.Error("Codex browser WebSocket 已断开；不会自动连接复用端口。", _status.SkinId, _status.Endpoint)));
+        if (_session is { IsConnected: false })
+            return Task.FromResult(SetStatus(RuntimeStatus.Stopped("Codex browser WebSocket 已断开；皮肤连接已停止。")));
         return Task.FromResult(Volatile.Read(ref _status));
     }
 
@@ -428,7 +465,13 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
     {
         if (_session is null)
             return SetStatus(RuntimeStatus.Stopped(message));
+        if (!_session.IsConnected)
+        {
+            await DisposeCurrentSessionAsync().ConfigureAwait(false);
+            return SetStatus(RuntimeStatus.Stopped(message));
+        }
         Exception? failure = null;
+        var disconnectedDuringEnd = false;
         try
         {
             await _session.RemoveAndStopAsync(cancellationToken).ConfigureAwait(false);
@@ -436,12 +479,13 @@ internal sealed class RuntimeCoordinator : IAsyncDisposable
         catch (Exception ex)
         {
             failure = ex;
+            disconnectedDuringEnd = _session is { IsConnected: false };
         }
         finally
         {
             await DisposeCurrentSessionAsync().ConfigureAwait(false);
         }
-        return failure is null
+        return failure is null || disconnectedDuringEnd
             ? SetStatus(RuntimeStatus.Stopped(message))
             : SetStatus(RuntimeStatus.Error($"连接已断开，但恢复脚本执行失败：{failure.Message}"));
     }

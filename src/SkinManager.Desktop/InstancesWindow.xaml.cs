@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -110,6 +111,16 @@ public partial class InstancesWindow : Window
             _forceEligibleInstance = null;
         }
 
+        if (!_restoringSelection && GetSelectedInstance() is { } selectedInstance &&
+            GetConnectionIssue(selectedInstance) is { } connectionIssue)
+        {
+            SetStatus(connectionIssue, isError: true);
+        }
+        else if (!_restoringSelection && GetSelectedInstance() is { } connectableInstance)
+        {
+            SetStatus($"已核验调试连接端点：{connectableInstance.DebugEndpoint}。可选择该实例。 ");
+        }
+
         UpdateControls();
     }
 
@@ -162,21 +173,62 @@ public partial class InstancesWindow : Window
         }
     }
 
-    private void UseInstanceButton_Click(object sender, RoutedEventArgs e)
+    private async void UseInstanceButton_Click(object sender, RoutedEventArgs e) => await UseSelectedInstanceAsync();
+
+    private async Task UseSelectedInstanceAsync()
     {
-        if (_isBusy || GetSelectedInstance() is not { CanConnect: true, DebugPort: not null } instance)
+        if (_isBusy || GetSelectedInstance() is not { } selected)
         {
             return;
         }
 
-        SelectedForConnection = instance;
+        _isBusy = true;
+        SetStatus($"正在核验 PID {selected.Identity.ProcessId} 的调试端口…");
+        UpdateControls();
+        string? refreshNotice = null;
         try
         {
-            DialogResult = true;
+            var instances = await _instanceService.GetInstancesAsync();
+            var latest = instances.FirstOrDefault(instance => SameIdentity(instance.Identity, selected.Identity));
+            if (latest is null)
+            {
+                refreshNotice = $"所选实例 PID {selected.Identity.ProcessId} 已退出。正在刷新列表…";
+            }
+            else
+            {
+                UpdateInstance(latest);
+                if (GetConnectionIssue(latest) is { } connectionIssue)
+                {
+                    SetStatus(connectionIssue, isError: true);
+                }
+                else
+                {
+                    SelectedForConnection = latest;
+                    try
+                    {
+                        DialogResult = true;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        Close();
+                    }
+                }
+            }
         }
-        catch (InvalidOperationException)
+        catch (Exception exception)
         {
-            Close();
+            SetStatus($"无法核验所选实例：{exception.Message}", isError: true);
+        }
+        finally
+        {
+            _isBusy = false;
+            UpdateControls();
+        }
+
+        if (refreshNotice is not null)
+        {
+            await RefreshAsync();
+            SetStatus(refreshNotice, isError: true);
         }
     }
 
@@ -314,7 +366,7 @@ public partial class InstancesWindow : Window
         var selected = GetSelectedInstance();
         RefreshButton.IsEnabled = !_isBusy;
         LocateButton.IsEnabled = !_isBusy && selected is { IsExitResidual: false };
-        UseInstanceButton.IsEnabled = !_isBusy && selected is { IsExitResidual: false, CanConnect: true, DebugPort: not null };
+        UseInstanceButton.IsEnabled = !_isBusy && IsConnectableTarget(selected);
         CloseInstanceButton.IsEnabled = !_isBusy && selected is { IsExitResidual: false };
         ForceCloseButton.IsEnabled = !_isBusy && selected?.PendingExitSnapshot?.CanAttemptForce == true &&
             _forceEligibleInstance is { } eligible && selected.Identity == eligible.Identity;
@@ -345,6 +397,47 @@ public partial class InstancesWindow : Window
         return $"{kind} PID {instance.Identity.ProcessId} · {title}";
     }
 
+    private static bool IsConnectableTarget(CodexInstance? instance) =>
+        instance is { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: >= 1 and <= 65535 } &&
+        !string.IsNullOrWhiteSpace(instance.DebugEndpoint);
+
+    private static string? GetConnectionIssue(CodexInstance instance)
+    {
+        if (instance.IsExitResidual)
+        {
+            return $"调试实例 PID {instance.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留；不能把它用作连接目标。";
+        }
+
+        if (!string.IsNullOrWhiteSpace(instance.ConnectionMessage))
+        {
+            return instance.ConnectionMessage;
+        }
+
+        if (instance.Kind != CodexInstanceKind.Debug)
+        {
+            return $"PID {instance.Identity.ProcessId} 是普通版 Codex，没有调试端口，不能连接。";
+        }
+
+        if (instance.DebugPort is not int port || port is < 1 or > 65535)
+        {
+            return $"调试实例 PID {instance.Identity.ProcessId} 没有有效端口。请刷新后检查启动参数。";
+        }
+
+        if (instance.CanConnect && string.IsNullOrWhiteSpace(instance.DebugEndpoint))
+        {
+            return $"调试实例 PID {instance.Identity.ProcessId} 的监听端口已响应，但没有经过身份核验的连接 Endpoint。请刷新实例列表后重试。";
+        }
+
+        return instance.CanConnect
+            ? null
+            : $"调试实例 PID {instance.Identity.ProcessId} 声明了端口 {port}，但尚未核验为此进程拥有。可能端口未就绪或被其他进程占用；刷新后可重试。";
+    }
+
+    private static bool SameIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
+        left.ProcessId == right.ProcessId &&
+        left.StartedAtUtc.UtcDateTime == right.StartedAtUtc.UtcDateTime &&
+        string.Equals(Path.GetFullPath(left.ExecutablePath), Path.GetFullPath(right.ExecutablePath), StringComparison.OrdinalIgnoreCase);
+
     private bool ConfirmClose(CodexInstance instance)
     {
         var message = $"确认请求以下实例正常退出？\n\n{GetInstanceSummary(instance)}\n\n将请求 Codex 正常退出；如应用需要确认，请先处理提示。不会自动强制结束。";
@@ -370,6 +463,13 @@ public partial class InstancesWindow : Window
         public int ProcessId => Instance.Identity.ProcessId;
         public string KindText => Instance.Kind == CodexInstanceKind.Debug ? "调试版" : "普通版";
         public string PortText => Instance.DebugPort is int port ? port.ToString() : "—";
-        public string ConnectionText => Instance.Identity == connectedIdentity ? "当前连接" : "—";
+        public string ConnectionText => !IsConnectableTarget(Instance)
+            ? "不可连接"
+            : Instance.Identity == connectedIdentity ? "当前连接"
+            : IsIpv6Endpoint(Instance.DebugEndpoint) ? "IPv6 · 可连接" : "可连接";
+        public string ConnectionDetail => GetConnectionIssue(Instance) ?? $"已核验调试连接端点：{Instance.DebugEndpoint}。可作为连接目标。";
+
+        private static bool IsIpv6Endpoint(string? value) =>
+            Uri.TryCreate(value, UriKind.Absolute, out var endpoint) && endpoint.HostNameType == UriHostNameType.IPv6;
     }
 }

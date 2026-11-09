@@ -13,9 +13,7 @@ public sealed class GitHubUpdateClient : IUpdateClient
 {
     private static readonly Uri LatestReleaseUri = new(
         "https://api.github.com/repos/Nortea575/SkinManager/releases/latest");
-    private static readonly Regex StableTagPattern = new(
-        @"\Av?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private const string ReleasesListUri = "https://api.github.com/repos/Nortea575/SkinManager/releases";
     private static readonly Regex Sha256Pattern = new(
         @"\A[0-9a-fA-F]{64}\z",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -23,6 +21,8 @@ public sealed class GitHubUpdateClient : IUpdateClient
     private const string RepositoryPath = "/Nortea575/SkinManager";
     private const string GitHubApiVersion = "2022-11-28";
     private const long MaximumInstallerSize = 1024L * 1024 * 1024;
+    private const int MaximumReleasePages = 3;
+    private const int ReleasesPerPage = 100;
     private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(200);
     private const int BufferSize = 64 * 1024;
@@ -42,28 +42,114 @@ public sealed class GitHubUpdateClient : IUpdateClient
 
     public async Task<UpdateCheckResult> CheckAsync(
         Version currentVersion,
+        CancellationToken cancellationToken = default) =>
+        await CheckAsync(new UpdateCheckRequest(currentVersion), cancellationToken).ConfigureAwait(false);
+
+    public async Task<UpdateCheckResult> CheckAsync(
+        UpdateCheckRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(currentVersion);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.CurrentVersion);
+
+        var currentVersion = ParseCurrentVersion(request);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CheckTimeout);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseUri);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", GitHubApiVersion);
-        request.Headers.UserAgent.ParseAdd($"SkinManager/{FormatVersion(currentVersion)}");
+        var releases = request.IncludePrereleases
+            ? await GetReleaseListAsync(request.CurrentVersion, timeout.Token).ConfigureAwait(false)
+            : await GetLatestReleaseAsync(request.CurrentVersion, timeout.Token).ConfigureAwait(false);
 
+        var published = releases
+            .Where(release => release.Draft == false
+                && release.Prerelease is not null
+                && SemanticVersion.TryParseTag(release.TagName, out _))
+            .Select(release => new ReleaseCandidate(release, ParseTag(release.TagName!)))
+            .Where(candidate => request.IncludePrereleases || IsStableRelease(candidate.Release))
+            .ToArray();
+
+        var candidates = published
+            .Where(candidate => candidate.Version.CompareTo(currentVersion) > 0)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            return new UpdateCheckResult(published.Length > 0
+                ? UpdateCheckState.UpToDate
+                : UpdateCheckState.NotPublished);
+        }
+
+        var selected = candidates.Aggregate(SelectHigherRelease);
+        return BuildUpdateResult(selected.Release, selected.Version);
+    }
+
+    private async Task<IReadOnlyList<GitHubReleaseDto>> GetLatestReleaseAsync(
+        Version currentVersion,
+        CancellationToken cancellationToken)
+    {
+        using var request = CreateMetadataRequest(LatestReleaseUri, currentVersion);
         using var response = await _client.SendAsync(
             request,
             HttpCompletionOption.ResponseContentRead,
-            timeout.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            return new UpdateCheckResult(UpdateCheckState.NotPublished);
+            return [];
         }
 
+        EnsureMetadataSuccess(response);
+        ValidateApiResponseUri(response.RequestMessage?.RequestUri, LatestReleaseUri);
+        var release = await DeserializeAsync<GitHubReleaseDto>(response, cancellationToken).ConfigureAwait(false);
+        return release is null ? [] : [release];
+    }
+
+    private async Task<IReadOnlyList<GitHubReleaseDto>> GetReleaseListAsync(
+        Version currentVersion,
+        CancellationToken cancellationToken)
+    {
+        var releases = new List<GitHubReleaseDto>(ReleasesPerPage);
+        for (var page = 1; page <= MaximumReleasePages; page++)
+        {
+            var uri = new Uri($"{ReleasesListUri}?per_page={ReleasesPerPage}&page={page}");
+            using var request = CreateMetadataRequest(uri, currentVersion);
+            using var response = await _client.SendAsync(
+                request,
+                HttpCompletionOption.ResponseContentRead,
+                cancellationToken).ConfigureAwait(false);
+
+            if (response.StatusCode == HttpStatusCode.NotFound && page == 1)
+            {
+                return [];
+            }
+
+            EnsureMetadataSuccess(response);
+            ValidateApiResponseUri(response.RequestMessage?.RequestUri, uri);
+            var pageReleases = await DeserializeAsync<GitHubReleaseDto[]>(response, cancellationToken).ConfigureAwait(false)
+                ?? [];
+            releases.AddRange(pageReleases);
+
+            if (pageReleases.Length < ReleasesPerPage)
+            {
+                break;
+            }
+        }
+
+        return releases;
+    }
+
+    private static HttpRequestMessage CreateMetadataRequest(Uri uri, Version currentVersion)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", GitHubApiVersion);
+        request.Headers.UserAgent.ParseAdd($"SkinManager/{FormatVersion(currentVersion)}");
+        return request;
+    }
+
+    private static void EnsureMetadataSuccess(HttpResponseMessage response)
+    {
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
@@ -71,34 +157,24 @@ public sealed class GitHubUpdateClient : IUpdateClient
                 null,
                 response.StatusCode);
         }
+    }
 
-        ValidateApiResponseUri(response.RequestMessage?.RequestUri);
-
-        await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
-        var release = await JsonSerializer.DeserializeAsync<GitHubReleaseDto>(
+    private static async Task<T?> DeserializeAsync<T>(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<T>(
             stream,
-            cancellationToken: timeout.Token).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
 
-        if (release is null || release.Draft != false || release.Prerelease != false)
-        {
-            return new UpdateCheckResult(UpdateCheckState.NotPublished);
-        }
-
-        var version = ParseStableTag(release.TagName);
-        if (version is null)
-        {
-            return new UpdateCheckResult(UpdateCheckState.NotPublished);
-        }
-
-        // Do not require package metadata when this release cannot update the installed version.
-        if (version.CompareTo(currentVersion) <= 0)
-        {
-            return new UpdateCheckResult(UpdateCheckState.UpToDate);
-        }
-
-        var expectedAssetName = GetAssetName(version);
+    private static UpdateCheckResult BuildUpdateResult(GitHubReleaseDto release, SemanticVersion version)
+    {
+        var tag = release.TagName!;
+        var assetName = GetAssetName(version);
         var matchingAssets = release.Assets?
-            .Where(asset => string.Equals(asset.Name, expectedAssetName, StringComparison.Ordinal))
+            .Where(asset => string.Equals(asset.Name, assetName, StringComparison.Ordinal))
             .ToArray();
 
         if (matchingAssets is not { Length: 1 })
@@ -115,18 +191,21 @@ public sealed class GitHubUpdateClient : IUpdateClient
         }
 
         if (!Uri.TryCreate(asset.BrowserDownloadUrl, UriKind.Absolute, out var downloadUri)
-            || !IsExpectedAssetUri(downloadUri, release.TagName!, expectedAssetName))
+            || !IsExpectedAssetUri(downloadUri, tag, assetName))
         {
             throw new InvalidDataException("The update asset URL is not the expected HTTPS GitHub release asset.");
         }
 
         var updateRelease = new UpdateRelease(
-            version,
-            release.TagName!,
+            version.CoreVersion,
+            tag,
             release.Body ?? string.Empty,
             downloadUri,
             asset.Size.Value,
-            digest);
+            digest)
+        {
+            IsPrerelease = release.Prerelease == true || version.IsPrerelease
+        };
 
         return new UpdateCheckResult(UpdateCheckState.Available, updateRelease);
     }
@@ -202,7 +281,7 @@ public sealed class GitHubUpdateClient : IUpdateClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, release.DownloadUri);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
-        request.Headers.UserAgent.ParseAdd($"SkinManager/{FormatVersion(release.Version)}");
+        request.Headers.UserAgent.ParseAdd($"SkinManager/{release.DisplayVersion}");
 
         using var response = await _client.SendAsync(
             request,
@@ -317,8 +396,8 @@ public sealed class GitHubUpdateClient : IUpdateClient
 
     private (string VersionDirectory, string FinalPath, string PartialPath) GetCachePaths(UpdateRelease release)
     {
-        var versionDirectory = Path.GetFullPath(Path.Combine(_cacheDirectory, FormatVersion(release.Version)));
-        var finalPath = Path.GetFullPath(Path.Combine(versionDirectory, GetAssetName(release.Version)));
+        var versionDirectory = Path.GetFullPath(Path.Combine(_cacheDirectory, release.DisplayVersion));
+        var finalPath = Path.GetFullPath(Path.Combine(versionDirectory, GetAssetName(release.DisplayVersion)));
         if (!IsWithinCache(finalPath))
         {
             throw new InvalidDataException("The update cache path escaped the configured cache directory.");
@@ -341,10 +420,10 @@ public sealed class GitHubUpdateClient : IUpdateClient
         ArgumentNullException.ThrowIfNull(release.DownloadUri);
         ArgumentNullException.ThrowIfNull(release.Sha256);
 
-        var parsedVersion = ParseStableTag(release.Tag);
-        if (parsedVersion is null || parsedVersion != release.Version)
+        if (!SemanticVersion.TryParseTag(release.Tag, out var parsedVersion)
+            || parsedVersion.CoreVersion != release.Version)
         {
-            throw new InvalidDataException("The release must use a stable three-part version tag matching its version.");
+            throw new InvalidDataException("The release must use a semantic version tag matching its version.");
         }
 
         if (release.Size <= 0 || release.Size > MaximumInstallerSize)
@@ -357,29 +436,56 @@ public sealed class GitHubUpdateClient : IUpdateClient
             throw new InvalidDataException("The published update asset does not have a complete SHA-256 digest.");
         }
 
-        if (!IsExpectedAssetUri(release.DownloadUri, release.Tag, GetAssetName(release.Version)))
+        if (!IsExpectedAssetUri(release.DownloadUri, release.Tag, GetAssetName(release.DisplayVersion)))
         {
             throw new InvalidDataException("The update asset URL is not the expected HTTPS GitHub release asset.");
         }
     }
 
-    private static Version? ParseStableTag(string? tag)
+    private static SemanticVersion ParseTag(string tag)
     {
-        if (tag is null)
+        if (!SemanticVersion.TryParseTag(tag, out var version))
         {
-            return null;
+            throw new InvalidDataException("The release tag is not a supported semantic version.");
         }
 
-        var match = StableTagPattern.Match(tag);
-        if (!match.Success
-            || !int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var major)
-            || !int.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minor)
-            || !int.TryParse(match.Groups[3].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var patch))
+        return version;
+    }
+
+    private static SemanticVersion ParseCurrentVersion(UpdateCheckRequest request)
+    {
+        if (request.CurrentVersionTag is not null
+            && SemanticVersion.TryParseTag(request.CurrentVersionTag, out var taggedVersion)
+            && taggedVersion.CoreVersion == request.CurrentVersion)
         {
-            return null;
+            return taggedVersion;
         }
 
-        return new Version(major, minor, patch);
+        return new SemanticVersion(
+            request.CurrentVersion.Major,
+            Math.Max(request.CurrentVersion.Minor, 0),
+            Math.Max(request.CurrentVersion.Build, 0));
+    }
+
+    private static bool IsStableRelease(GitHubReleaseDto release) =>
+        release.Draft == false
+        && release.Prerelease == false
+        && SemanticVersion.TryParseTag(release.TagName, out var version)
+        && !version.IsPrerelease;
+
+    private static ReleaseCandidate SelectHigherRelease(ReleaseCandidate left, ReleaseCandidate right)
+    {
+        var comparison = left.Version.CompareTo(right.Version);
+        if (comparison != 0)
+        {
+            return comparison > 0 ? left : right;
+        }
+
+        var leftGithubPrerelease = left.Release.Prerelease == true;
+        var rightGithubPrerelease = right.Release.Prerelease == true;
+        return leftGithubPrerelease == rightGithubPrerelease
+            ? left
+            : leftGithubPrerelease ? right : left;
     }
 
     private static bool TryParseDigest(string? digest, out string normalizedDigest)
@@ -417,7 +523,7 @@ public sealed class GitHubUpdateClient : IUpdateClient
         return string.Equals(Uri.UnescapeDataString(uri.AbsolutePath), expectedPath, StringComparison.Ordinal);
     }
 
-    private static void ValidateApiResponseUri(Uri? uri)
+    private static void ValidateApiResponseUri(Uri? uri, Uri expectedUri)
     {
         if (uri is null)
         {
@@ -428,7 +534,7 @@ public sealed class GitHubUpdateClient : IUpdateClient
             || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase)
             || uri.Port != 443
-            || !string.Equals(uri.AbsolutePath, "/repos/Nortea575/SkinManager/releases/latest", StringComparison.Ordinal))
+            || !string.Equals(uri.AbsoluteUri, expectedUri.AbsoluteUri, StringComparison.Ordinal))
         {
             throw new InvalidDataException("The update metadata response came from an unexpected URL.");
         }
@@ -453,7 +559,8 @@ public sealed class GitHubUpdateClient : IUpdateClient
         }
     }
 
-    private static string GetAssetName(Version version) => $"SkinManager-Setup-{FormatVersion(version)}.exe";
+    private static string GetAssetName(SemanticVersion version) => GetAssetName(version.ToString());
+    private static string GetAssetName(string version) => $"SkinManager-Setup-{version}.exe";
 
     private static string FormatVersion(Version version) =>
         string.Create(CultureInfo.InvariantCulture, $"{version.Major}.{Math.Max(version.Minor, 0)}.{Math.Max(version.Build, 0)}");
@@ -495,6 +602,8 @@ public sealed class GitHubUpdateClient : IUpdateClient
         [JsonPropertyName("assets")]
         public GitHubAssetDto[]? Assets { get; init; }
     }
+
+    private sealed record ReleaseCandidate(GitHubReleaseDto Release, SemanticVersion Version);
 
     private sealed class GitHubAssetDto
     {

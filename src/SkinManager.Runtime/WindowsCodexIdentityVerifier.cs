@@ -1,8 +1,24 @@
 using System.Diagnostics;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
 namespace SkinManager.Runtime;
+
+internal sealed record CodexListenerEndpoint(int ProcessId, IPAddress Address)
+{
+    public Uri? ToLoopbackEndpoint(int port)
+    {
+        var endpointAddress = Address.Equals(IPAddress.Any)
+            ? IPAddress.Loopback
+            : Address.Equals(IPAddress.IPv6Any)
+                ? IPAddress.IPv6Loopback
+                : Address;
+        return IPAddress.IsLoopback(endpointAddress)
+            ? new UriBuilder(Uri.UriSchemeHttp, endpointAddress.ToString(), port).Uri
+            : null;
+    }
+}
 
 internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerifier
 {
@@ -14,17 +30,18 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
         "^OpenAI\\.Codex_[^\\\\]+_x64__2p2nqsd0c76g0$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public Task<BrowserProcessIdentity> VerifyListenerAsync(int port, CancellationToken cancellationToken)
+    public Task<BrowserProcessIdentity> VerifyListenerAsync(Uri endpoint, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("只支持 Windows Store 安装的 Codex 桌面版。 ");
+        CdpBrowserClient.ValidateEndpoint(endpoint);
 
-        var processIds = GetListenerProcessIds(port);
+        var processIds = GetListenerProcessIds(endpoint);
         if (processIds.Count != 1)
             throw new InvalidOperationException(processIds.Count == 0
-                ? "指定端口没有 TCP listener。请使用调试参数启动 Codex 后重试。"
-                : "指定端口由多个进程共同监听，无法安全确认目标身份。 ");
+                ? $"指定地址 {endpoint.Host} 的端口 {endpoint.Port} 没有 TCP listener。请使用调试参数启动 Codex 后重试。"
+                : "指定 loopback 地址由多个进程共同监听，无法安全确认目标身份。 ");
 
         var processId = processIds.Single();
         using var process = Process.GetProcessById(processId);
@@ -65,21 +82,35 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
         }
     }
 
-    internal static bool IsUniqueListenerOwnedByProcess(int port, int processId)
+    internal static IReadOnlyList<CodexListenerEndpoint> GetLoopbackListenerEndpoints(int port)
     {
-        var processIds = GetListenerProcessIds(port);
-        return processIds.Count == 1 && processIds.Contains(processId);
+        var listeners = new List<CodexListenerEndpoint>();
+        AddTableListeners(AfInet, port, 24, stateOffset: 0, portOffset: 8, pidOffset: 20,
+            addressOffset: 4, addressLength: 4, listeners);
+        AddTableListeners(AfInet6, port, 56, stateOffset: 48, portOffset: 20, pidOffset: 52,
+            addressOffset: 0, addressLength: 16, listeners);
+        return listeners.Distinct().ToArray();
     }
 
-    private static HashSet<int> GetListenerProcessIds(int port)
+    private static HashSet<int> GetListenerProcessIds(Uri endpoint)
     {
+        if (!IPAddress.TryParse(endpoint.DnsSafeHost, out var wantedAddress))
+            return [];
         var pids = new HashSet<int>();
-        AddTableListeners(AfInet, port, 24, stateOffset: 0, portOffset: 8, pidOffset: 20, pids);
-        AddTableListeners(AfInet6, port, 56, stateOffset: 48, portOffset: 20, pidOffset: 52, pids);
+        var wildcardAddress = wantedAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+            ? IPAddress.Any
+            : IPAddress.IPv6Any;
+        foreach (var listener in GetLoopbackListenerEndpoints(endpoint.Port))
+        {
+            if (listener.Address.Equals(wantedAddress) ||
+                wantedAddress.AddressFamily == listener.Address.AddressFamily && listener.Address.Equals(wildcardAddress))
+                pids.Add(listener.ProcessId);
+        }
         return pids;
     }
 
-    private static void AddTableListeners(int addressFamily, int wantedPort, int rowSize, int stateOffset, int portOffset, int pidOffset, HashSet<int> processIds)
+    private static void AddTableListeners(int addressFamily, int wantedPort, int rowSize, int stateOffset, int portOffset, int pidOffset,
+        int addressOffset, int addressLength, List<CodexListenerEndpoint> listeners)
     {
         var bufferLength = 0;
         var result = GetExtendedTcpTable(IntPtr.Zero, ref bufferLength, order: true, addressFamily, TcpTableOwnerPidListener, 0);
@@ -111,7 +142,12 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
                 {
                     var pid = BitConverter.ToInt32(bytes, offset + pidOffset);
                     if (pid > 0)
-                        processIds.Add(pid);
+                    {
+                        var addressBytes = bytes.AsSpan(offset + addressOffset, addressLength);
+                        var address = new IPAddress(addressBytes);
+                        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+                            listeners.Add(new CodexListenerEndpoint(pid, address));
+                    }
                 }
             }
         }

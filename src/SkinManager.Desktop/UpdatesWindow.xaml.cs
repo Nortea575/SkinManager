@@ -25,14 +25,17 @@ public partial class UpdatesWindow : Window
         if (_coordinator is not null)
         {
             _coordinator.PropertyChanged += Coordinator_PropertyChanged;
-            CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}";
+            CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}{(_coordinator.CurrentVersionIsPrerelease ? "（测试版）" : "")}";
             AutomaticCheckBox.IsChecked = _coordinator.AutomaticCheckAndDownload;
+            PrereleaseCheckBox.IsChecked = _coordinator.IncludePrereleases;
         }
         else
         {
-            CurrentVersionText.Text = $"当前版本：{UpdateCoordinator.ReadCurrentVersion().ToString(3)}";
+            CurrentVersionText.Text = $"当前版本：{UpdateCoordinator.ReadCurrentVersionTag()}";
+            ChannelText.Text = "更新通道：不可用";
             StatusText.Text = "当前没有可用的更新服务。";
             AutomaticCheckBox.IsEnabled = false;
+            PrereleaseCheckBox.IsEnabled = false;
             CheckButton.IsEnabled = false;
         }
 
@@ -60,10 +63,13 @@ public partial class UpdatesWindow : Window
             return;
         }
 
-        CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}";
+        CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}{(_coordinator.CurrentVersionIsPrerelease ? "（测试版）" : "")}";
+        ChannelText.Text = _coordinator.IncludePrereleases
+            ? "更新通道：正式版与测试版"
+            : "更新通道：仅正式版";
         StatusText.Text = _coordinator.StatusMessage;
         ReleaseVersionText.Text = _coordinator.Release is { } release
-            ? $"可用版本：{release.Version.ToString(3)}"
+            ? $"可用版本：{release.DisplayVersion}{(release.IsPrerelease ? "（测试版）" : "（正式版）")}"
             : _coordinator.CheckState switch
             {
                 UpdateCheckState.UpToDate => "没有可用的新版本。",
@@ -76,6 +82,8 @@ public partial class UpdatesWindow : Window
             : "";
         ReleaseNotesText.Text = _coordinator.Release?.Notes ?? "检查更新后，发布说明会显示在这里。";
         AutomaticCheckBox.IsChecked = _coordinator.AutomaticCheckAndDownload;
+        PrereleaseCheckBox.IsChecked = _coordinator.IncludePrereleases;
+        PrereleaseCheckBox.IsEnabled = !_coordinator.IsWorking && !_installPending;
         CheckButton.IsEnabled = !_coordinator.IsWorking && !_installPending;
         DownloadButton.Visibility = _coordinator.HasAvailableUpdate ? Visibility.Visible : Visibility.Collapsed;
         DownloadButton.Content = _coordinator.HasDownloadedUpdate ? "重新下载" : "下载更新";
@@ -165,6 +173,14 @@ public partial class UpdatesWindow : Window
         if (!_initializing && _coordinator is not null)
         {
             _coordinator.AutomaticCheckAndDownload = AutomaticCheckBox.IsChecked == true;
+        }
+    }
+
+    private void PrereleaseCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing && _coordinator is not null)
+        {
+            _coordinator.IncludePrereleases = PrereleaseCheckBox.IsChecked == true;
         }
     }
 

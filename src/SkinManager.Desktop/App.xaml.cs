@@ -30,7 +30,8 @@ public partial class App : Application
                 new GitHubUpdateClient(httpClient, Path.Combine(updatesDirectory, "cache")),
                 updatesDirectory,
                 UpdateCoordinator.ReadCurrentVersion(),
-                ownedHttpClient: httpClient);
+                ownedHttpClient: httpClient,
+                currentVersionTag: UpdateCoordinator.ReadCurrentVersionTag());
             var window = new MainWindow(
                 store,
                 basePackage,

@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SkinManager.Updating;
 
 internal static class Program
@@ -9,11 +10,22 @@ internal static class Program
     private static int _assertionCount;
     private static int _testCount;
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
+        if (args is ["--live-check"])
+        {
+            return await RunLiveCheckAsync();
+        }
+
         await RunAsync("stable version ordering and headers", CheckAvailableAndHeadersAsync);
         await RunAsync("up-to-date skips unavailable package metadata", UpToDateSkipsAssetAsync);
         await RunAsync("drafts and prereleases are skipped", DraftsAndPrereleasesAreSkippedAsync);
+        await RunAsync("stable channel uses latest and excludes prereleases", StableChannelIsUnchangedAsync);
+        await RunAsync("opt-in channel selects highest mixed release version", PrereleaseChannelSelectsHighestAsync);
+        await RunAsync("prerelease tags use semantic numeric ordering", PrereleaseVersionOrderingAsync);
+        await RunAsync("prerelease channel rejects missing metadata and empty lists", PrereleaseChannelRequiresPublishedMetadataAsync);
+        await RunAsync("SemVer accepts mixed numeric-leading prerelease labels", MixedPrereleaseLabelsAreValidAsync);
+        await RunAsync("prerelease package names and caches include full version", PrereleasePackageCacheIsVersionedAsync);
         await RunAsync("older published version is not a rollback", OlderReleaseIsIgnoredAsync);
         await RunAsync("404 means not published", NotFoundIsNotPublishedAsync);
         await RunAsync("rate limit and offline errors surface", NetworkFailuresSurfaceAsync);
@@ -28,6 +40,39 @@ internal static class Program
 
         Console.WriteLine($"PASS: {_testCount} offline tests, {_assertionCount} assertions.");
         return 0;
+    }
+
+    private static async Task<int> RunLiveCheckAsync()
+    {
+        using var diagnosticHandler = new GitHubResponseDiagnosticHandler(new HttpClientHandler());
+        using var http = new HttpClient(diagnosticHandler);
+        var client = new GitHubUpdateClient(http, Path.Combine(Path.GetTempPath(), "SkinManager.UpdateTests.Live"));
+        var failed = false;
+        foreach (var request in new[]
+        {
+            new UpdateCheckRequest(new Version(1, 1, 2)),
+            new UpdateCheckRequest(new Version(1, 1, 2), IncludePrereleases: true)
+        })
+        {
+            var diagnosticIndex = diagnosticHandler.Failures.Count;
+            try
+            {
+                var result = await client.CheckAsync(request);
+                Console.WriteLine($"{(request.IncludePrereleases ? "Including prereleases" : "Stable channel")}: {result.State} {result.Release?.DisplayVersion}");
+            }
+            catch (HttpRequestException exception)
+            {
+                failed = true;
+                Console.WriteLine($"{(request.IncludePrereleases ? "Including prereleases" : "Stable channel")}: request failed (HTTP {(int?)exception.StatusCode ?? 0}).");
+                foreach (var failure in diagnosticHandler.Failures.Skip(diagnosticIndex))
+                {
+                    Console.WriteLine($"GitHub message: {failure.Message}");
+                    Console.WriteLine($"Rate limit: limit={failure.RateLimit}, remaining={failure.RateRemaining}, reset={failure.RateReset}, resource={failure.RateResource}, retry-after={failure.RetryAfter}");
+                }
+            }
+        }
+
+        return failed ? 1 : 0;
     }
 
     private static async Task CheckAvailableAndHeadersAsync()
@@ -82,6 +127,173 @@ internal static class Program
             Equal(UpdateCheckState.NotPublished, result.State);
             True(result.Release is null);
         }
+    }
+
+    private static async Task StableChannelIsUnchangedAsync()
+    {
+        using var temp = new TempDirectory();
+        HttpRequestMessage? seenRequest = null;
+        var payload = Encoding.UTF8.GetBytes("stable installer");
+        var handler = new FakeHandler((request, _) =>
+        {
+            seenRequest = request;
+            return Task.FromResult(JsonResponse(ReleaseJson("v1.1.3-beta.1", [Asset("v1.1.3-beta.1", payload)], prerelease: true), request));
+        });
+        using var http = new HttpClient(handler);
+        var result = await new GitHubUpdateClient(http, temp.Path)
+            .CheckAsync(new UpdateCheckRequest(new Version(1, 1, 2), IncludePrereleases: false));
+
+        Equal(UpdateCheckState.NotPublished, result.State);
+        Equal("https://api.github.com/repos/Nortea575/SkinManager/releases/latest", seenRequest!.RequestUri!.ToString());
+    }
+
+    private static async Task PrereleaseChannelSelectsHighestAsync()
+    {
+        using var temp = new TempDirectory();
+        var payload = Encoding.UTF8.GetBytes("release payload");
+        HttpRequestMessage? seenRequest = null;
+        var handler = new FakeHandler((request, _) =>
+        {
+            seenRequest = request;
+            return Task.FromResult(JsonResponse(ReleasesJson(
+            Release("v1.1.3-beta.2", Asset("v1.1.3-beta.2", payload), prerelease: true),
+            Release("v1.1.3-beta.10", Asset("v1.1.3-beta.10", payload), prerelease: true),
+            Release("v1.2.0", Asset("v1.2.0", payload)),
+            Release("v9.0.0-rc.99", Asset("v9.0.0-rc.99", payload), draft: true, prerelease: true)), request));
+        });
+        using var http = new HttpClient(handler);
+
+        var result = await new GitHubUpdateClient(http, temp.Path)
+            .CheckAsync(new UpdateCheckRequest(new Version(1, 1, 2), IncludePrereleases: true));
+
+        Equal(UpdateCheckState.Available, result.State);
+        Equal("1.2.0", result.Release!.DisplayVersion);
+        True(!result.Release.IsPrerelease);
+        Equal("https://api.github.com/repos/Nortea575/SkinManager/releases?per_page=100&page=1", seenRequest!.RequestUri!.ToString());
+    }
+
+    private static async Task PrereleaseVersionOrderingAsync()
+    {
+        using var temp = new TempDirectory();
+        var payload = Encoding.UTF8.GetBytes("release payload");
+        var json = ReleasesJson(
+            Release("v1.1.3-beta.2", Asset("v1.1.3-beta.2", payload), prerelease: true),
+            Release("v1.1.3-beta.10", Asset("v1.1.3-beta.10", payload), prerelease: true));
+
+        using (var http = new HttpClient(JsonHandler(json)))
+        {
+            var result = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 3), IncludePrereleases: true, CurrentVersionTag: "v1.1.3-beta.2"));
+            Equal(UpdateCheckState.Available, result.State);
+            Equal("1.1.3-beta.10", result.Release!.DisplayVersion);
+            True(result.Release.IsPrerelease);
+        }
+
+        using (var http = new HttpClient(JsonHandler(json)))
+        {
+            var stableCurrent = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 3), IncludePrereleases: true));
+            Equal(UpdateCheckState.UpToDate, stableCurrent.State);
+        }
+
+        var stableJson = ReleasesJson(
+            Release("v1.1.3-beta.10", Asset("v1.1.3-beta.10", payload), prerelease: true),
+            Release("v1.1.3", Asset("v1.1.3", payload)));
+        using (var http = new HttpClient(JsonHandler(stableJson)))
+        {
+            var promoted = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 3), IncludePrereleases: true, CurrentVersionTag: "v1.1.3-beta.10"));
+            Equal(UpdateCheckState.Available, promoted.State);
+            Equal("1.1.3", promoted.Release!.DisplayVersion);
+            True(!promoted.Release.IsPrerelease);
+        }
+
+        var rcJson = ReleasesJson(
+            Release("v1.1.3-beta.99", Asset("v1.1.3-beta.99", payload), prerelease: true),
+            Release("v1.1.3-rc.1", Asset("v1.1.3-rc.1", payload), prerelease: true));
+        using (var http = new HttpClient(JsonHandler(rcJson)))
+        {
+            var rc = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 3), IncludePrereleases: true, CurrentVersionTag: "v1.1.3-beta.10"));
+            Equal(UpdateCheckState.Available, rc.State);
+            Equal("1.1.3-rc.1", rc.Release!.DisplayVersion);
+        }
+    }
+
+    private static async Task PrereleaseChannelRequiresPublishedMetadataAsync()
+    {
+        using var temp = new TempDirectory();
+        var payload = Encoding.UTF8.GetBytes("metadata fixture");
+        var missingFlagJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                tag_name = "v1.1.3-beta.1",
+                draft = false,
+                body = "missing prerelease flag",
+                assets = new[] { Asset("v1.1.3-beta.1", payload) }
+            }
+        });
+
+        using (var http = new HttpClient(JsonHandler(missingFlagJson)))
+        {
+            var missingFlag = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 2), IncludePrereleases: true));
+            Equal(UpdateCheckState.NotPublished, missingFlag.State);
+        }
+
+        using (var http = new HttpClient(JsonHandler("[]")))
+        {
+            var emptyList = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 2), IncludePrereleases: true));
+            Equal(UpdateCheckState.NotPublished, emptyList.State);
+        }
+    }
+
+    private static async Task MixedPrereleaseLabelsAreValidAsync()
+    {
+        using var temp = new TempDirectory();
+        var payload = Encoding.UTF8.GetBytes("numeric-leading prerelease id");
+        var json = ReleasesJson(
+            Release("v1.1.4-01a", Asset("v1.1.4-01a", payload), prerelease: true),
+            Release("v1.1.5-01", Asset("v1.1.5-01", payload), prerelease: true));
+        using var http = new HttpClient(JsonHandler(json));
+
+        var result = await new GitHubUpdateClient(http, temp.Path).CheckAsync(new UpdateCheckRequest(
+            new Version(1, 1, 2), IncludePrereleases: true));
+
+        Equal(UpdateCheckState.Available, result.State);
+        Equal("1.1.4-01a", result.Release!.DisplayVersion);
+    }
+
+    private static async Task PrereleasePackageCacheIsVersionedAsync()
+    {
+        using var temp = new TempDirectory();
+        var payload = Encoding.UTF8.GetBytes("test installer bytes");
+        var downloadHandler = DownloadHandler((_, _) => Task.FromResult<Stream>(new ChunkedStream(payload)));
+        using var downloadHttp = new HttpClient(downloadHandler);
+        var downloadClient = new GitHubUpdateClient(downloadHttp, temp.Path);
+        var downloadedPaths = new List<string>();
+        foreach (var prerelease in new[] { "beta.1", "beta.2" })
+        {
+            var tag = "v1.1.3-" + prerelease;
+            using var checkHttp = new HttpClient(JsonHandler(ReleasesJson(
+                Release(tag, Asset(tag, payload), prerelease: true))));
+            var result = await new GitHubUpdateClient(checkHttp, temp.Path).CheckAsync(new UpdateCheckRequest(
+                new Version(1, 1, 2), IncludePrereleases: true));
+            Equal(UpdateCheckState.Available, result.State);
+            Equal("1.1.3-" + prerelease, result.Release!.DisplayVersion);
+            Equal(Digest(payload), result.Release.Sha256);
+
+            var downloaded = await downloadClient.DownloadAsync(result.Release);
+            await downloadClient.ValidateAsync(downloaded);
+            downloadedPaths.Add(downloaded.FilePath);
+            Equal(payload.LongLength, new FileInfo(downloaded.FilePath).Length);
+        }
+
+        Equal(Path.Combine(temp.Path, "1.1.3-beta.1", "SkinManager-Setup-1.1.3-beta.1.exe"), downloadedPaths[0]);
+        Equal(Path.Combine(temp.Path, "1.1.3-beta.2", "SkinManager-Setup-1.1.3-beta.2.exe"), downloadedPaths[1]);
+        True(!string.Equals(downloadedPaths[0], downloadedPaths[1], StringComparison.Ordinal));
     }
 
     private static async Task OlderReleaseIsIgnoredAsync()
@@ -300,14 +512,28 @@ internal static class Program
         string tag,
         object[] assets,
         bool draft = false,
-        bool prerelease = false) => JsonSerializer.Serialize(new
+        bool prerelease = false) => JsonSerializer.Serialize(Release(tag, assets, draft, prerelease));
+
+    private static string ReleasesJson(params object[] releases) => JsonSerializer.Serialize(releases);
+
+    private static object Release(
+        string tag,
+        object[] assets,
+        bool draft = false,
+        bool prerelease = false) => new
         {
             tag_name = tag,
             draft,
             prerelease,
             body = "Offline test notes",
             assets
-        });
+        };
+
+    private static object Release(
+        string tag,
+        object asset,
+        bool draft = false,
+        bool prerelease = false) => Release(tag, [asset], draft, prerelease);
 
     private static object Asset(
         string versionTag,
@@ -430,6 +656,67 @@ internal static class Program
             return response;
         }
     }
+
+    private sealed class GitHubResponseDiagnosticHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+    {
+        private static readonly Regex IPv4Pattern = new(
+            @"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+            RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+        public List<GitHubResponseFailure> Failures { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode || !string.Equals(request.RequestUri?.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return response;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var message = ReadGitHubMessage(body);
+            message = IPv4Pattern.Replace(message, "[IP redacted]");
+            Failures.Add(new GitHubResponseFailure(
+                message,
+                ReadHeader(response, "X-RateLimit-Limit"),
+                ReadHeader(response, "X-RateLimit-Remaining"),
+                ReadHeader(response, "X-RateLimit-Reset"),
+                ReadHeader(response, "X-RateLimit-Resource"),
+                ReadHeader(response, "Retry-After")));
+            return response;
+        }
+
+        private static string ReadGitHubMessage(string body)
+        {
+            try
+            {
+                using var json = JsonDocument.Parse(body);
+                if (json.RootElement.TryGetProperty("message", out var message)
+                    && message.ValueKind == JsonValueKind.String)
+                {
+                    return message.GetString() ?? "(empty GitHub error message)";
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return string.IsNullOrWhiteSpace(body) ? "(no GitHub error message)" : body[..Math.Min(body.Length, 300)];
+        }
+
+        private static string ReadHeader(HttpResponseMessage response, string name) =>
+            response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() ?? "(empty)" : "(absent)";
+    }
+
+    private sealed record GitHubResponseFailure(
+        string Message,
+        string RateLimit,
+        string RateRemaining,
+        string RateReset,
+        string RateResource,
+        string RetryAfter);
 
     private sealed class RecordingProgress : IProgress<UpdateDownloadProgress>
     {

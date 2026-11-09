@@ -9,16 +9,21 @@ internal static class RuntimeApplyWorkflowTests
     {
         await AppliesToFreshSelectedTargetAsync();
         await RejectsStaleSelectedTargetAsync();
+        await StartsAfterSelectedTargetHasExitedAsync();
         await AppliesToExistingConnectedTargetAsync();
+        await PreservesActiveVerifiedEndpointWhenAnotherAddressIsDiscoveredAsync();
         await AppliesToUniqueExistingDebugTargetAsync();
         await RefusesAmbiguousOrMismatchedTargetsAsync();
         await DoesNotLaunchAlongsideNormalCodexAsync();
+        await DoesNotLaunchAlongsideExitResidualAsync();
+        await DoesNotWaitForUnconnectableDebugFlagAsync();
         await LaunchesAndAppliesAfterMatchingDebugTargetAppearsAsync();
         await DoesNotApplyAfterLaunchFailureOrWrongProcessAsync();
         await CancellingWhileWaitingDoesNotApplyAsync();
         await TimeoutDoesNotApplyAsync();
         await ConnectsToExistingTargetWithoutSkinAsync();
         await LaunchesAndWaitsForTargetWithoutSkinAsync();
+        await ConnectsToVerifiedIPv6EndpointWithoutSkinAsync();
         await RefusesNormalInstanceForCompatibilityAsync();
         await CancellingCompatibilityReadinessDoesNotConnectAsync();
         VerifiesConnectedDoesNotMeanApplied();
@@ -26,15 +31,15 @@ internal static class RuntimeApplyWorkflowTests
 
     private static async Task AppliesToFreshSelectedTargetAsync()
     {
-        var target = CreateTarget(4101, 9336);
+        var target = CreateTarget(4101, 9336, debugEndpoint: "http://[::1]:9336/");
         var services = new FakeServices(new FakeInstances([target]));
         var result = await services.CreateWorkflow().StartOrApplyAsync(
-            CreateRequest(), 9336, target, null, hasActiveConnection: false, CancellationToken.None);
+            CreateRequest("http://[::1]:9336/"), 9336, target, null, hasActiveConnection: false, CancellationToken.None);
 
         Require(result.State == RuntimeStatusState.Connected && services.LaunchCount == 0 && services.Applies.Count == 1,
             "已选调试实例直接应用，未重新启动 Codex");
-        Require(services.Applies[0].ExpectedInstance == target.Identity && services.Applies[0].Endpoint.EndsWith(":9336", StringComparison.Ordinal),
-            "已选目标的完整身份与端口进入应用请求");
+        Require(services.Applies[0].ExpectedInstance == target.Identity && services.Applies[0].Endpoint == "http://[::1]:9336/",
+            "已选目标的完整身份进入应用请求，并保留 Runtime 核验的 IPv6 Endpoint");
     }
 
     private static async Task RejectsStaleSelectedTargetAsync()
@@ -43,22 +48,50 @@ internal static class RuntimeApplyWorkflowTests
         var replacement = CreateTarget(4102, 9337, startedAt: DateTimeOffset.Parse("2026-11-07T00:01:00Z"));
         var services = new FakeServices(new FakeInstances([replacement]));
         var result = await services.CreateWorkflow().StartOrApplyAsync(
-            CreateRequest(), 9337, selected, null, hasActiveConnection: false, CancellationToken.None);
+            CreateRequest("http://[::1]:9337"), 9337, selected, null, hasActiveConnection: false, CancellationToken.None);
 
-        Require(result.State == RuntimeStatusState.Error && services.Applies.Count == 0 && services.LaunchCount == 0,
-            "所选进程身份变化后不发送皮肤脚本");
+        Require(result.State == RuntimeStatusState.Connected && services.Applies.Count == 1 && services.LaunchCount == 0 &&
+                services.Applies[0].ExpectedInstance == replacement.Identity,
+            "旧选择对应进程退出后重新发现并应用到当前已核验的新进程身份");
+    }
+
+    private static async Task StartsAfterSelectedTargetHasExitedAsync()
+    {
+        var selected = CreateTarget(4192, 9342);
+        var replacement = CreateTarget(4193, 9342);
+        var services = new FakeServices(new FakeInstances([], [replacement]));
+        var result = await services.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest("http://[::1]:9342"), 9342, selected, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && services.LaunchCount == 1 && services.Applies.Count == 1 &&
+                services.Applies[0].ExpectedInstance == replacement.Identity,
+            "所选目标已退出且没有其他实例时重新启动并应用到新发现的调试进程");
     }
 
     private static async Task AppliesToExistingConnectedTargetAsync()
     {
         var target = CreateTarget(4103, 9335);
-        var services = new FakeServices(new FakeInstances([]));
+        var services = new FakeServices(new FakeInstances([target]));
         var result = await services.CreateWorkflow().StartOrApplyAsync(
             CreateRequest(), 9335, null, target.Identity, hasActiveConnection: true, CancellationToken.None);
 
         Require(result.State == RuntimeStatusState.Connected && services.LaunchCount == 0 && services.Applies.Count == 1 &&
                 services.Applies[0].ExpectedInstance == target.Identity,
             "已有连接实例直接应用到当前身份");
+    }
+
+    private static async Task PreservesActiveVerifiedEndpointWhenAnotherAddressIsDiscoveredAsync()
+    {
+        var target = CreateTarget(4197, 9347, debugEndpoint: "http://127.0.0.1:9347/");
+        var services = new FakeServices(new FakeInstances([target]));
+        var result = await services.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest("http://[::1]:9347/"), 9347, null, target.Identity,
+            hasActiveConnection: true, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && services.Applies.Count == 1 &&
+                services.Applies[0].Endpoint == "http://[::1]:9347/" &&
+                services.Applies[0].ExpectedInstance == target.Identity,
+            "同一进程仍有其他可用地址时，应用继续使用当前会话的已核验 Endpoint");
     }
 
     private static async Task AppliesToUniqueExistingDebugTargetAsync()
@@ -100,6 +133,30 @@ internal static class RuntimeApplyWorkflowTests
 
         Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0,
             "普通版 Codex 仍运行时既不退出它也不启动另一个实例");
+    }
+
+    private static async Task DoesNotLaunchAlongsideExitResidualAsync()
+    {
+        var residual = CreateTarget(4194, 9335) with { IsExitResidual = true };
+        var services = new FakeServices(new FakeInstances([residual]));
+        var result = await services.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest(), 9335, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0 &&
+                result.Message?.Contains("后台残留", StringComparison.Ordinal) == true,
+            "存在 Codex 后台残留时阻止启动新实例并说明原因");
+    }
+
+    private static async Task DoesNotWaitForUnconnectableDebugFlagAsync()
+    {
+        var flaggedOnly = CreateTarget(4195, 9345, canConnect: false);
+        var services = new FakeServices(new FakeInstances([flaggedOnly]));
+        var result = await services.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest(), 9345, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0 &&
+                result.Message?.Contains("9345", StringComparison.Ordinal) == true,
+            "仅有调试启动参数但当前进程未拥有可连接端口时即时说明原因，不空等端口超时");
     }
 
     private static async Task LaunchesAndAppliesAfterMatchingDebugTargetAppearsAsync()
@@ -202,6 +259,18 @@ internal static class RuntimeApplyWorkflowTests
             "无皮肤时等待正确调试身份就绪后连接，Apply次数仍为零");
     }
 
+    private static async Task ConnectsToVerifiedIPv6EndpointWithoutSkinAsync()
+    {
+        var target = CreateTarget(4196, 9346, debugEndpoint: "http://[::1]:9346/");
+        var services = new FakeServices(new FakeInstances([target]));
+        var result = await services.CreateWorkflow().StartOrConnectAsync(
+            9346, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && result.Endpoint == "http://[::1]:9346/" &&
+                services.LaunchCount == 0 && services.Applies.Count == 0,
+            "无皮肤连接也保留 Runtime 核验出的 IPv6 Endpoint，不回退到 IPv4 拼接地址");
+    }
+
     private static async Task RefusesNormalInstanceForCompatibilityAsync()
     {
         var normal = CreateTarget(4114, null, kind: CodexInstanceKind.Normal, canConnect: false);
@@ -265,7 +334,8 @@ internal static class RuntimeApplyWorkflowTests
         int? port,
         DateTimeOffset? startedAt = null,
         CodexInstanceKind? kind = null,
-        bool? canConnect = null) =>
+        bool? canConnect = null,
+        string? debugEndpoint = null) =>
         new(
             new CodexProcessIdentity(
                 processId,
@@ -277,15 +347,23 @@ internal static class RuntimeApplyWorkflowTests
             null)
         {
             Kind = kind ?? (port is null ? CodexInstanceKind.Normal : CodexInstanceKind.Debug),
-            CanConnect = canConnect ?? port is >= 1 and <= 65535
+            CanConnect = canConnect ?? port is >= 1 and <= 65535,
+            DebugEndpoint = (canConnect ?? port is >= 1 and <= 65535) && port is int debugPort
+                ? debugEndpoint ?? $"http://127.0.0.1:{debugPort}"
+                : debugEndpoint,
+            ConnectionMessage = (canConnect ?? port is >= 1 and <= 65535)
+                ? null
+                : port is int unavailablePort
+                    ? $"fake listener for port {unavailablePort} is unavailable"
+                    : null
         };
 
-    private static RuntimeApplyRequest CreateRequest() => new()
+    private static RuntimeApplyRequest CreateRequest(string endpoint = "http://127.0.0.1:9335") => new()
     {
         SkinId = "ayanami",
         RuntimeScript = "fake apply script",
         RemoveScript = "fake remove script",
-        Endpoint = "http://127.0.0.1:9335"
+        Endpoint = endpoint
     };
 
     private static void Require(bool condition, string label)

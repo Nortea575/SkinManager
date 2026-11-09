@@ -72,6 +72,9 @@ public sealed class RuntimeController
     private readonly string _agentExecutablePath;
     private readonly string _pipeName;
     private readonly IRuntimeLaunchPlatform _launchPlatform;
+    private readonly Func<bool>? _agentRunningProbe;
+    private readonly Action? _startAgentOverride;
+    private readonly TimeSpan _agentPipeConnectTimeout;
     private readonly SemaphoreSlim _commandGate = new(1, 1);
     private RuntimeStatus _lastStatus = RuntimeStatus.Stopped();
 
@@ -82,11 +85,20 @@ public sealed class RuntimeController
     {
     }
 
-    internal RuntimeController(string agentExecutablePath, string? pipeName, IRuntimeLaunchPlatform? launchPlatform = null)
+    internal RuntimeController(
+        string agentExecutablePath,
+        string? pipeName,
+        IRuntimeLaunchPlatform? launchPlatform = null,
+        Func<bool>? agentRunningProbe = null,
+        Action? startAgentOverride = null,
+        TimeSpan? agentPipeConnectTimeout = null)
     {
         _agentExecutablePath = Path.GetFullPath(agentExecutablePath);
         _pipeName = pipeName ?? AgentPipeProtocol.GetPipeName(_agentExecutablePath);
         _launchPlatform = launchPlatform ?? WindowsRuntimeLaunchPlatform.Instance;
+        _agentRunningProbe = agentRunningProbe;
+        _startAgentOverride = startAgentOverride;
+        _agentPipeConnectTimeout = agentPipeConnectTimeout ?? TimeSpan.FromSeconds(12);
     }
 
     public async Task<RuntimeStatus> ApplyAsync(RuntimeApplyRequest request, CancellationToken cancellationToken = default)
@@ -237,11 +249,23 @@ public sealed class RuntimeController
                 if (!File.Exists(_agentExecutablePath))
                     return Publish(RuntimeStatus.Error($"找不到后台程序：{_agentExecutablePath}"));
                 StartAgentIfNeeded();
-                pipe = await TryConnectAsync(TimeSpan.FromSeconds(12), commandToken).ConfigureAwait(false);
+                pipe = await TryConnectAsync(_agentPipeConnectTimeout, commandToken).ConfigureAwait(false);
+                if (pipe is null && !IsAgentRunning())
+                {
+                    StartAgentIfNeeded();
+                    pipe = await TryConnectAsync(_agentPipeConnectTimeout, commandToken).ConfigureAwait(false);
+                }
             }
 
             if (pipe is null)
             {
+                if (startAgent)
+                {
+                    var detail = IsAgentRunning()
+                        ? "后台程序仍在运行，但通信管道未就绪。"
+                        : "后台程序已退出或无法启动。";
+                    return Publish(RuntimeStatus.Error($"{detail}未发送本次皮肤请求，请重试。"));
+                }
                 var stopped = RuntimeStatus.Stopped(operation == AgentOperation.GetStatus
                     ? "当前没有运行中的皮肤连接。"
                     : "当前没有运行中的皮肤连接。调试端口由 Codex 进程管理，停止连接不会关闭它。");
@@ -315,6 +339,11 @@ public sealed class RuntimeController
                 return;
             if (IsAgentRunning())
                 return;
+            if (_startAgentOverride is not null)
+            {
+                _startAgentOverride();
+                return;
+            }
             using var startedAgent = Process.Start(new ProcessStartInfo
             {
                 FileName = _agentExecutablePath,
@@ -332,6 +361,9 @@ public sealed class RuntimeController
 
     private bool IsAgentRunning()
     {
+        if (_agentRunningProbe is not null)
+            return _agentRunningProbe();
+
         foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(_agentExecutablePath)))
         {
             try
