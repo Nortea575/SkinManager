@@ -6,21 +6,24 @@
         Title="ChatGPT 皮肤管理器"
         Width="1240" Height="840" MinWidth="960" MinHeight="640"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource WindowSurface}"
+        Background="{DynamicResource WindowSurface}"
         FontFamily="{StaticResource KlayBodyFont}"
-        Foreground="{StaticResource PrimaryText}">
+        Foreground="{DynamicResource PrimaryText}">
     <Window.Resources>
         <Style x:Key="SkinListItemStyle" TargetType="ListBoxItem">
-            <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0,0,0,6" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="ToolTip" Value="单击选择；拖动卡片可调整顺序" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <EventSetter Event="MouseEnter" Handler="SkinListItem_MouseEnter" />
             <EventSetter Event="MouseLeave" Handler="SkinListItem_MouseLeave" />
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="SkinListItem_PreviewMouseLeftButtonDown" />
+            <EventSetter Event="PreviewMouseMove" Handler="SkinListItem_PreviewMouseMove" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
@@ -32,18 +35,22 @@
                                 <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
                             </Border>
                             <Border x:Name="DropMarker" Height="3" Margin="8,0"
-                                    Background="{StaticResource Accent}" CornerRadius="1.5"
+                                    Background="{DynamicResource Accent}" CornerRadius="1.5"
                                     VerticalAlignment="Top" Visibility="Collapsed"
                                     IsHitTestVisible="False" />
                         </Grid>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource HoverSurface}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{DynamicResource ControlLine}" />
+                            </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
-                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
-                                <Setter TargetName="RowSurface" Property="Background" Value="{StaticResource SelectedSurface}" />
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
+                                <Setter TargetName="RowSurface" Property="Background" Value="{DynamicResource SelectedSurface}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="RowSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -51,9 +58,9 @@
             </Setter>
         </Style>
         <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Foreground" Value="{StaticResource DangerText}" />
-            <Setter Property="BorderBrush" Value="{StaticResource DangerBorder}" />
-            <Setter Property="Background" Value="{StaticResource DangerSurface}" />
+            <Setter Property="Foreground" Value="{DynamicResource DangerText}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource DangerBorder}" />
+            <Setter Property="Background" Value="{DynamicResource DangerSurface}" />
         </Style>
     </Window.Resources>
 
@@ -78,22 +85,33 @@
                        Margin="0,0,9,0" Stretch="Uniform" />
                 <TextBlock Text="SkinManager" FontSize="19" Style="{StaticResource SectionTitle}"
                            VerticalAlignment="Center" />
-                <TextBlock x:Name="AppVersionLabel" Text="" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                <TextBlock x:Name="AppVersionLabel" Text="" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                            VerticalAlignment="Center" Margin="8,2,0,0" />
                 <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
-                       Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
+                       Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right"
                        VerticalAlignment="Center" Margin="14,0,0,0" MaxWidth="190"
                        TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                         VerticalAlignment="Center">
+                <Button x:Name="SupportAuthorButton" Margin="0,0,6,0" Padding="9,5"
+                        Click="SupportAuthorButton_Click" ToolTip="查看作者说明和支持方式进展。"
+                        AutomationProperties.Name="支持作者">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="M12,3 C10.2,3 8.8,4.4 8.8,6.1 C8.8,7 9.2,7.8 9.9,8.4 C7,8.9 5,11.1 5,13.8 C5,16.7 7.7,18.5 12,18.5 C16.3,18.5 19,16.7 19,13.8 C19,11.1 17,8.9 14.1,8.4 C14.8,7.8 15.2,7 15.2,6.1 C15.2,4.4 13.8,3 12,3 Z M10.2,13.1 C10.2,14.1 9.4,14.9 8.4,14.9 M13.8,13.1 C13.8,14.1 14.6,14.9 15.6,14.9"
+                              Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.35"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"
+                              Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
+                        <TextBlock Text="支持作者" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
                 <Button x:Name="MarketEntryButton" Margin="0,0,6,0" Padding="9,5"
                         Click="MarketEntryButton_Click"
                         ToolTip="浏览、预览并下载市场皮肤。"
                         AutomationProperties.Name="打开皮肤市场">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M2,3 L4,3 L5,5 L17,5 L15.5,12 L7,12 L5,5 M8,15 A1.2,1.2 0 1 0 8,17.4 A1.2,1.2 0 1 0 8,15 M14,15 A1.2,1.2 0 1 0 14,17.4 A1.2,1.2 0 1 0 14,15"
-                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" Fill="Transparent"
+                              Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
                         <TextBlock Text="皮肤市场" VerticalAlignment="Center" />
                     </StackPanel>
@@ -109,7 +127,7 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Path Data="M3,7 A6,6 0 0 1 14,4 L16,6 M16,6 L16,2 M16,6 L12,6 M17,11 A6,6 0 0 1 6,14 L4,12 M4,12 L4,16 M4,12 L8,12"
-                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
+                              Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round" Fill="Transparent" Width="18" Height="18" Stretch="Uniform" />
                         <TextBlock x:Name="UpdateEntryLabel" Grid.Column="2" Text="版本与更新"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
@@ -117,24 +135,13 @@
                                    ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                     </Grid>
                 </Button>
-                <Button x:Name="ManageInstancesButton" Margin="0,0,0,0" Padding="9,5"
-                        Click="ManageInstancesButton_Click"
-                        ToolTip="查看 Codex 主实例并选择连接目标。"
-                        AutomationProperties.Name="管理实例">
-                    <StackPanel Orientation="Horizontal">
-                        <Path Data="M3,3 H10 V10 H3 Z M14,3 H21 V10 H14 Z M3,14 H10 V21 H3 Z M14,14 H21 V21 H14 Z"
-                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.35" Fill="Transparent"
-                              Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
-                        <TextBlock Text="管理实例" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
-                <Button x:Name="SettingsEntryButton" Margin="6,0,0,0" Padding="9,5"
+                <Button x:Name="SettingsEntryButton" Margin="0,0,0,0" Padding="9,5"
                         Click="SettingsEntryButton_Click"
                         ToolTip="管理应用设置与兼容性选项。"
                         AutomationProperties.Name="设置">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M12,2 L20,5 V11 C20,16 16.5,19 12,21 C7.5,19 4,16 4,11 V5 Z M9,12 L11,14 L15,10"
-                              Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
+                              Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
                         <TextBlock Text="设置" VerticalAlignment="Center" />
@@ -145,9 +152,9 @@
         </Border>
 
         <Border x:Name="LibraryWarning" Grid.Row="2" Margin="0,0,0,0" Padding="10,7"
-                Background="{StaticResource WarningSurface}" BorderBrush="{StaticResource WarningText}" BorderThickness="1"
+                Background="{DynamicResource WarningSurface}" BorderBrush="{DynamicResource WarningText}" BorderThickness="1"
                 CornerRadius="8" Visibility="Collapsed">
-            <TextBlock x:Name="LibraryWarningText" FontSize="12" Foreground="{StaticResource WarningText}"
+            <TextBlock x:Name="LibraryWarningText" FontSize="12" Foreground="{DynamicResource WarningText}"
                        TextWrapping="Wrap" />
         </Border>
 
@@ -158,8 +165,8 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border x:Name="LibraryBorder" Grid.Column="0" Background="{StaticResource SidebarSurface}"
-                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14">
+            <Border x:Name="LibraryBorder" Grid.Column="0" Background="{DynamicResource SidebarSurface}"
+                    BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="14">
                 <Grid>
                     <Grid x:Name="LibraryPanel" Margin="12">
                     <Grid.RowDefinitions>
@@ -173,11 +180,11 @@
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Height="28">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Ellipse Width="7" Height="7" Fill="{StaticResource Accent}" Margin="1,0,8,0" />
+                            <Ellipse Width="7" Height="7" Fill="{DynamicResource Accent}" Margin="1,0,8,0" />
                             <TextBlock Text="皮肤库" FontSize="16" Style="{StaticResource SectionTitle}" />
                         </StackPanel>
                         <TextBlock x:Name="SkinCountText" Text="本地皮肤" FontSize="11"
-                                   Foreground="{StaticResource SecondaryText}" HorizontalAlignment="Right"
+                                   Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right"
                                    VerticalAlignment="Center" />
                     </Grid>
                     <Grid Grid.Row="2" Height="36">
@@ -185,15 +192,15 @@
                                  TextChanged="SearchBox_TextChanged"
                                  AutomationProperties.Name="搜索皮肤" />
                         <TextBlock x:Name="SearchHint" Text="搜索名称或 ID" FontSize="12"
-                                   Foreground="{StaticResource SecondaryText}" Margin="13,0,0,0"
+                                   Foreground="{DynamicResource SecondaryText}" Margin="13,0,0,0"
                                    VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Grid>
-                    <TextBlock x:Name="SortStatusText" Grid.Row="3" Text="拖动左侧手柄调整顺序" FontSize="11"
-                               Foreground="{StaticResource SecondaryText}" Margin="2,3,0,5"
+                    <TextBlock x:Name="SortStatusText" Grid.Row="3" Text="拖动皮肤卡片调整顺序（单击选择）" FontSize="11"
+                               Foreground="{DynamicResource SecondaryText}" Margin="2,3,0,5"
                                TextTrimming="CharacterEllipsis" />
                     <Grid Grid.Row="4">
                         <ListBox x:Name="SkinList" BorderThickness="0" Background="Transparent"
-                                 Foreground="{StaticResource PrimaryText}"
+                                 Foreground="{DynamicResource PrimaryText}"
                                  Padding="0" ItemContainerStyle="{StaticResource SkinListItemStyle}"
                                  SelectionChanged="SkinList_SelectionChanged"
                                  AllowDrop="True" DragOver="SkinList_DragOver" Drop="SkinList_Drop"
@@ -210,46 +217,31 @@
                                 <DataTemplate>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="20" />
-                                            <ColumnDefinition Width="6" />
                                             <ColumnDefinition Width="60" />
                                             <ColumnDefinition Width="8" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Button x:Name="SortHandle" Grid.Column="0" Width="20" Height="34"
-                                                Padding="0" Margin="0" VerticalAlignment="Center"
-                                                Cursor="SizeAll" Focusable="False"
-                                                IsEnabled="{Binding RelativeSource={RelativeSource AncestorType={x:Type ListBox}}, Path=Tag}"
-                                                PreviewMouseLeftButtonDown="SortHandle_PreviewMouseLeftButtonDown"
-                                                PreviewMouseMove="SortHandle_PreviewMouseMove"
-                                                ToolTip="拖动以调整皮肤顺序"
-                                                AutomationProperties.Name="拖动以调整皮肤顺序">
-                                            <Path Data="M5,6 L5,6.01 M5,12 L5,12.01 M5,18 L5,18.01 M12,6 L12,6.01 M12,12 L12,12.01 M12,18 L12,18.01"
-                                                  Stroke="{StaticResource SecondaryText}" StrokeThickness="2.2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                                  Fill="Transparent" Width="14" Height="24" Stretch="Uniform" />
-                                        </Button>
-                                        <Border Grid.Column="2" Width="60" Height="46" CornerRadius="7"
-                                                Background="{StaticResource NoImageSurface}" ClipToBounds="True">
+                                        <Border Grid.Column="0" Width="60" Height="46" CornerRadius="7"
+                                                Background="{DynamicResource NoImageSurface}" ClipToBounds="True">
                                             <Grid>
                                                 <Image x:Name="ThumbnailImage" Source="{Binding Thumbnail}"
                                                        Stretch="UniformToFill" />
                                                 <TextBlock x:Name="ThumbnailPlaceholder" Text="无背景图" Visibility="Collapsed"
-                                                           FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                                           FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             </Grid>
                                         </Border>
-                                        <StackPanel Grid.Column="4" VerticalAlignment="Center" MinWidth="0">
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" MinWidth="0">
                                             <TextBlock Text="{Binding Entry.Name}" FontSize="13"
-                                                       Foreground="{StaticResource PrimaryText}"
+                                                       Foreground="{DynamicResource PrimaryText}"
                                                        FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                                        ToolTip="{Binding Entry.Name}" />
                                             <TextBlock Text="{Binding Entry.Id}" FontSize="11"
-                                                       Foreground="{StaticResource SecondaryText}"
+                                                       Foreground="{DynamicResource SecondaryText}"
                                                        Margin="0,3,0,0" TextTrimming="CharacterEllipsis"
                                                        ToolTip="{Binding Entry.Id}" />
                                             <TextBlock x:Name="RowAppearanceLabel" Text="{Binding AppearanceLabel}" FontSize="11"
-                                                       Foreground="{StaticResource SecondaryText}"
+                                                       Foreground="{DynamicResource SecondaryText}"
                                                        Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </Grid>
@@ -266,9 +258,9 @@
                                     VerticalAlignment="Center" HorizontalAlignment="Center"
                                     Margin="8" MaxWidth="230">
                             <TextBlock x:Name="ListEmptyTitle" Text="暂无本地皮肤" FontSize="12"
-                                       Foreground="{StaticResource SecondaryText}" TextAlignment="Center" />
+                                       Foreground="{DynamicResource SecondaryText}" TextAlignment="Center" />
                             <TextBlock x:Name="ListEmptyText" Text="从市场浏览并下载皮肤，或导入 ZIP 包和皮肤文件夹。"
-                                       FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                       FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,12" />
                             <Button x:Name="ListEmptyMarketButton" Content="浏览皮肤市场"
                                     Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center"
@@ -293,8 +285,8 @@
                 </Grid>
             </Border>
 
-            <Border x:Name="EditorPanel" Grid.Column="0" Background="{StaticResource SidebarSurface}"
-                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
+            <Border x:Name="EditorPanel" Grid.Column="0" Background="{DynamicResource SidebarSurface}"
+                    BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="14"
                     Visibility="Collapsed">
                 <desktop:SkinEditorView x:Name="SkinEditor" Visibility="Collapsed" />
             </Border>
@@ -310,7 +302,7 @@
                             <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="25"
                                    Style="{StaticResource PageTitle}" TextAlignment="Center" />
                         <TextBlock x:Name="DetailsEmptyMessage" Text="浏览市场皮肤或导入本地皮肤包，查看背景图、配色和聊天布局预览。"
-                                   FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                   FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,14" />
                         <Button Content="打开皮肤市场" Style="{StaticResource PrimaryButton}"
                                 HorizontalAlignment="Center" Margin="0,0,0,6" Click="MarketEntryButton_Click" />
@@ -335,7 +327,7 @@
                         <StackPanel VerticalAlignment="Center" MinWidth="0">
                     <TextBlock x:Name="SelectedName" FontSize="30" Style="{StaticResource PageTitle}"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBlock x:Name="SelectedId" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                            <TextBlock x:Name="SelectedId" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                        Margin="0,2,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -347,13 +339,14 @@
                                     Click="MoreActionsButton_Click"
                                     ToolTip="导出或删除当前皮肤">
                                 <Button.ContextMenu>
-                                    <ContextMenu>
+                                    <ContextMenu Opened="MoreActionsContextMenu_Opened">
                         <MenuItem x:Name="CreateCopyMenuItem" Header="以此为基础创建" Click="CreateCopyButton_Click" />
                         <Separator />
                                         <MenuItem x:Name="ExportMenuItem" Header="导出皮肤…" Click="ExportButton_Click" />
                                         <Separator />
-                                        <MenuItem x:Name="DeleteMenuItem" Header="删除皮肤…" Click="DeleteButton_Click"
-                                                  Foreground="{StaticResource DangerText}" />
+                                        <MenuItem x:Name="DeleteMenuItem" Header="删除皮肤…" Tag="Danger"
+                                                  Click="DeleteButton_Click"
+                                                  Foreground="{DynamicResource DangerText}" />
                                     </ContextMenu>
                                 </Button.ContextMenu>
                             </Button>
@@ -366,7 +359,7 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="预览选项" FontSize="13" FontWeight="SemiBold" />
                                 <TextBlock Text="外观、场景、侧栏和原版对照只影响预览；透明度也会用于下一次应用。"
-                                           FontSize="12" Foreground="{StaticResource SecondaryText}" Margin="10,0,0,0"
+                                           FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="10,0,0,0"
                                            TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Expander.Header>
@@ -379,17 +372,17 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="场景、外观、侧栏与原版对照只用于预览；透明度会同步用于下一次皮肤应用。"
-                                       FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                       FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        Margin="0,0,0,6" TextWrapping="Wrap" />
                             <WrapPanel Grid.Row="1" VerticalAlignment="Center">
-                                <TextBlock Text="场景" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="场景" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
                                 <ComboBox x:Name="PreviewSceneBox" Width="96" SelectedIndex="0"
                                           SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="预览页面">
                                     <ComboBoxItem Content="首页" Tag="home" />
                                     <ComboBoxItem Content="对话" Tag="conversation" />
                                 </ComboBox>
-                                <TextBlock Text="外观" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="外观" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="12,0,6,0" />
                                 <ComboBox x:Name="PreviewAppearanceBox" Width="112" Margin="0,0,10,0"
                                           SelectedIndex="0" SelectionChanged="PreviewOptions_SelectionChanged"
@@ -408,7 +401,7 @@
                                           Unchecked="PreviewOptions_ToggleChanged" AutomationProperties.Name="原版对照" />
                             </WrapPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="应用透明度" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="应用透明度" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,7,0" />
                                 <CheckBox x:Name="PreviewTransparencyFollowCheckBox" Content="跟随主题" IsChecked="True"
                                           VerticalAlignment="Center" Margin="0,0,7,0"
@@ -421,11 +414,11 @@
                                          TextChanged="PreviewTransparencyInput_TextChanged"
                                          ToolTip="输入 0 到 100 的整数；不改变壁纸或遮罩。0% 不透明，100% 全透明。"
                                          AutomationProperties.Name="面板透明度百分比" />
-                                <TextBlock Text="%" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="%" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="4,0,8,0" />
                                 <TextBlock x:Name="PreviewTransparencyValue" Text="主题值" FontSize="12"
-                                           Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-                                <TextBlock x:Name="PreviewTransparencyError" FontSize="12" Foreground="{StaticResource ErrorText}"
+                                           Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="PreviewTransparencyError" FontSize="12" Foreground="{DynamicResource ErrorText}"
                                            Margin="9,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
                                            AutomationProperties.Name="面板透明度输入错误" />
                             </WrapPanel>
@@ -442,11 +435,11 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="PreviewHeading" Text="预览" FontSize="16" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
                         <TextBlock x:Name="PreviewStatus" Grid.Column="1" FontSize="11"
-                                   Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource SecondaryText}" TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center" Margin="10,0,8,0" Visibility="Visible"
                                    AutomationProperties.Name="预览状态" />
                         <TextBlock x:Name="PreviewBaseVersion" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                   FontSize="10" Foreground="{StaticResource SecondaryText}"
+                                   FontSize="10" Foreground="{DynamicResource SecondaryText}"
                                    TextTrimming="CharacterEllipsis" MaxWidth="185" Margin="6,0,8,0"
                                    ToolTip="依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。" />
                         <Button x:Name="PreviewPowerButton" Grid.Column="3" Content="关闭预览"
@@ -459,23 +452,23 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="本地预览已关闭" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                        <TextBlock Text="本地预览已关闭" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                    VerticalAlignment="Center" />
                         <Button x:Name="PreviewReopenButton" Grid.Column="1" Content="重新打开预览" Padding="9,4"
                                 Click="PreviewPowerButton_Click" AutomationProperties.Name="重新打开预览" />
                     </Grid>
 
                     <Border x:Name="PreviewContainer" Grid.Row="3"
-                            BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
-                            Background="{StaticResource PanelSurface}" ClipToBounds="True">
+                            BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="14"
+                            Background="{DynamicResource PanelSurface}" ClipToBounds="True">
                         <Grid x:Name="PreviewViewport" MinHeight="150" ClipToBounds="True"
-                              Background="{StaticResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
+                              Background="{DynamicResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
                               AutomationProperties.Name="皮肤实时预览视口">
                             <Grid x:Name="PreviewBrowserHost">
                                 <wv2:WebView2 x:Name="PreviewBrowser" HorizontalAlignment="Stretch"
                                               VerticalAlignment="Stretch" Visibility="Collapsed" />
                             </Grid>
-                            <Grid x:Name="OriginalImageLayer" Visibility="Collapsed" Background="{StaticResource PanelSurface}">
+                            <Grid x:Name="OriginalImageLayer" Visibility="Collapsed" Background="{DynamicResource PanelSurface}">
                                 <Image x:Name="OriginalImageSource" Stretch="Uniform" Margin="12" />
                             </Grid>
                         </Grid>
@@ -493,10 +486,10 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="皮肤信息" FontSize="12" FontWeight="SemiBold" />
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <TextBlock x:Name="SelectedAppearance" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock x:Name="SelectedAppearance" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                            TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="SelectedImageDimensions" FontSize="11"
-                                           Foreground="{StaticResource SecondaryText}" Margin="10,0,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" Margin="10,0,0,0"
                                            TextTrimming="CharacterEllipsis" ToolTip="背景图片像素尺寸；未提供背景图时显示“无背景图”" />
                             </StackPanel>
                         </Grid>
@@ -518,15 +511,15 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Border Width="112" Height="34" Margin="0,0,6,5" Padding="5,3"
-                                                    CornerRadius="8" BorderBrush="{StaticResource Line}" BorderThickness="1"
-                                                    Background="{StaticResource PanelSurface}" ToolTip="{Binding RawName}">
+                                                    CornerRadius="8" BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                                                    Background="{DynamicResource PanelSurface}" ToolTip="{Binding RawName}">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                     <Border Width="18" Height="18" CornerRadius="4" Background="{Binding Brush}"
-                                                            BorderBrush="{StaticResource ControlLine}" BorderThickness="1" VerticalAlignment="Center" />
+                                                            BorderBrush="{DynamicResource ControlLine}" BorderThickness="1" VerticalAlignment="Center" />
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0">
                                                         <TextBlock Text="{Binding DisplayName}" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock Text="{Binding Value}" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                                                        <TextBlock Text="{Binding Value}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
@@ -539,7 +532,7 @@
                 </Grid>
 
                 <Border x:Name="RuntimeControlsBorder" Grid.Row="1" Margin="0,8,0,0" Padding="12,9"
-                        Background="{StaticResource SoftSurface}" BorderThickness="0" CornerRadius="12">
+                        Background="{DynamicResource SoftSurface}" BorderThickness="0" CornerRadius="12">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -562,14 +555,14 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="目标窗口" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                    <TextBlock Text="目标窗口" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                                VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <TextBlock x:Name="RuntimeTargetText" Grid.Column="1" Text="自动查找调试版"
                                                FontSize="13" MinWidth="0" TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Center"
-                                               ToolTip="自动查找当前可用的 Codex 调试版；也可在实例管理中选择。" />
+                                               ToolTip="自动查找当前可用的 Codex 调试版；也可在“选择窗口”中选择。" />
                                     <TextBlock x:Name="RuntimeConnectedTargetLabel" Grid.Column="2" Text="当前连接"
-                                               FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                               FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                                VerticalAlignment="Center" Margin="12,0,6,0" />
                                     <TextBlock x:Name="RuntimeConnectedTargetText" Grid.Column="3" Text="未连接"
                                                FontSize="13" MaxWidth="90" FontWeight="SemiBold"
@@ -580,7 +573,7 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                                 <Button x:Name="SelectRuntimeTargetButton" Content="选择窗口" Padding="10,6"
-                                        Margin="0,0,6,0" Click="ManageInstancesButton_Click"
+                                        Margin="0,0,6,0" Click="SelectRuntimeTargetButton_Click"
                                         ToolTip="查看正在运行的 Codex 实例并选择连接目标。" />
                                 <Button x:Name="ApplyRuntimeButton" Style="{StaticResource PrimaryButton}"
                                         MinWidth="132" Padding="12,7" Click="ApplyRuntimeButton_Click"
@@ -603,21 +596,21 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
-                                     Grid.Column="0" Fill="{StaticResource SecondaryText}"
+                                     Grid.Column="0" Fill="{DynamicResource SecondaryText}"
                                      VerticalAlignment="Center" />
                             <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="未连接" FontSize="13"
                                        FontWeight="SemiBold" Margin="7,0,10,0" VerticalAlignment="Center"
                                        AutomationProperties.Name="桌面应用连接与应用状态" />
                             <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
                                        Text="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。"
-                                       FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                       FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                        TextWrapping="Wrap" VerticalAlignment="Center"
                                        ToolTip="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。" />
                         </Grid>
                         <Expander x:Name="AdvancedSettingsExpander" Grid.Row="2" Header="高级设置"
                                   IsExpanded="False" Margin="0,6,0,0">
                             <WrapPanel Margin="0,7,0,2" VerticalAlignment="Center">
-                                <TextBlock Text="端口" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                <TextBlock Text="端口" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
                                 <TextBox x:Name="RuntimePortInput" Text="9335" Width="72" Height="34"
                                          Padding="6,0" TextAlignment="Right" MaxLength="5"

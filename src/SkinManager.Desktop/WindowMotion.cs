@@ -12,6 +12,7 @@ internal static class WindowMotion
 {
     private static readonly ConditionalWeakTable<Window, WindowMotionState> States = new();
     private static readonly ConditionalWeakTable<UIElement, OpacityMotionState> OpacityStates = new();
+    private static readonly ConditionalWeakTable<TranslateTransform, TranslateMotionState> TranslateStates = new();
     private static Color CaptionColor => GetResourceColor("WindowSurface", Color.FromRgb(0x0F, 0x10, 0x11));
     private static Color CaptionTextColor => GetResourceColor("PrimaryText", Colors.White);
 
@@ -102,6 +103,7 @@ internal static class WindowMotion
         ArgumentNullException.ThrowIfNull(root);
         SmoothScrollBehavior.Attach(root);
         ExpanderMotionBehavior.Attach(root);
+        MenuMotionBehavior.Attach(root);
         if (Window.GetWindow(root) is { } window && States.TryGetValue(window, out var state))
         {
             state.AttachButtons(root);
@@ -141,6 +143,43 @@ internal static class WindowMotion
         element.BeginAnimation(UIElement.OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
     }
 
+    internal static void AnimateVerticalOffset(
+        TranslateTransform transform,
+        double targetOffset,
+        int durationMilliseconds,
+        Action? completed = null)
+    {
+        var state = TranslateStates.GetValue(transform, static _ => new TranslateMotionState());
+        var sequence = ++state.Sequence;
+        var fromOffset = transform.Y;
+        transform.BeginAnimation(TranslateTransform.YProperty, null);
+        if (!AnimationsEnabled)
+        {
+            transform.Y = targetOffset;
+            completed?.Invoke();
+            return;
+        }
+
+        transform.Y = fromOffset;
+        var animation = new DoubleAnimation(fromOffset, targetOffset, TimeSpan.FromMilliseconds(durationMilliseconds))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        };
+        animation.Completed += (_, _) =>
+        {
+            if (sequence != state.Sequence)
+            {
+                return;
+            }
+
+            transform.BeginAnimation(TranslateTransform.YProperty, null);
+            transform.Y = targetOffset;
+            completed?.Invoke();
+        };
+        transform.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
     private static void ApplyDarkCaption(Window window)
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
@@ -154,7 +193,7 @@ internal static class WindowMotion
             return;
         }
 
-        uint darkMode = 1;
+        uint darkMode = AppThemeService.Mode == AppThemeMode.Night ? 1u : 0u;
         uint caption = ToColorRef(CaptionColor);
         uint captionText = ToColorRef(CaptionTextColor);
         _ = DwmSetWindowAttribute(handle, 20, ref darkMode, sizeof(uint));
@@ -186,6 +225,7 @@ internal static class WindowMotion
             window.Loaded += OnLoaded;
             window.Closing += OnClosing;
             window.Closed += OnClosed;
+            AppThemeService.ThemeChanged += OnThemeChanged;
         }
 
         private void OnSourceInitialized(object? sender, EventArgs e)
@@ -197,6 +237,8 @@ internal static class WindowMotion
                 _fadeOnLoad = true;
             }
         }
+
+        private void OnThemeChanged(object? sender, EventArgs e) => ApplyDarkCaption(window);
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
@@ -293,6 +335,7 @@ internal static class WindowMotion
             window.Loaded -= OnLoaded;
             window.Closing -= OnClosing;
             window.Closed -= OnClosed;
+            AppThemeService.ThemeChanged -= OnThemeChanged;
         }
 
         private void AttachButton(Button button)
@@ -388,6 +431,11 @@ internal static class WindowMotion
     }
 
     private sealed class OpacityMotionState
+    {
+        internal long Sequence { get; set; }
+    }
+
+    private sealed class TranslateMotionState
     {
         internal long Sequence { get; set; }
     }

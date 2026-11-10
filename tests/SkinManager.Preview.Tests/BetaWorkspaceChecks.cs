@@ -91,6 +91,19 @@ internal static class BetaWorkspaceChecks
             var list = Find<ListBox>(window, "SkinList");
             Require(ReadVisibleSkinIds(list).SequenceEqual([ayanami.Id, saya.Id], StringComparer.OrdinalIgnoreCase),
                 "未自定义排序时按当前皮肤库目录顺序显示");
+            var itemStyle = list.ItemContainerStyle
+                ?? throw new InvalidOperationException("皮肤卡片没有直接列表样式。");
+            var dragDown = itemStyle.Setters.OfType<EventSetter>()
+                .Any(setter => setter.Event == UIElement.PreviewMouseLeftButtonDownEvent);
+            var dragMove = itemStyle.Setters.OfType<EventSetter>()
+                .Any(setter => setter.Event == UIElement.PreviewMouseMoveEvent);
+            Require(dragDown && dragMove && !FindVisualChildren<Button>(GetContainer(list, 0)).Any(),
+                "拖动手势直接绑定整张卡片，没有独立手柄按钮");
+            var dragDistance = SystemParameters.MinimumHorizontalDragDistance;
+            var dragStart = new Point(20, 20);
+            Require(!MainWindow.HasPassedSkinDragThreshold(dragStart, new Point(20 + dragDistance - 1, 20)) &&
+                    MainWindow.HasPassedSkinDragThreshold(dragStart, new Point(20 + dragDistance + 1, 20)),
+                "单击移动距离不触发拖动，超过系统阈值后可拖动");
 
             var search = Find<TextBox>(window, "SearchBox");
             search.Text = "ayanami";
@@ -135,8 +148,8 @@ internal static class BetaWorkspaceChecks
                 "导入后仍选中刚导入的 Ayanami");
 
             var version = Find<TextBlock>(window, "AppVersionLabel");
-            Require(version.Text.Contains("1.1.3-beta.1", StringComparison.OrdinalIgnoreCase),
-                "主窗口显示公开 Beta 版本标签");
+            Require(version.Text == "1.1.3",
+                "主窗口显示正式公开版本标签");
             var updateLabel = Find<TextBlock>(window, "UpdateEntryLabel");
             Require(updateLabel.Text == "版本与更新" &&
                     updateLabel.ToolTip?.ToString()?.Contains(version.Text, StringComparison.OrdinalIgnoreCase) == true,
@@ -150,7 +163,7 @@ internal static class BetaWorkspaceChecks
             await Program.SaveManagerWindowScreenshotAsync(
                 window,
                 browser,
-                Path.Combine(screenshotDirectory, "beta113-main-ayanami-1240x840.png"));
+                Path.Combine(screenshotDirectory, "beta2-main-ayanami-1240x840.png"));
 
             window.Width = 960;
             window.Height = 640;
@@ -161,17 +174,19 @@ internal static class BetaWorkspaceChecks
                 return window.ActualWidth >= 959 && window.ActualHeight >= 639 &&
                        Find<Grid>(window, "PreviewViewport").ActualHeight > 0;
             }, "主窗口最小 960×640 尺寸完成布局");
-            var entryNames = new[] { "MarketEntryButton", "UpdateEntryButton", "ManageInstancesButton", "SettingsEntryButton" };
+            var entryNames = new[] { "SupportAuthorButton", "MarketEntryButton", "UpdateEntryButton", "SettingsEntryButton" };
             var entryBounds = entryNames.Select(name => GetBounds(window, Find<Button>(window, name))).ToArray();
             Require(entryNames.All(name => Find<Button>(window, name).IsVisible) &&
                     Find<TextBlock>(window, "AppVersionLabel").IsVisible &&
                     entryBounds.All(bounds => IsWithinBounds(bounds, new Rect(0, 0, window.ActualWidth, window.ActualHeight))) &&
                     !entryBounds.Where((bounds, index) => entryBounds.Skip(index + 1).Any(bounds.IntersectsWith)).Any(),
-                "最小窗口的版本标签与市场、更新、实例、设置入口均完整且不重叠");
+                "最小窗口的版本标签与支持作者、市场、更新、设置入口均完整且不重叠");
+            Require(Find<Button>(window, "SelectRuntimeTargetButton").IsVisible,
+                "连接区保留‘选择窗口’入口");
             await Program.SaveManagerWindowScreenshotAsync(
                 window,
                 browser,
-                Path.Combine(screenshotDirectory, "beta113-main-ayanami-960x640.png"));
+                Path.Combine(screenshotDirectory, "beta2-main-ayanami-960x640.png"));
 
             window.Width = 1240;
             window.Height = 840;
@@ -210,7 +225,7 @@ internal static class BetaWorkspaceChecks
             "关闭预览时完整折叠容器与布局行并释放 WebView2");
         await Program.SaveWindowScreenshotAsync(
             window,
-            Path.Combine(Program.FindTestOutputDirectory(), "beta113-main-preview-closed-1240x840.png"));
+            Path.Combine(Program.FindTestOutputDirectory(), "beta2-main-preview-closed-1240x840.png"));
 
         Find<Button>(window, "PreviewReopenButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitUntilAsync(async () =>
@@ -301,7 +316,7 @@ internal static class BetaWorkspaceChecks
                 "设置窗口常规尺寸完成布局");
             await Program.SaveWindowScreenshotAsync(
                 settings,
-                Path.Combine(screenshotDirectory, "beta113-settings-compatibility-760x570.png"));
+                Path.Combine(screenshotDirectory, "beta2-settings-compatibility-760x570.png"));
 
             settings.Width = 620;
             settings.Height = 440;
@@ -310,7 +325,7 @@ internal static class BetaWorkspaceChecks
                 "设置窗口最小尺寸完成布局");
             await Program.SaveWindowScreenshotAsync(
                 settings,
-                Path.Combine(screenshotDirectory, "beta113-settings-compatibility-620x440.png"));
+                Path.Combine(screenshotDirectory, "beta2-settings-compatibility-620x440.png"));
             settings.Close();
         }
         finally
@@ -390,7 +405,9 @@ internal static class BetaWorkspaceChecks
         BasePackage native,
         string profile,
         bool readRuntimeStatusOnLoad) =>
-        new(store, native, profile, readRuntimeStatusOnLoad: readRuntimeStatusOnLoad)
+        new(store, native, profile, readRuntimeStatusOnLoad: readRuntimeStatusOnLoad,
+            codexConfigReadabilityService: new FixtureCodexConfigReadabilityService(
+                Path.Combine(profile, "codex-fixture", "config.toml")))
         {
             Width = 1240,
             Height = 840,
@@ -399,6 +416,11 @@ internal static class BetaWorkspaceChecks
             ShowActivated = false,
             ShowInTaskbar = false
         };
+
+    private sealed class FixtureCodexConfigReadabilityService(string path) : ICodexConfigReadabilityService
+    {
+        public CodexConfigReadabilityResult Inspect() => new(path, CodexConfigReadabilityState.Missing);
+    }
 
     private static string[] ReadVisibleSkinIds(ListBox list) =>
         list.Items.Cast<object>().Select(ReadSkinId).ToArray();

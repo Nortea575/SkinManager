@@ -4,12 +4,13 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using SkinManager.Core;
 using SkinManager.Market;
 
 namespace SkinManager.Market.Tests;
 
-internal static class Program
+internal static partial class Program
 {
     private const string PackageResource = "SkinManager.Market.Tests.Resources.Ayanami.zip";
 
@@ -20,13 +21,18 @@ internal static class Program
             var zipBytes = ReadEmbeddedPackage();
             var package = SkinPackageReader.ReadZipBytes(zipBytes);
             await CatalogContractAsync(package, zipBytes);
-            await RejectCrossOriginPreviewAsync(package, zipBytes);
-            await RejectOversizedPreviewAsync(package, zipBytes);
+            await ExtendedCatalogContractAsync(package, zipBytes);
+            await LegacyCatalogCompatibilityAsync(package, zipBytes);
+            await RejectMalformedOptionalCountsAsync(package, zipBytes);
+            await ValidateDetailUriAsync();
+            await PreferThumbnailUrlAsync(package, zipBytes);
+            await RejectCrossOriginThumbnailAsync(package, zipBytes);
+            await RejectOversizedThumbnailAsync(package, zipBytes);
             await RetryConnectionFailureAsync(package, zipBytes);
-            await RetryInterruptedPreviewReadAsync(package, zipBytes);
-            await RetryTruncatedPreviewReadAsync(package, zipBytes);
-            await LimitPersistentPreviewRetriesAsync(package, zipBytes);
-            await CancelPreviewReadWithoutRetryAsync(package, zipBytes);
+            await RetryInterruptedThumbnailReadAsync(package, zipBytes);
+            await RetryTruncatedThumbnailReadAsync(package, zipBytes);
+            await LimitPersistentThumbnailRetriesAsync(package, zipBytes);
+            await CancelThumbnailReadWithoutRetryAsync(package, zipBytes);
             await ValidDownloadAsync(package, zipBytes);
             await RejectWrongHashAsync(package, zipBytes);
             await RejectWrongSizeAsync(package, zipBytes);
@@ -37,6 +43,13 @@ internal static class Program
             await CancelStreamingDownloadAsync(package, zipBytes);
             await RejectRedirectAsync(package, zipBytes);
             await RejectCrossOriginUrlAsync(package, zipBytes);
+            await CommunitySessionAndActionsAsync(package, zipBytes);
+            await AnonymousCommunityReadAndUnauthenticatedWritesAsync();
+            await RejectInvalidNonceWithoutRetryAsync();
+            await DirectoryNonceExpiryClearsAccountAsync();
+            await RejectCrossOriginAccountConfigAsync();
+            await CancelAccountRefreshAsync();
+            await IgnoreLateAccountRefreshAsync();
             Console.WriteLine("市场客户端离线验收通过。");
             return 0;
         }
@@ -60,11 +73,108 @@ internal static class Program
         var page = await client.GetPageAsync(2, 50, "Ayanami + light", "dark");
         Check(page.Items.Count == 1 && page.Items[0].Id == package.Id, "读取市场目录条目");
         Check(page.Pagination is { Page: 2, PerPage: 50, Total: 68, TotalPages: 2 }, "读取分页数据");
+        Check(page.AvailableTags is { Count: 0 }, "旧目录缺少标签列表时按空列表兼容");
         var query = received?.RequestUri?.Query ?? string.Empty;
         Check(query.Contains("rest_route=%2Fskin-manager%2Fv1%2Fskins", StringComparison.OrdinalIgnoreCase) &&
               query.Contains("page=2", StringComparison.Ordinal) && query.Contains("per_page=50", StringComparison.Ordinal) &&
-              query.Contains("appearance=dark", StringComparison.Ordinal) && query.Contains("q=Ayanami%20%2B%20light", StringComparison.OrdinalIgnoreCase),
-            "按查询、外观与分页参数调用同源 REST 接口");
+              query.Contains("appearance=dark", StringComparison.Ordinal) && query.Contains("sort=latest", StringComparison.Ordinal) &&
+              query.Contains("q=Ayanami%20%2B%20light", StringComparison.OrdinalIgnoreCase),
+            "按查询、外观、默认排序与分页参数调用同源 REST 接口");
+    }
+
+    private static async Task ExtendedCatalogContractAsync(SkinPackage package, byte[] zipBytes)
+    {
+        var item = CreateItem(package, zipBytes);
+        var json = CreateCatalogJson(item, page: 1, perPage: 12, total: 1, totalPages: 1);
+        var root = JsonNode.Parse(json)!.AsObject();
+        var entry = root["items"]!.AsArray()[0]!.AsObject();
+        entry["thumbnailUrl"] = "https://blog.ancimen.top/wp-content/uploads/ayanami-thumb.jpg";
+        entry["preview"] = new JsonObject { ["html"] = "fake runtime payload that the manager ignores" };
+        entry["fullDescription"] = "完整的皮肤说明。\n支持第二段内容。";
+        entry["submitter"] = "AyanamiSubmitter";
+        entry["detailUrl"] = "https://blog.ancimen.top/skins/ayanami";
+        entry["tags"] = new JsonArray(new JsonObject { ["id"] = 12, ["name"] = "轻量" });
+        entry["likeCount"] = 37;
+        entry["commentCount"] = 4;
+        entry["likedByMe"] = true;
+        root["availableTags"] = new JsonArray(
+            new JsonObject { ["id"] = 12, ["name"] = "轻量" },
+            new JsonObject { ["id"] = 18, ["name"] = "浅色" });
+
+        HttpRequestMessage? received = null;
+        using var client = new SkinMarketClient(new StubHandler(request =>
+        {
+            received = request;
+            return JsonResponse(root.ToJsonString());
+        }));
+        var page = await client.GetPageAsync(1, 12, "ayanami", "light", CancellationToken.None, "likes", "12");
+        var parsed = page.Items.Single();
+        Check(parsed.EffectiveDescription == "完整的皮肤说明。\n支持第二段内容。" && parsed.Submitter == "AyanamiSubmitter",
+            "读取完整说明与投稿人可选字段");
+        Check(parsed.Tags is { Count: 1 } && parsed.Tags[0] == new SkinMarketTag("12", "轻量") &&
+              page.AvailableTags is { Count: 2 } && page.AvailableTags[0].Id == "12",
+            "读取皮肤标签和可用标签列表");
+        Check(parsed.LikeCount == 37 && parsed.CommentCount == 4 && parsed.LikedByMe,
+            "读取点赞与评论展示计数");
+        Check(parsed.EffectiveThumbnailUrl == "https://blog.ancimen.top/wp-content/uploads/ayanami-thumb.jpg" &&
+              parsed.DetailUrl == "https://blog.ancimen.top/skins/ayanami",
+            "读取封面缩略图与网站详情链接");
+        var query = received?.RequestUri?.Query ?? string.Empty;
+        Check(query.Contains("sort=likes", StringComparison.Ordinal) && query.Contains("tag=12", StringComparison.Ordinal),
+            "将最多点赞排序和标签 ID 发送到目录接口");
+    }
+
+    private static async Task LegacyCatalogCompatibilityAsync(SkinPackage package, byte[] zipBytes)
+    {
+        var item = CreateItem(package, zipBytes);
+        using var client = new SkinMarketClient(new StubHandler(_ =>
+            JsonResponse(CreateCatalogJson(item, page: 1, perPage: 12, total: 1, totalPages: 1))));
+        var parsed = (await client.GetPageAsync()).Items.Single();
+        Check(parsed.FullDescription == string.Empty && parsed.Submitter == string.Empty && parsed.Tags is { Count: 0 } &&
+              parsed.DetailUrl is null && parsed.LikeCount == 0 && parsed.CommentCount == 0 && !parsed.LikedByMe,
+            "旧 schema v1 缺少新增字段时使用空值默认值");
+    }
+
+    private static async Task RejectMalformedOptionalCountsAsync(SkinPackage package, byte[] zipBytes)
+    {
+        var root = JsonNode.Parse(CreateCatalogJson(CreateItem(package, zipBytes), 1, 12, 1, 1))!.AsObject();
+        root["items"]!.AsArray()[0]!["likeCount"] = -1;
+        using var client = new SkinMarketClient(new StubHandler(_ => JsonResponse(root.ToJsonString())));
+        await ThrowsAsync<InvalidDataException>(() => client.GetPageAsync(), "拒绝负点赞计数");
+    }
+
+    private static Task ValidateDetailUriAsync()
+    {
+        var relative = SkinMarketClient.GetDetailUri("/skins/ayanami");
+        Check(relative.AbsoluteUri == "https://blog.ancimen.top/skins/ayanami", "相对详情地址解析为本站 HTTPS 页面");
+        try
+        {
+            _ = SkinMarketClient.GetDetailUri("https://evil.example/skins/ayanami");
+        }
+        catch (InvalidDataException)
+        {
+            Check(true, "拒绝跨源网站详情链接");
+            return Task.CompletedTask;
+        }
+
+        throw new InvalidDataException("跨源网站详情链接没有被拒绝。");
+    }
+
+    private static async Task PreferThumbnailUrlAsync(SkinPackage package, byte[] zipBytes)
+    {
+        var item = CreateItem(package, zipBytes) with
+        {
+            ThumbnailUrl = "https://blog.ancimen.top/wp-content/uploads/ayanami-thumb.jpg"
+        };
+        Uri? requested = null;
+        using var client = new SkinMarketClient(new StubHandler(request =>
+        {
+            requested = request.RequestUri;
+            return ThumbnailResponse(package.ImageBytes ?? throw new InvalidDataException("缺少 Ayanami 测试缩略图。"));
+        }));
+        var image = await client.GetThumbnailImageAsync(item);
+        Check(image is { Length: > 0 } && requested?.AbsolutePath.EndsWith("ayanami-thumb.jpg", StringComparison.Ordinal) == true,
+            "优先使用 thumbnailUrl 获取封面，并保留旧 previewUrl 回退入口");
     }
 
     private static async Task ValidDownloadAsync(SkinPackage package, byte[] zipBytes)
@@ -77,7 +187,7 @@ internal static class Program
         Check(reported.Count > 0 && reported[^1].BytesReceived == zipBytes.Length, "报告下载进度");
     }
 
-    private static async Task RejectCrossOriginPreviewAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task RejectCrossOriginThumbnailAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes) with { PreviewUrl = "https://evil.example/preview.png" };
         var requestCount = 0;
@@ -87,11 +197,11 @@ internal static class Program
             return new HttpResponseMessage(HttpStatusCode.OK);
         }));
         await ThrowsAsync<InvalidDataException>(
-            () => client.GetPreviewImageAsync(item), "拒绝跨源预览地址");
-        Check(requestCount == 0, "跨源预览地址未被请求");
+            () => client.GetThumbnailImageAsync(item), "拒绝跨源封面缩略图地址");
+        Check(requestCount == 0, "跨源封面缩略图地址未被请求");
     }
 
-    private static async Task RejectOversizedPreviewAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task RejectOversizedThumbnailAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
         var requestCount = 0;
@@ -100,15 +210,15 @@ internal static class Program
             requestCount++;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new ByteArrayContent(new byte[SkinMarketClient.MaxPreviewBytes + 1])
+                Content = new ByteArrayContent(new byte[SkinMarketClient.MaxThumbnailBytes + 1])
             };
         }));
         await ThrowsAsync<InvalidDataException>(
-            () => client.GetPreviewImageAsync(item), "限制市场预览图片大小");
-        Check(requestCount == 1, "超过预览图上限时不重试");
+            () => client.GetThumbnailImageAsync(item), "限制市场封面缩略图大小");
+        Check(requestCount == 1, "超过缩略图上限时不重试");
     }
 
-    private static async Task RetryInterruptedPreviewReadAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task RetryInterruptedThumbnailReadAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
         var imageBytes = package.ImageBytes ?? throw new InvalidDataException("Ayanami 验收包缺少背景图片。");
@@ -124,12 +234,12 @@ internal static class Program
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
             }
 
-            return PreviewResponse(imageBytes);
+            return ThumbnailResponse(imageBytes);
         }));
 
-        var result = await client.GetPreviewImageAsync(item);
+        var result = await client.GetThumbnailImageAsync(item);
         Check(requestCount == 2 && result is not null && result.SequenceEqual(imageBytes),
-            "中途读流中断时仅重试一次并读取完整预览图");
+            "中途读流中断时仅重试一次并读取完整缩略图");
     }
 
     private static async Task RetryConnectionFailureAsync(SkinPackage package, byte[] zipBytes)
@@ -145,15 +255,15 @@ internal static class Program
                 throw new HttpRequestException("Injected offline connection failure.");
             }
 
-            return PreviewResponse(imageBytes);
+            return ThumbnailResponse(imageBytes);
         }));
 
-        var result = await client.GetPreviewImageAsync(item);
+        var result = await client.GetThumbnailImageAsync(item);
         Check(requestCount == 2 && result is not null && result.SequenceEqual(imageBytes),
-            "连接失败时仅重试一次并读取完整预览图");
+            "连接失败时仅重试一次并读取完整缩略图");
     }
 
-    private static async Task RetryTruncatedPreviewReadAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task RetryTruncatedThumbnailReadAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
         var imageBytes = package.ImageBytes ?? throw new InvalidDataException("Ayanami 验收包缺少背景图片。");
@@ -169,15 +279,15 @@ internal static class Program
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
             }
 
-            return PreviewResponse(imageBytes);
+            return ThumbnailResponse(imageBytes);
         }));
 
-        var result = await client.GetPreviewImageAsync(item);
+        var result = await client.GetThumbnailImageAsync(item);
         Check(requestCount == 2 && result is not null && result.SequenceEqual(imageBytes),
-            "Content-Length 不匹配时只重取一次完整预览图");
+            "Content-Length 不匹配时只重取一次完整缩略图");
     }
 
-    private static async Task LimitPersistentPreviewRetriesAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task LimitPersistentThumbnailRetriesAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
         var imageBytes = package.ImageBytes ?? throw new InvalidDataException("Ayanami 验收包缺少背景图片。");
@@ -185,12 +295,12 @@ internal static class Program
         using var client = new SkinMarketClient(new StubHandler(_ =>
         {
             requestCount++;
-            return InterruptedPreviewResponse(imageBytes);
+            return InterruptedThumbnailResponse(imageBytes);
         }));
 
         try
         {
-            _ = await client.GetPreviewImageAsync(item);
+            _ = await client.GetThumbnailImageAsync(item);
         }
         catch (AggregateException exception)
         {
@@ -202,7 +312,7 @@ internal static class Program
         throw new InvalidDataException("持续断流时没有在两次请求后失败。");
     }
 
-    private static async Task CancelPreviewReadWithoutRetryAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task CancelThumbnailReadWithoutRetryAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
         var stream = new BlockingReadStream();
@@ -216,14 +326,14 @@ internal static class Program
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         }));
         using var cancellation = new CancellationTokenSource();
-        var read = client.GetPreviewImageAsync(item, cancellation.Token);
+        var read = client.GetThumbnailImageAsync(item, cancellation.Token);
         await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
-        await ThrowsAsync<OperationCanceledException>(() => read, "取消预览图片读流");
-        Check(requestCount == 1, "取消后不启动第二次预览请求");
+        await ThrowsAsync<OperationCanceledException>(() => read, "取消封面缩略图读流");
+        Check(requestCount == 1, "取消后不启动第二次缩略图请求");
     }
 
-    private static HttpResponseMessage InterruptedPreviewResponse(byte[] imageBytes)
+    private static HttpResponseMessage InterruptedThumbnailResponse(byte[] imageBytes)
     {
         var content = new StreamContent(new InterruptedReadStream(imageBytes));
         content.Headers.ContentLength = imageBytes.LongLength;
@@ -411,7 +521,7 @@ internal static class Program
         Content = new ByteArrayContent(bytes) { Headers = { ContentType = new MediaTypeHeaderValue("application/zip") } }
     };
 
-    private static HttpResponseMessage PreviewResponse(byte[] bytes) => new(HttpStatusCode.OK)
+    private static HttpResponseMessage ThumbnailResponse(byte[] bytes) => new(HttpStatusCode.OK)
     {
         Content = new ByteArrayContent(bytes) { Headers = { ContentType = new MediaTypeHeaderValue("image/png") } }
     };

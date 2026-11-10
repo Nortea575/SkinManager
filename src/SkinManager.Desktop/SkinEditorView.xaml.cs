@@ -869,9 +869,7 @@ public partial class SkinEditorView : UserControl
     {
         var dirty = IsDirty;
         DirtyStateText.Text = dirty ? "未保存的修改" : _isNew ? "尚未保存到皮肤库" : "草稿已保存";
-        DirtyStateText.Foreground = dirty
-            ? (Brush)FindResource("WarningText")
-            : (Brush)FindResource("SecondaryText");
+        DirtyStateText.SetResourceReference(TextBlock.ForegroundProperty, dirty ? "WarningText" : "SecondaryText");
     }
 
     private void SetSaveActionsLayout(bool isNew)

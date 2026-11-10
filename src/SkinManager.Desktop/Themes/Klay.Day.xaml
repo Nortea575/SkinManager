@@ -1,0 +1,31 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="AccentForeground" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="WindowSurface" Color="#F4F5F2" />
+    <SolidColorBrush x:Key="SidebarSurface" Color="#ECEFEC" />
+    <SolidColorBrush x:Key="PanelSurface" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="SoftSurface" Color="#F1F3F0" />
+    <SolidColorBrush x:Key="RaisedSurface" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="FieldSurface" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="PrimaryText" Color="#20251F" />
+    <SolidColorBrush x:Key="SecondaryText" Color="#596257" />
+    <SolidColorBrush x:Key="Line" Color="#D6DCD5" />
+    <SolidColorBrush x:Key="ControlLine" Color="#B7C0B5" />
+    <SolidColorBrush x:Key="FocusAccent" Color="#526700" />
+    <SolidColorBrush x:Key="Accent" Color="#526700" />
+    <SolidColorBrush x:Key="AccentHover" Color="#405200" />
+    <SolidColorBrush x:Key="HoverSurface" Color="#E4E9E1" />
+    <SolidColorBrush x:Key="SelectedSurface" Color="#E5ECC8" />
+    <SolidColorBrush x:Key="NoImageSurface" Color="#E8ECE7" />
+    <SolidColorBrush x:Key="OverlaySurface" Color="#E6F4F5F2" />
+    <SolidColorBrush x:Key="ScrollTrack" Color="#E6EAE4" />
+    <SolidColorBrush x:Key="ScrollThumb" Color="#899A52" />
+    <SolidColorBrush x:Key="ScrollThumbHover" Color="#647A18" />
+    <SolidColorBrush x:Key="DangerText" Color="#A12D32" />
+    <SolidColorBrush x:Key="DangerBorder" Color="#D9A7A8" />
+    <SolidColorBrush x:Key="DangerSurface" Color="#F8EDED" />
+    <SolidColorBrush x:Key="WarningSurface" Color="#F5F0D9" />
+    <SolidColorBrush x:Key="WarningText" Color="#675400" />
+    <SolidColorBrush x:Key="ErrorText" Color="#A12D32" />
+    <SolidColorBrush x:Key="SuccessText" Color="#426A22" />
+</ResourceDictionary>

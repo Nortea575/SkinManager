@@ -26,6 +26,7 @@
     <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="SkinManager.Desktop.Resources.CHANGELOG.md" />
     <Resource Include="..\..\assets\icons\SkinManager.ico" Link="SkinManager.ico" />
     <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Fonts\*.otf" />
     <Content Include="ThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="CopySkinAgentForLocalBuild" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">

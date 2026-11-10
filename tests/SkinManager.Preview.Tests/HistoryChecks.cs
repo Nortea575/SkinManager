@@ -13,13 +13,22 @@ internal static class HistoryChecks
     internal static async Task RunAsync()
     {
         var releases = ChangelogReader.ReadEmbedded();
-        Check(releases.Count >= 2, "内嵌更新日志包含多个公开版本");
-        Check(releases[0].Version == "1.1.3-beta.1" && releases[1].Version == "1.1.2",
-            "历史版本按 CHANGELOG 顺序显示当前测试版和最近正式版");
+        var currentVersionTag = UpdateCoordinator.ReadCurrentVersionTag();
+        Check(releases.Count >= 3, "内嵌更新日志包含多个公开版本");
+        Check(releases[0].Version == currentVersionTag &&
+              releases[1].Version == "1.1.3-beta.1" &&
+              releases[2].Version == "1.1.2",
+            "历史版本按 CHANGELOG 顺序显示当前测试版及既有 beta.1、正式版");
         Check(releases[0].DateLabel == "2026-11-10" &&
-              releases[0].Body.Contains("离线查看历史更新日志", StringComparison.Ordinal) &&
+              releases[0].Body.Contains("保持活动连接", StringComparison.Ordinal) &&
+              releases[0].Body.Contains("直接拖动皮肤排序", StringComparison.Ordinal) &&
               !releases[0].Body.Contains("**", StringComparison.Ordinal),
-            "测试版条目保留发布日期和正文并转成原生纯文本");
+            "beta.2 条目保留发布日期与新功能正文并转成原生纯文本");
+        var betaOneRelease = releases.Single(release => release.Version == "1.1.3-beta.1");
+        Check(betaOneRelease.DateLabel == "2026-11-10" &&
+              betaOneRelease.Body.Contains("离线查看历史更新日志", StringComparison.Ordinal) &&
+              !betaOneRelease.Body.Contains("**", StringComparison.Ordinal),
+            "beta.1 历史正文仍保留历史日志功能条目");
         Check(releases.Single(release => release.Version == "1.1.2").Body
                   .Contains("可选测试版更新", StringComparison.Ordinal),
             "正式版历史正文完整保留功能条目");
@@ -40,8 +49,8 @@ internal static class HistoryChecks
         using var coordinator = new UpdateCoordinator(
             client,
             Path.Combine(testRoot, "preferences"),
-            new Version(1, 1, 3),
-            currentVersionTag: "1.1.3-beta.1");
+            UpdateCoordinator.ReadCurrentVersion(),
+            currentVersionTag: currentVersionTag);
         var window = new UpdatesWindow(coordinator)
         {
             Width = 580,

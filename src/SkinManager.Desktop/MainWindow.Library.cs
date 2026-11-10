@@ -29,13 +29,14 @@ public partial class MainWindow
         SkinList.Tag = CanReorderSkins;
         SortStatusText.Text = !string.IsNullOrWhiteSpace(SearchBox.Text)
             ? "搜索结果已筛选；清空搜索后可排序"
-            : _skinOrderPersistenceWarning ?? "拖动左侧手柄调整顺序";
+            : _skinOrderPersistenceWarning ?? "拖动皮肤卡片调整顺序（单击选择）";
         SortStatusText.ToolTip = SortStatusText.Text;
     }
 
-    private void SortHandle_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void SkinListItem_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!CanReorderSkins || (sender as FrameworkElement)?.DataContext is not SkinCard card)
+        if (e.ChangedButton != MouseButton.Left ||
+            !CanReorderSkins || sender is not ListBoxItem item || item.DataContext is not SkinCard card)
         {
             _skinDragStartPoint = null;
             _skinDragSourceId = null;
@@ -46,17 +47,16 @@ public partial class MainWindow
         _skinDragSourceId = card.Entry.Id;
     }
 
-    private void SortHandle_PreviewMouseMove(object sender, MouseEventArgs e)
+    private void SkinListItem_PreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (_skinDragStartPoint is not { } start || _skinDragSourceId is not { } id ||
-            e.LeftButton != MouseButtonState.Pressed || !CanReorderSkins)
+            e.LeftButton != MouseButtonState.Pressed || !CanReorderSkins || sender is not ListBoxItem item)
         {
             return;
         }
 
         var current = e.GetPosition(SkinList);
-        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!HasPassedSkinDragThreshold(start, current))
         {
             return;
         }
@@ -65,7 +65,7 @@ public partial class MainWindow
         try
         {
             var data = new DataObject(SkinOrderDragFormat, id);
-            DragDrop.DoDragDrop(sender as DependencyObject ?? SkinList, data, DragDropEffects.Move);
+            DragDrop.DoDragDrop(item, data, DragDropEffects.Move);
         }
         finally
         {
@@ -73,6 +73,10 @@ public partial class MainWindow
             ClearSkinDropMarker();
         }
     }
+
+    internal static bool HasPassedSkinDragThreshold(Point start, Point current) =>
+        Math.Abs(current.X - start.X) >= SystemParameters.MinimumHorizontalDragDistance ||
+        Math.Abs(current.Y - start.Y) >= SystemParameters.MinimumVerticalDragDistance;
 
     private void SkinList_DragOver(object sender, DragEventArgs e)
     {
@@ -142,7 +146,7 @@ public partial class MainWindow
             if (_skinOrderStore.Move(sourceId, target.Entry.Id, insertAfter: !_skinDropBefore))
             {
                 _skinOrderPersistenceWarning = null;
-                RefreshList(sourceId);
+                MoveSkinCardInMemory(sourceId, target.Entry.Id, insertAfter: !_skinDropBefore);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -155,6 +159,70 @@ public partial class MainWindow
         ClearSkinDropMarker();
         UpdateSortStatus();
         e.Handled = true;
+    }
+
+    private void MoveSkinCardInMemory(string sourceId, string targetId, bool insertAfter)
+    {
+        var moving = _skins.FirstOrDefault(item =>
+            string.Equals(item.Entry.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+        var target = _skins.FirstOrDefault(item =>
+            string.Equals(item.Entry.Id, targetId, StringComparison.OrdinalIgnoreCase));
+        if (moving is null || target is null || ReferenceEquals(moving, target))
+        {
+            RefreshList(sourceId);
+            return;
+        }
+
+        var beforePositions = FindVisualChildren<ListBoxItem>(SkinList)
+            .Where(item => item.IsVisible)
+            .ToDictionary(item => item, item => item.TransformToAncestor(SkinList).Transform(new Point()).Y);
+        var scrollViewer = FindVisualChildren<ScrollViewer>(SkinList).FirstOrDefault();
+        var verticalOffset = scrollViewer?.VerticalOffset ?? 0;
+        var selected = SkinList.SelectedItem;
+        var sourceIndex = _skins.IndexOf(moving);
+        var targetIndex = _skins.IndexOf(target);
+        var sourceCardIndex = sourceIndex;
+        if (sourceIndex < targetIndex)
+        {
+            targetIndex--;
+        }
+
+        var destinationIndex = Math.Clamp(targetIndex + (insertAfter ? 1 : 0), 0, _skins.Count);
+        _skins.Move(sourceCardIndex, destinationIndex);
+        SkinList.UpdateLayout();
+        scrollViewer?.ScrollToVerticalOffset(verticalOffset);
+        SkinList.UpdateLayout();
+
+        if (!ReferenceEquals(SkinList.SelectedItem, selected))
+        {
+            SkinList.SelectedItem = selected;
+        }
+
+        if (WindowMotion.AnimationsEnabled)
+        {
+            foreach (var item in FindVisualChildren<ListBoxItem>(SkinList).Where(item => item.IsVisible))
+            {
+                if (beforePositions.TryGetValue(item, out var previousY))
+                {
+                    var currentY = item.TransformToAncestor(SkinList).Transform(new Point()).Y;
+                    var offset = previousY - currentY;
+                    if (Math.Abs(offset) > 0.5)
+                    {
+                        var transform = new TranslateTransform(0, offset);
+                        item.RenderTransform = transform;
+                        WindowMotion.AnimateVerticalOffset(transform, 0, 190, () =>
+                        {
+                            if (ReferenceEquals(item.RenderTransform, transform))
+                            {
+                                item.RenderTransform = Transform.Identity;
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        UpdateSortStatus();
     }
 
     private void SkinList_DragLeave(object sender, DragEventArgs e)

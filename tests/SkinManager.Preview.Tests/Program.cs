@@ -153,7 +153,8 @@ internal static class Program
         var historyOnly = args.Contains("--history-only", StringComparer.OrdinalIgnoreCase);
         var betaWorkspaceOnly = args.Contains("--beta-workspace-only", StringComparer.OrdinalIgnoreCase);
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
-        var marketLivePreviewImages = args.Contains("--market-live-preview-images", StringComparer.OrdinalIgnoreCase);
+        var marketCommunityOnly = args.Contains("--market-community-only", StringComparer.OrdinalIgnoreCase);
+        var beta2UiOnly = args.Contains("--beta2-ui-only", StringComparer.OrdinalIgnoreCase);
         var managerInstanceOnly = args.Contains("--manager-instance-only", StringComparer.OrdinalIgnoreCase);
         var managerInstancePostedOpen = args.Contains("--manager-instance-posted-open", StringComparer.OrdinalIgnoreCase);
         var instanceReviewUi = args.Contains("--instance-review-ui", StringComparer.OrdinalIgnoreCase);
@@ -173,13 +174,18 @@ internal static class Program
         {
             try
             {
-                if (marketLivePreviewImages)
+                if (beta2UiOnly)
                 {
-                    await MarketUiChecks.RunLivePreviewFetchAsync();
+                    await Beta2UiChecks.RunAsync();
                 }
                 else if (marketUiOnly)
                 {
                     await RunMarketUiOnlyAsync();
+                }
+                else if (marketCommunityOnly)
+                {
+                    await MarketCommunityUiChecks.RunAsync();
+                    await MarketAuthBridgeChecks.RunAsync();
                 }
                 else if (instanceReviewUi)
                 {
@@ -525,13 +531,9 @@ internal static class Program
         Directory.CreateDirectory(screenshotDirectory);
         var basePackage = App.ReadEmbeddedBasePackage();
         var ayanamiBytes = ReadEmbeddedPackage("Ayanami");
-        await MarketUiPreviewChecks.RunAsync(
-            testRoot,
-            basePackage,
-            ayanamiBytes,
-            ReadEmbeddedPackage("Saya"),
-            screenshotDirectory);
-        await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, screenshotDirectory);
+        AppThemeService.Initialize(Path.Combine(testRoot, "app-preferences.json"));
+        AppThemeService.SetMode(AppThemeMode.Night);
+        await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, ReadEmbeddedPackage("Saya"), screenshotDirectory);
     }
 
     private static async Task RunManagerInstanceOnlyAsync(int autoSelectDelayMilliseconds, bool postOpen)
@@ -600,7 +602,7 @@ internal static class Program
         var returnedDialog = default(InstancesWindow);
         var runtimePortInput = FindNamed<TextBox>(window, "RuntimePortInput");
         var runtimeTargetText = FindNamed<TextBlock>(window, "RuntimeTargetText");
-        var manageInstancesButton = FindNamed<Button>(window, "ManageInstancesButton");
+        var selectRuntimeTargetButton = FindNamed<Button>(window, "SelectRuntimeTargetButton");
         var selectionTimer = new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(10)
@@ -689,8 +691,8 @@ internal static class Program
         try
         {
             await WaitUntilAsync(() => Task.FromResult(window.IsLoaded && fakeStatusReadCount > 0 &&
-                FindNamed<Button>(window, "ManageInstancesButton").IsEnabled), "主窗fake连接状态可打开实例管理");
-            Console.WriteLine($"[manager-instance-only] MainWindow就绪: hwnd=0x{new System.Windows.Interop.WindowInteropHelper(window).Handle.ToInt64():X}, status={FindNamed<TextBlock>(window, "RuntimeStatusText").Text}, ManageEnabled={manageInstancesButton.IsEnabled}");
+                FindNamed<Button>(window, "SelectRuntimeTargetButton").IsEnabled), "主窗fake连接状态可选择运行目标");
+            Console.WriteLine($"[manager-instance-only] MainWindow就绪: hwnd=0x{new System.Windows.Interop.WindowInteropHelper(window).Handle.ToInt64():X}, status={FindNamed<TextBlock>(window, "RuntimeStatusText").Text}, SelectTargetEnabled={selectRuntimeTargetButton.IsEnabled}");
 
             var browser = FindNamed<WebView2>(window, "PreviewBrowser");
             var skinList = FindNamed<ListBox>(window, "SkinList");
@@ -707,12 +709,12 @@ internal static class Program
             if (postOpen)
             {
                 await window.Dispatcher.InvokeAsync(
-                    () => manageInstancesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)),
+                    () => selectRuntimeTargetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)),
                     System.Windows.Threading.DispatcherPriority.Background);
             }
             else
             {
-                manageInstancesButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                selectRuntimeTargetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }
             selectionTimer.Stop();
 
@@ -883,7 +885,7 @@ internal static class Program
 
         if (!chatReplyOnly)
         {
-            await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, screenshotDirectory);
+            await MarketUiChecks.RunAsync(testRoot, basePackage, ayanamiBytes, sayaBytes, screenshotDirectory);
         }
 
         var sayaLight = SkinResolver.Resolve(saya, SkinAppearance.Light, SkinScene.Home);
@@ -1280,7 +1282,7 @@ internal static class Program
                 "普通关闭仍运行时单独显示强制结束选项");
             Check(fake.CloseCalls[0].Instance.Identity == connectedDebug.Identity && !fake.CloseCalls[0].Force,
                 "普通关闭只请求关闭所选身份且force=false");
-            await SaveWindowScreenshotAsync(window, Path.Combine(screenshotDirectory, "实例管理-最小窗口-760x460.png"));
+            await SaveWindowScreenshotAsync(window, Path.Combine(screenshotDirectory, "选择窗口-最小窗口-760x460.png"));
 
             FindNamed<Button>(window, "ForceCloseButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitUntilAsync(() => Task.FromResult(fake.CloseCalls.Count == 2 &&
@@ -2376,19 +2378,39 @@ internal static class Program
               FindNamed<Button>(emptyWindow, "ListEmptyImportButton").IsEnabled,
             "空库时侧栏与详情区显示可继续导入的空状态");
         var emptyRuntimeControls = FindNamed<Border>(emptyWindow, "RuntimeControlsBorder");
-        var emptyLaunchButton = FindNamed<Button>(emptyWindow, "LaunchDebugButton");
-        var emptyManageButton = FindNamed<Button>(emptyWindow, "ManageInstancesButton");
+        var emptyTargetButton = FindNamed<Button>(emptyWindow, "SelectRuntimeTargetButton");
         var emptyAdvancedSettings = FindNamed<Expander>(emptyWindow, "AdvancedSettingsExpander");
         emptyAdvancedSettings.IsExpanded = true;
         emptyAdvancedSettings.UpdateLayout();
-        Check(emptyRuntimeControls.Visibility == Visibility.Visible && emptyLaunchButton.IsEnabled && emptyManageButton.IsEnabled &&
+        Check(emptyRuntimeControls.Visibility == Visibility.Visible && emptyTargetButton.IsEnabled &&
               !FindNamed<Button>(emptyWindow, "ApplyRuntimeButton").IsEnabled,
-            "没有已选皮肤时仍可独立启动调试版或管理实例，应用动作保持禁用");
+            "空皮肤库仍可打开实例选择，应用动作保持禁用");
         emptyWindow.Show();
         await WaitUntilAsync(() => Task.FromResult(emptyWindow.IsLoaded && emptyWindow.Opacity >= 0.999),
             "空库管理器淡入完成后再捕获客户区");
-        Check(emptyLaunchButton.IsVisible && emptyManageButton.IsVisible,
-            "展开高级设置后，空库中的独立启动入口可见且实例管理入口可见");
+        Check(emptyTargetButton.IsVisible,
+            "展开高级设置后，空库中的实例选择入口可见");
+
+        var openEmptyInstanceSelection = emptyWindow.Dispatcher.BeginInvoke(
+            new Action(() => emptyTargetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent))),
+            System.Windows.Threading.DispatcherPriority.Background).Task;
+        await WaitUntilAsync(() => Task.FromResult(
+            Application.Current.Windows.OfType<InstancesWindow>()
+                .FirstOrDefault(dialog => dialog.IsVisible) is { IsLoaded: true, IsVisible: true } dialog &&
+            dialog.Instances.Count == 0 &&
+            FindNamed<StackPanel>(dialog, "EmptyState").Visibility == Visibility.Visible &&
+            FindNamed<Button>(dialog, "RefreshButton").IsEnabled &&
+            FindNamed<TextBlock>(dialog, "ActionStatus").Text == "未找到 Codex 主实例。"),
+            "空皮肤库实例列表刷新完成并显示空状态");
+        var emptyInstanceDialog = Application.Current.Windows.OfType<InstancesWindow>()
+            .First(dialog => dialog.IsVisible);
+        Check(emptyInstanceDialog.Instances.Count == 0 &&
+              FindNamed<StackPanel>(emptyInstanceDialog, "EmptyState").Visibility == Visibility.Visible &&
+              FindNamed<Button>(emptyInstanceDialog, "DoneButton").IsEnabled,
+            "空皮肤库可看到空实例状态并能退出选择窗口");
+        FindNamed<Button>(emptyInstanceDialog, "DoneButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => Task.FromResult(!emptyInstanceDialog.IsVisible), "关闭空实例选择窗口");
+        await openEmptyInstanceSelection;
 
         FindNamed<Button>(emptyWindow, "NewSkinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var emptyLibraryEditor = FindNamed<SkinEditorView>(emptyWindow, "SkinEditor");
@@ -2397,8 +2419,8 @@ internal static class Program
         FindNamed<Button>(emptyLibraryEditor, "CancelButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitUntilAsync(() => Task.FromResult(emptyLibraryEditor.Visibility == Visibility.Collapsed &&
             emptyRuntimeControls.Visibility == Visibility.Visible), "取消空库新建后恢复全局连接区");
-        Check(emptyLaunchButton.IsEnabled && emptyManageButton.IsEnabled,
-            "空库新建并取消后仍可独立启动调试版或管理实例");
+        Check(emptyTargetButton.IsEnabled,
+            "空库新建并取消后仍可选择运行目标");
         await SaveWindowScreenshotAsync(emptyWindow, Path.Combine(screenshotDirectory, "管理器-空库-最小窗口-960x640.png"));
         emptyWindow.Close();
 
@@ -2520,8 +2542,7 @@ internal static class Program
             Check(FindNamed<TextBox>(window, "RuntimePortInput").Text == "9335" &&
                   FindNamed<TextBlock>(window, "RuntimeStatusText").Text == "已连接并已应用" &&
                   FindNamed<TextBlock>(window, "RuntimeTargetText").Text == "自动查找调试版 · 端口 9335" &&
-                  FindNamed<Button>(window, "LaunchDebugButton").IsEnabled &&
-                  FindNamed<Button>(window, "ManageInstancesButton").IsEnabled,
+                  FindNamed<Button>(window, "SelectRuntimeTargetButton").IsEnabled,
                 "离线测试通过注入的fake RuntimeStatus显示真实连接身份，未访问实际RuntimeController");
 
             var connectedMarker = string.Empty;
@@ -2604,7 +2625,7 @@ internal static class Program
             };
             selectionTimer.Start();
             var openInstancesOperation = window.Dispatcher.InvokeAsync(
-                () => FindNamed<Button>(window, "ManageInstancesButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)),
+                () => FindNamed<Button>(window, "SelectRuntimeTargetButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)),
                 System.Windows.Threading.DispatcherPriority.Background);
             await openInstancesOperation.Task;
             selectionTimer.Stop();
@@ -2675,7 +2696,7 @@ internal static class Program
                 }
             };
             closeDialogTimer.Start();
-            FindNamed<Button>(window, "ManageInstancesButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            FindNamed<Button>(window, "SelectRuntimeTargetButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             closeDialogTimer.Stop();
             await WaitUntilAsync(() => Task.FromResult(
                 FindNamed<TextBlock>(window, "RuntimeConnectedTargetText").Text == "未连接" &&
@@ -4331,10 +4352,10 @@ internal static class Program
         var fontLocation = new Uri($"pack://application:,,,/{assemblyName};component/Fonts/", UriKind.Absolute);
         var families = Fonts.GetFontFamilies(fontLocation).ToArray();
         var familyNames = families.SelectMany(family => family.FamilyNames.Values).ToArray();
-        Check(familyNames.Contains("Inter", StringComparer.OrdinalIgnoreCase),
-            "离线桌面程序集真实解析到打包的 Inter 字体族");
         Check(familyNames.Contains("Space Grotesk", StringComparer.OrdinalIgnoreCase),
             "离线桌面程序集真实解析到打包的 Space Grotesk 字体族");
+        Check(familyNames.Contains("Noto Sans SC", StringComparer.OrdinalIgnoreCase),
+            "离线桌面程序集真实解析到打包的 Noto Sans SC 字体族");
 
         var embeddedGlyphs = families
             .SelectMany(family => family.GetTypefaces())
@@ -4344,6 +4365,14 @@ internal static class Program
                                     glyphTypeface.CharacterToGlyphMap.TryGetValue('A', out var glyphIndex) && glyphIndex != 0)
             .ToArray();
         Check(embeddedGlyphs.Length > 0, "嵌入字体的真实 GlyphTypeface 可绘制 Latin A 字形");
+        var chineseGlyphs = families
+            .SelectMany(family => family.GetTypefaces())
+            .Select(typeface => typeface.TryGetGlyphTypeface(out var glyphTypeface) ? glyphTypeface : null)
+            .Where(glyphTypeface => glyphTypeface is not null &&
+                                    glyphTypeface.FontUri?.ToString().Contains(";component/Fonts/", StringComparison.OrdinalIgnoreCase) == true &&
+                                    glyphTypeface.CharacterToGlyphMap.TryGetValue('皮', out var glyphIndex) && glyphIndex != 0)
+            .ToArray();
+        Check(chineseGlyphs.Length > 0, "嵌入字体的真实 GlyphTypeface 可绘制中文皮肤字形");
     }
 
     private static void VerifyWindowUsesPackagedTypeface(Window window)

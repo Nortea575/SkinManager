@@ -12,7 +12,7 @@ namespace SkinManager.Market;
 public sealed partial class SkinMarketClient : IDisposable
 {
     public const long MaxDownloadBytes = 64L * 1024 * 1024;
-    public const int MaxPreviewBytes = 4 * 1024 * 1024;
+    public const int MaxThumbnailBytes = 4 * 1024 * 1024;
     private const int MaxCatalogBytes = 1024 * 1024;
     private static readonly Uri SiteRoot = new("https://blog.ancimen.top/");
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
@@ -47,7 +47,9 @@ public sealed partial class SkinMarketClient : IDisposable
         int perPage = 12,
         string? query = null,
         string? appearance = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? sort = null,
+        string? tag = null)
     {
         ThrowIfDisposed();
         if (page < 1)
@@ -71,11 +73,24 @@ public sealed partial class SkinMarketClient : IDisposable
             throw new ArgumentException("外观筛选只能是 light、dark 或 system。", nameof(appearance));
         }
 
+        sort = string.IsNullOrWhiteSpace(sort) ? "latest" : sort.Trim();
+        if (sort is not ("latest" or "likes"))
+        {
+            throw new ArgumentException("排序方式只能是 latest 或 likes。", nameof(sort));
+        }
+
+        tag = string.IsNullOrWhiteSpace(tag) ? null : tag.Trim();
+        if (tag is { Length: > 80 })
+        {
+            throw new ArgumentException("标签不能超过 80 个字符。", nameof(tag));
+        }
+
         var queryParts = new List<string>
         {
             $"rest_route={Uri.EscapeDataString("/skin-manager/v1/skins")}",
             $"page={page.ToString(CultureInfo.InvariantCulture)}",
-            $"per_page={perPage.ToString(CultureInfo.InvariantCulture)}"
+            $"per_page={perPage.ToString(CultureInfo.InvariantCulture)}",
+            $"sort={Uri.EscapeDataString(sort)}"
         };
         if (!string.IsNullOrWhiteSpace(query))
         {
@@ -85,6 +100,11 @@ public sealed partial class SkinMarketClient : IDisposable
         if (!string.IsNullOrEmpty(appearance))
         {
             queryParts.Add($"appearance={Uri.EscapeDataString(appearance)}");
+        }
+
+        if (tag is not null)
+        {
+            queryParts.Add($"tag={Uri.EscapeDataString(tag)}");
         }
 
         var uri = new Uri(SiteRoot, "/?" + string.Join('&', queryParts));
@@ -133,7 +153,8 @@ public sealed partial class SkinMarketClient : IDisposable
                 items.Add(ReadItem(itemElement));
             }
 
-            return new SkinMarketPage(items, pagination);
+            var availableTags = ReadTags(root, "availableTags");
+            return new SkinMarketPage(items, pagination, availableTags);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -141,18 +162,18 @@ public sealed partial class SkinMarketClient : IDisposable
         }
     }
 
-    public async Task<byte[]?> GetPreviewImageAsync(
+    public async Task<byte[]?> GetThumbnailImageAsync(
         SkinMarketItem item,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);
         ThrowIfDisposed();
-        if (string.IsNullOrWhiteSpace(item.PreviewUrl))
+        if (string.IsNullOrWhiteSpace(item.EffectiveThumbnailUrl))
         {
             return null;
         }
 
-        var uri = ValidateSameOrigin(item.PreviewUrl, "预览图片");
+        var uri = ValidateSameOrigin(item.EffectiveThumbnailUrl, "封面缩略图");
         var path = Uri.UnescapeDataString(uri.AbsolutePath);
         if (!path.StartsWith("/wp-content/uploads/", StringComparison.OrdinalIgnoreCase) ||
             !(path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
@@ -160,7 +181,7 @@ public sealed partial class SkinMarketClient : IDisposable
               path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)) ||
             path.Split('/').Any(segment => segment is "." or ".."))
         {
-            throw new InvalidDataException("市场预览图片地址无效。");
+            throw new InvalidDataException("市场封面缩略图地址无效。");
         }
 
         using var operationCancellation = CreateOperationCancellation(cancellationToken);
@@ -170,7 +191,7 @@ public sealed partial class SkinMarketClient : IDisposable
             try
             {
                 using var response = await SendAsync(uri, operationCancellation.Token).ConfigureAwait(false);
-                    return await ReadBoundedAsync(response, MaxPreviewBytes, operationCancellation.Token, verifyContentLength: true)
+                    return await ReadBoundedAsync(response, MaxThumbnailBytes, operationCancellation.Token, verifyContentLength: true)
                     .ConfigureAwait(false);
             }
             catch (HttpRequestException exception) when (
@@ -185,10 +206,10 @@ public sealed partial class SkinMarketClient : IDisposable
             }
             catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
             {
-                var timeout = new TimeoutException("读取市场预览图超时。", exception);
+                var timeout = new TimeoutException("读取市场封面缩略图超时。", exception);
                 if (firstReadFailure is not null)
                 {
-                    throw new AggregateException("读取预览图失败并超时；已保留首次传输错误。", firstReadFailure, timeout);
+                    throw new AggregateException("读取封面缩略图失败并超时；已保留首次传输错误。", firstReadFailure, timeout);
                 }
 
                 throw timeout;
@@ -199,11 +220,17 @@ public sealed partial class SkinMarketClient : IDisposable
             }
             catch (Exception exception) when (firstReadFailure is not null)
             {
-                throw new AggregateException("读取预览图重试后仍失败；已保留两次错误。", firstReadFailure, exception);
+                throw new AggregateException("读取封面缩略图重试后仍失败；已保留两次错误。", firstReadFailure, exception);
             }
         }
 
-        throw new InvalidOperationException("市场预览图读取超过允许的尝试次数。");
+        throw new InvalidOperationException("市场封面缩略图读取超过允许的尝试次数。");
+    }
+
+    public static Uri GetDetailUri(string raw)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(raw);
+        return ValidateSameOrigin(raw, "皮肤详情页");
     }
 
     public async Task<SkinPackage> DownloadPackageAsync(
@@ -316,6 +343,7 @@ public sealed partial class SkinMarketClient : IDisposable
             return;
         }
 
+        ClearAccount();
         _disposed = true;
         _httpClient.Dispose();
     }
@@ -326,6 +354,17 @@ public sealed partial class SkinMarketClient : IDisposable
         request.Version = HttpVersion.Version20;
         request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        var session = CaptureCurrentSession();
+        if (session.CookieHeader is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Cookie", session.CookieHeader);
+        }
+
+        if (session.Nonce is not null)
+        {
+            request.Headers.TryAddWithoutValidation("X-WP-Nonce", session.Nonce);
+        }
+
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         if ((int)response.StatusCode is >= 300 and < 400)
@@ -336,9 +375,12 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (!response.IsSuccessStatusCode)
         {
-            var statusCode = response.StatusCode;
-            response.Dispose();
-            throw new HttpRequestException($"市场请求失败（HTTP {(int)statusCode}）。", null, statusCode);
+            using (response)
+            {
+                var errorBody = await ReadBoundedAsync(response, MaxCatalogBytes, cancellationToken)
+                    .ConfigureAwait(false);
+                throw CreateHttpException(response.StatusCode, errorBody, session);
+            }
         }
 
         return response;
@@ -488,7 +530,93 @@ public sealed partial class SkinMarketClient : IDisposable
             RequiredInt64(element, "size"),
             RequiredInt32(element, "skinFormatVersion"),
             RequiredString(element, "minManagerVersion", 64),
-            OptionalString(element, "updatedAt", 64));
+            OptionalString(element, "updatedAt", 64),
+            OptionalNullableString(element, "thumbnailUrl", 2048),
+            OptionalString(element, "fullDescription", 20_000),
+            OptionalString(element, "submitter", 160),
+            ReadTags(element, "tags"),
+            OptionalNullableString(element, "detailUrl", 2048),
+            OptionalInt32(element, "likeCount"),
+            OptionalInt32(element, "commentCount"),
+            OptionalBoolean(element, "likedByMe"));
+    }
+
+    private static IReadOnlyList<SkinMarketTag> ReadTags(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return Array.Empty<SkinMarketTag>();
+        }
+
+        if (property.ValueKind != JsonValueKind.Array || property.GetArrayLength() > 50)
+        {
+            throw new InvalidDataException($"市场目录中的 {propertyName} 格式无效。");
+        }
+
+        var tags = new List<SkinMarketTag>(property.GetArrayLength());
+        foreach (var tag in property.EnumerateArray())
+        {
+            if (tag.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"市场目录中的 {propertyName} 项格式无效。");
+            }
+
+            var id = OptionalTagId(tag, "id");
+            var name = OptionalString(tag, "name", 80);
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
+            {
+                throw new InvalidDataException($"市场目录中的 {propertyName} 项缺少有效的 id 或 name。");
+            }
+
+            tags.Add(new SkinMarketTag(id, name));
+        }
+
+        return tags;
+    }
+
+    private static string? OptionalTagId(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number when property.TryGetInt64(out var value) && value >= 0 => value.ToString(CultureInfo.InvariantCulture),
+            _ => throw new InvalidDataException($"市场目录中的标签 {name} 格式无效。")
+        };
+    }
+
+    private static int OptionalInt32(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return 0;
+        }
+
+        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value) || value < 0)
+        {
+            throw new InvalidDataException($"市场目录中的 {name} 必须是非负整数。");
+        }
+
+        return value;
+    }
+
+    private static bool OptionalBoolean(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => throw new InvalidDataException($"市场目录中的 {name} 必须是布尔值。")
+        };
     }
 
     private static Uri ValidateDownloadUri(string raw, string skinId)
@@ -506,8 +634,22 @@ public sealed partial class SkinMarketClient : IDisposable
 
     private static Uri ValidateSameOrigin(string raw, string purpose)
     {
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri) ||
-            !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+        Uri? uri = null;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var absoluteUri))
+        {
+            uri = absoluteUri;
+        }
+        else if (Uri.TryCreate(SiteRoot, raw, out var relativeUri))
+        {
+            uri = relativeUri;
+        }
+
+        if (uri is null)
+        {
+            throw new InvalidDataException($"市场{purpose}地址无效。");
+        }
+
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
             !uri.Host.Equals(SiteRoot.Host, StringComparison.OrdinalIgnoreCase) ||
             uri.Port != SiteRoot.Port || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
         {

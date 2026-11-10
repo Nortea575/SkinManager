@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="设置" Width="760" Height="570" MinWidth="620" MinHeight="440"
-        WindowStartupLocation="CenterOwner" Background="{StaticResource WindowSurface}"
-        FontFamily="{StaticResource KlayBodyFont}" Foreground="{StaticResource PrimaryText}"
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource WindowSurface}"
+        FontFamily="{StaticResource KlayBodyFont}" Foreground="{DynamicResource PrimaryText}"
         ShowInTaskbar="False" ResizeMode="CanResizeWithGrip"
         PreviewKeyDown="SettingsWindow_PreviewKeyDown">
     <Grid Margin="22,18">
@@ -18,21 +18,43 @@
         <StackPanel Grid.Row="0">
             <TextBlock Text="设置" FontSize="25" Style="{StaticResource PageTitle}" />
             <TextBlock Text="应用偏好和兼容性选项在此管理；界面语言在连接调试版 Codex 后生效。"
-                       FontSize="13" Foreground="{StaticResource SecondaryText}"
+                       FontSize="13" Foreground="{DynamicResource SecondaryText}"
                        TextWrapping="Wrap" Margin="0,5,0,0" />
         </StackPanel>
 
         <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="2"
                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="0,0,8,4">
+                <Border Background="{DynamicResource PanelSurface}"
+                        BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                        CornerRadius="12" Padding="16" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="应用外观" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock Text="仅切换管理器界面颜色，不改变皮肤内容。"
+                                       FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                       Margin="0,4,12,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ComboBox x:Name="AppearanceModeBox" Grid.Column="1" Width="116"
+                                  VerticalAlignment="Center" SelectionChanged="AppearanceModeBox_SelectionChanged"
+                                  AutomationProperties.Name="应用外观">
+                            <ComboBoxItem Content="夜间" Tag="Night" />
+                            <ComboBoxItem Content="白昼" Tag="Day" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
                 <Expander x:Name="CompatibilityGroupExpander" IsExpanded="True">
                     <Expander.Header>
                         <TextBlock x:Name="CompatibilityGroupHeader" Text="兼容性"
-                                   Foreground="{StaticResource PrimaryText}" />
+                                   Foreground="{DynamicResource PrimaryText}" />
                     </Expander.Header>
                 <StackPanel Margin="0,8,0,4">
-                <Border Background="{StaticResource PanelSurface}"
-                        BorderBrush="{StaticResource Line}" BorderThickness="1"
+                <Border Background="{DynamicResource PanelSurface}"
+                        BorderBrush="{DynamicResource Line}" BorderThickness="1"
                         CornerRadius="12" Padding="16">
                     <StackPanel>
                         <TextBlock Text="界面语言" FontSize="17" FontWeight="SemiBold" />
@@ -41,7 +63,7 @@
                                   Checked="ForceSimplifiedChineseCheckBox_Changed"
                                   Unchecked="ForceSimplifiedChineseCheckBox_Changed" />
                         <TextBlock Text="连接调试版 Codex 后尝试使用 Codex 自带的简体中文界面。首次设定可能刷新页面；无法保证英文首屏完全消失。"
-                                   FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                   FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="24,8,0,0" />
                         <Grid Margin="0,15,0,0">
                             <Grid.RowDefinitions>
@@ -53,11 +75,11 @@
                                 <ColumnDefinition Width="94" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="保存状态" FontSize="12" Foreground="{StaticResource SecondaryText}" />
+                            <TextBlock Text="保存状态" FontSize="12" Foreground="{DynamicResource SecondaryText}" />
                             <TextBlock x:Name="LanguageSavedStatusText" Grid.Column="1" FontSize="13"
                                        Text="正在读取…" TextWrapping="Wrap" />
                             <TextBlock Grid.Row="2" Text="目标状态" FontSize="12"
-                                       Foreground="{StaticResource SecondaryText}" />
+                                       Foreground="{DynamicResource SecondaryText}" />
                             <TextBlock x:Name="LanguageRuntimeStatusText" Grid.Row="2" Grid.Column="1"
                                        FontSize="13" Text="连接实例后生效" TextWrapping="Wrap"
                                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
@@ -68,19 +90,35 @@
                     </StackPanel>
                 </Border>
 
+                <Border Background="{DynamicResource PanelSurface}"
+                        BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                        CornerRadius="10" Padding="12" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Codex 配置文件状态" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock x:Name="CodexConfigStatusText" Text="正在检测…"
+                                   FontSize="13" Margin="0,6,0,0" />
+                        <TextBlock x:Name="CodexConfigPathText" Text=""
+                                   FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                   TextWrapping="Wrap" Margin="0,3,0,0" />
+                        <TextBlock Text="只检查 config.toml 的存在与可读性，不显示配置内容。"
+                                   FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                   TextWrapping="Wrap" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Border>
+
                 <Expander x:Name="MagpieSettingsExpander" Margin="0,12,0,0"
                           Expanded="MagpieSettingsExpander_Expanded">
                     <Expander.Header>
                         <StackPanel>
                             <TextBlock Text="Magpie 启动方式" FontSize="15" FontWeight="SemiBold" />
                             <TextBlock Text="只读检测与手动启动；不会修改 Magpie 配置。"
-                                       FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                       FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        TextWrapping="Wrap" Margin="0,3,0,0" />
                         </StackPanel>
                     </Expander.Header>
                     <StackPanel Margin="22,4,0,4">
-                        <Border Background="{StaticResource PanelSurface}"
-                                BorderBrush="{StaticResource Line}" BorderThickness="1"
+                        <Border Background="{DynamicResource PanelSurface}"
+                                BorderBrush="{DynamicResource Line}" BorderThickness="1"
                                 CornerRadius="10" Padding="12">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -98,22 +136,22 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <Ellipse x:Name="SupportIndicator" Width="10" Height="10" Margin="0,0,9,0"
-                                             Fill="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                                             Fill="{DynamicResource SecondaryText}" VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                         <TextBlock x:Name="SupportTitle" Text="尚未检测" FontSize="15" FontWeight="SemiBold" />
                                         <TextBlock x:Name="SupportSubtitle" Text="展开时读取 Magpie 程序信息。" FontSize="13"
-                                                   Foreground="{StaticResource SecondaryText}" Margin="0,3,0,0"
+                                                   Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0"
                                                    TextWrapping="Wrap" />
                                         <TextBlock x:Name="MagpieRunningText" Text="运行状态：未检测" FontSize="13"
-                                                   Foreground="{StaticResource SecondaryText}" Margin="0,3,0,0" />
+                                                   Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" />
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="CompatibilityMessageText" Grid.Row="6" FontSize="13"
-                                           TextWrapping="Wrap" Foreground="{StaticResource PrimaryText}" />
+                                           TextWrapping="Wrap" Foreground="{DynamicResource PrimaryText}" />
                             </Grid>
                         </Border>
 
-                        <TextBlock Text="Magpie 程序" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                        <TextBlock Text="Magpie 程序" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                    Margin="0,12,0,0" />
                         <Grid Margin="0,4,0,0">
                             <Grid.ColumnDefinitions>
@@ -134,22 +172,22 @@
                             <StackPanel Margin="0,0,8,2">
                                 <TextBlock Text="检测信息" FontSize="13" FontWeight="SemiBold" />
                                 <TextBlock x:Name="VersionText" Text="版本：未检测" FontSize="13"
-                                           Foreground="{StaticResource SecondaryText}" Margin="0,6,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" Margin="0,6,0,0"
                                            TextWrapping="Wrap" />
                                 <TextBlock x:Name="ExecutablePathText" Text="路径：未检测" FontSize="13"
-                                           Foreground="{StaticResource SecondaryText}" Margin="0,4,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" Margin="0,4,0,0"
                                            TextWrapping="Wrap" />
                                 <TextBlock x:Name="EvidenceText" Text="" FontSize="13"
-                                           Foreground="{StaticResource SecondaryText}" Margin="0,6,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" Margin="0,6,0,0"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                         </ScrollViewer>
 
                         <TextBlock Text="从管理器启动可使用网关模型；Magpie 自身重新打开 Codex 时可能不保留调试参数。"
-                                   FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                   FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,8,0,0" />
                         <TextBlock x:Name="MagpieActionStatusText" Text="" FontSize="13"
-                                   Foreground="{StaticResource SecondaryText}" Margin="0,8,0,0"
+                                   Foreground="{DynamicResource SecondaryText}" Margin="0,8,0,0"
                                    MaxHeight="38" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                                    ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         <Button x:Name="LaunchMagpieButton" Content="启动 Magpie" Padding="12,7"
@@ -169,7 +207,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="WindowStatusText" VerticalAlignment="Center" FontSize="12"
-                       Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource SecondaryText}" TextTrimming="CharacterEllipsis"
                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <Button x:Name="LaunchDebugCodexButton" Grid.Column="1" Content="启动 / 连接 Codex"
                     Padding="12,7" Margin="8,0,0,0" Click="LaunchDebugCodexButton_Click"

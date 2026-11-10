@@ -10,6 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using Ellipse = System.Windows.Shapes.Ellipse;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Wpf;
 using Microsoft.Win32;
@@ -30,12 +31,14 @@ public partial class MainWindow : Window
     private readonly UpdateCoordinator? _updateCoordinator;
     private readonly IInstallerLauncher? _installerLauncher;
     private readonly ICodexInstanceService? _codexInstanceService;
+    private readonly ICodexConfigReadabilityService _codexConfigReadabilityService;
     private readonly Func<CodexInstance, bool>? _confirmInstanceClose;
     private readonly Func<CodexInstance, bool>? _confirmInstanceForceClose;
     private readonly Func<CancellationToken, Task<RuntimeStatus>>? _runtimeStatusReader;
     private readonly Func<string, MessageBoxResult>? _editorClosePrompt;
     private readonly Func<string, MessageBoxResult>? _importReplacePrompt;
     private readonly Func<SkinMarketClient>? _skinMarketClientFactory;
+    private readonly Func<IMarketAccountAuthProvider>? _marketAccountAuthProviderFactory;
     private readonly bool _closeAfterSuccessfulInstall;
     private readonly string _previewProfileDirectory;
     private readonly RuntimeController _runtimeController = new();
@@ -70,6 +73,7 @@ public partial class MainWindow : Window
     private UpdatesWindow? _updatesWindow;
     private SkinMarketWindow? _skinMarketWindow;
     private SettingsWindow? _settingsWindow;
+    private SupportAuthorWindow? _supportAuthorWindow;
     private SkinPackage? _editOriginalPackage;
     private string? _editOriginalId;
     private int _previewTransparency = 30;
@@ -112,7 +116,10 @@ public partial class MainWindow : Window
         Func<CodexInstance, bool>? confirmInstanceForceClose = null,
         Func<CancellationToken, Task<RuntimeStatus>>? runtimeStatusReader = null,
         Func<string, MessageBoxResult>? importReplacePrompt = null,
-        Func<SkinMarketClient>? skinMarketClientFactory = null)
+        Func<SkinMarketClient>? skinMarketClientFactory = null,
+        ICodexConfigReadabilityService? codexConfigReadabilityService = null,
+        Func<CodexInstance, CancellationToken, Task<bool>>? confirmDebugModeSwitch = null,
+        Func<IMarketAccountAuthProvider>? marketAccountAuthProviderFactory = null)
     {
         _store = store;
         _skinOrderStore = new SkinOrderStore(Path.Combine(store.DataDirectory, ".skin-order.json"));
@@ -121,11 +128,13 @@ public partial class MainWindow : Window
         _updateCoordinator = updateCoordinator;
         _installerLauncher = installerLauncher;
         _codexInstanceService = codexInstanceService;
+        _codexConfigReadabilityService = codexConfigReadabilityService ?? new CodexConfigReadabilityService();
         _runtimeApplyWorkflow = new RuntimeApplyWorkflow(
             _runtimeController.LaunchDebugClientAsync,
             _runtimeController.ApplyAsync,
             codexInstanceService,
-            progress: QueueRuntimeProgress);
+            progress: QueueRuntimeProgress,
+            confirmDebugModeSwitch: confirmDebugModeSwitch ?? ConfirmDebugModeSwitchAsync);
         _configureCompatibility = _runtimeController.ConfigureCompatibilityAsync;
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
@@ -133,10 +142,12 @@ public partial class MainWindow : Window
         _editorClosePrompt = editorClosePrompt;
         _importReplacePrompt = importReplacePrompt;
         _skinMarketClientFactory = skinMarketClientFactory;
+        _marketAccountAuthProviderFactory = marketAccountAuthProviderFactory;
         _closeAfterSuccessfulInstall = closeAfterSuccessfulInstall;
         InitializeComponent();
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this, animateWindow: false, animateClose: false, animateButtonPress: false);
+        AppThemeService.ThemeChanged += MainWindow_ThemeChanged;
         UpdateRuntimeTargetSummary();
         _previewProfileDirectory = Path.GetFullPath(previewProfileDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -181,6 +192,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _windowClosed = true;
+            AppThemeService.ThemeChanged -= MainWindow_ThemeChanged;
             _runtimeActionCancellation?.Cancel();
             if (_updateCoordinator is not null)
             {
@@ -189,6 +201,7 @@ public partial class MainWindow : Window
             }
             _skinMarketWindow?.Close();
             _settingsWindow?.Close();
+            _supportAuthorWindow?.Close();
             _previewStatusSequence++;
             _originalTransitionSequence++;
             _editorPreviewTimer.Stop();
@@ -426,7 +439,7 @@ public partial class MainWindow : Window
             var missingService = new RuntimeCompatibilityResult(
                 RuntimeCompatibilityState.Pending,
                 endpoint,
-                "无法核验 Codex 实例；请在实例管理中刷新并重新选择目标。",
+                "无法核验 Codex 实例；请使用“选择窗口”刷新并重新选择目标。",
                 false,
                 candidate.Value.Identity);
             _lastCompatibilityResult = missingService;
@@ -631,7 +644,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "调试版未能启动或界面语言未能同步。请检查实例管理与兼容设置后重试。");
+            SetRuntimeError(exception.Message, "调试版未能启动或界面语言未能同步。请检查“选择窗口”与兼容设置后重试。");
         }
         finally
         {
@@ -748,7 +761,7 @@ public partial class MainWindow : Window
             : $"{(hasLiveConnectionIdentity ? "当前连接" : "上次确认连接")}: PID {connected.ProcessId}\n{connected.ExecutablePath}\n启动时间：{connected.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
     }
 
-    private async void ManageInstancesButton_Click(object sender, RoutedEventArgs e)
+    private async void SelectRuntimeTargetButton_Click(object sender, RoutedEventArgs e)
     {
         if (_runtimeOperationInProgress || _isBusy || _isEditing || _codexInstanceService is not { } instanceService)
         {
@@ -814,6 +827,104 @@ public partial class MainWindow : Window
         }
     }
 
+    private Task<bool> ConfirmDebugModeSwitchAsync(CodexInstance instance, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<bool>(cancellationToken);
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            return Dispatcher.InvokeAsync(
+                () => ShowDebugModeSwitchConfirmation(cancellationToken),
+                DispatcherPriority.Normal,
+                cancellationToken).Task;
+        }
+
+        return Task.FromResult(ShowDebugModeSwitchConfirmation(cancellationToken));
+    }
+
+    private bool ShowDebugModeSwitchConfirmation(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var dialog = new DebugModeSwitchConfirmationWindow { Owner = this };
+        using var cancellationRegistration = cancellationToken.Register(() =>
+        {
+            if (dialog.Dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+
+            _ = dialog.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (dialog.IsVisible)
+                {
+                    dialog.Close();
+                }
+            }), DispatcherPriority.Send);
+        });
+
+        var accepted = dialog.ShowDialog() == true;
+        cancellationToken.ThrowIfCancellationRequested();
+        return accepted;
+    }
+
+    private void SupportAuthorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_supportAuthorWindow is { IsVisible: true } existing)
+        {
+            existing.Activate();
+            return;
+        }
+
+        var window = new SupportAuthorWindow { Owner = this };
+        _supportAuthorWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_supportAuthorWindow, window))
+            {
+                _supportAuthorWindow = null;
+            }
+        };
+        window.Show();
+    }
+
+    private void MainWindow_ThemeChanged(object? sender, EventArgs e)
+    {
+        if (_windowClosed)
+        {
+            return;
+        }
+
+        void UpdateInteractiveSurfaces()
+        {
+            if (_windowClosed)
+            {
+                return;
+            }
+
+            foreach (var button in FindVisualChildren<Button>(this))
+            {
+                SetButtonSurface(button, hovered: button.IsMouseOver, pressed: button.IsPressed, animate: false);
+            }
+
+            foreach (var item in FindVisualChildren<ListBoxItem>(SkinList))
+            {
+                AnimateSkinListItem(item, item.IsSelected, animate: false);
+            }
+        }
+
+        if (Dispatcher.CheckAccess())
+        {
+            UpdateInteractiveSurfaces();
+        }
+        else
+        {
+            _ = Dispatcher.BeginInvoke(new Action(UpdateInteractiveSurfaces));
+        }
+    }
+
     private void MarketEntryButton_Click(object sender, RoutedEventArgs e) => OpenMarketWindow();
 
     private void SettingsEntryButton_Click(object sender, RoutedEventArgs e)
@@ -836,7 +947,8 @@ public partial class MainWindow : Window
             _lastCompatibilityResult,
             SaveAndConfigureCompatibilityAsync,
             ReloadCompatibilitySettings,
-            StartDebugClientFromCompatibilityAsync)
+            StartDebugClientFromCompatibilityAsync,
+            codexConfigReadabilityService: _codexConfigReadabilityService)
         {
             Owner = this
         };
@@ -873,7 +985,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "未能启动 Codex 调试版或同步界面语言。请检查实例管理与兼容设置。");
+            SetRuntimeError(exception.Message, "未能启动 Codex 调试版或同步界面语言。请检查“选择窗口”与兼容设置。");
             return new RuntimeStatus(RuntimeStatusState.Error, null, null, exception.Message, null);
         }
         finally
@@ -898,13 +1010,18 @@ public partial class MainWindow : Window
         }
 
         var client = clientOverride ?? _skinMarketClientFactory?.Invoke() ?? new SkinMarketClient();
+        var accountAuthProvider = _marketAccountAuthProviderFactory?.Invoke();
         var window = new SkinMarketWindow(
             client,
             UpdateCoordinator.ReadCurrentVersion(),
             _basePackage,
             _previewProfileDirectory,
             SaveMarketPackageAsync,
-            ReadInstalledSkinVersions)
+            ReadInstalledSkinVersions,
+            accountAuthProvider,
+            useDefaultAccountAuth: clientOverride is null && _skinMarketClientFactory is null && _marketAccountAuthProviderFactory is null,
+            readLocalSkinCatalog: _store.GetCatalog,
+            exportLocalSkinPackage: (id, path) => _store.ExportZip(id, path, overwriteExisting: true))
         {
             Owner = this
         };
@@ -1042,8 +1159,7 @@ public partial class MainWindow : Window
         LaunchDebugButton.IsEnabled = !_runtimeOperationInProgress && !_isEditing;
         ApplyRuntimeButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _selectedPackage is not null;
         RemoveRuntimeButton.IsEnabled = !_runtimeOperationInProgress && !_isEditing;
-        ManageInstancesButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
-        SelectRuntimeTargetButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
+                SelectRuntimeTargetButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
         SettingsEntryButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing;
         LocateConnectedWindowButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing &&
             _codexInstanceService is not null && _lastRuntimeStatus?.ConnectedInstance is not null;
@@ -1082,9 +1198,8 @@ public partial class MainWindow : Window
 
     private void SetRuntimeActionCanceledNotice()
     {
-        var warningBrush = (Brush)FindResource("WarningText");
-        RuntimeStatusIndicator.Fill = warningBrush;
-        RuntimeStatusText.Foreground = warningBrush;
+        RuntimeStatusIndicator.SetResourceReference(Ellipse.FillProperty, "WarningText");
+        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, "WarningText");
         RuntimeStatusText.Text = "已取消，结果待确认";
         RuntimeStatusMessage.Text = "操作已取消。管理器不会关闭 Codex，也不会自动恢复皮肤；请稍后查看连接状态。";
         RuntimeStatusText.ToolTip = RuntimeStatusMessage.Text;
@@ -1778,9 +1893,8 @@ public partial class MainWindow : Window
                 status.CompatibilityResult)
             : status;
         var viewState = RuntimeConnectionViewState.From(viewStatus);
-        var statusBrush = (Brush)FindResource(viewState.BrushResourceKey);
-        RuntimeStatusIndicator.Fill = statusBrush;
-        RuntimeStatusText.Foreground = statusBrush;
+        RuntimeStatusIndicator.SetResourceReference(Ellipse.FillProperty, viewState.BrushResourceKey);
+        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, viewState.BrushResourceKey);
         RuntimeStatusText.Text = viewState.StatusLabel;
         var message = string.IsNullOrWhiteSpace(status.Message) ? fallbackMessage ?? viewState.Message : status.Message;
         if (protectRuntimeResult && status.State == RuntimeStatusState.Error)
@@ -1933,6 +2047,14 @@ public partial class MainWindow : Window
 
         menu.PlacementTarget = MoreActionsButton;
         menu.IsOpen = true;
+    }
+
+    private void MoreActionsContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu menu)
+        {
+            WindowMotion.AttachBehaviors(menu);
+        }
     }
 
     private void ExportButton_Click(object sender, RoutedEventArgs e)
@@ -2334,10 +2456,16 @@ public partial class MainWindow : Window
                     if ((status.State is RuntimeStatusState.Connected or RuntimeStatusState.Applying) &&
                         status.ConnectedInstance is { } connectedIdentity)
                     {
-                        var connectedTarget = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, connectedIdentity));
-                        if (connectedTarget is not
-                            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int connectedPort, DebugEndpoint: { Length: > 0 } } ||
-                            !TryReadRuntimeStatusPort(status, out var statusPort) || connectedPort != statusPort)
+                        var health = await _codexInstanceService.VerifyActiveConnectionAsync(
+                            connectedIdentity,
+                            status.Endpoint,
+                            CancellationToken.None);
+                        if (!CanApplyRuntimeRefresh(sequence))
+                        {
+                            return;
+                        }
+
+                        if (health.ShouldDisconnect)
                         {
                             if (_selectedConnectionInstance is { } selectedTarget &&
                                 SameProcessIdentity(selectedTarget.Identity, connectedIdentity))
@@ -2349,7 +2477,7 @@ public partial class MainWindow : Window
                                 RuntimeStatusState.Stopped,
                                 null,
                                 null,
-                                "当前连接对应的 Codex 实例已退出或调试端口不再由该进程持有。可重新启动或选择实例。",
+                                $"{health.Message} 可重新启动或使用“选择窗口”选择目标。",
                                 null);
                         }
                     }

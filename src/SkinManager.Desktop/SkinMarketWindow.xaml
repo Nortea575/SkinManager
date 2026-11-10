@@ -1,15 +1,16 @@
 <Window x:Class="SkinManager.Desktop.SkinMarketWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="皮肤市场"
-        Width="1000" Height="690" MinWidth="880" MinHeight="560"
+        Width="1060" Height="740" MinWidth="880" MinHeight="620"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource WindowSurface}"
-        FontFamily="{StaticResource KlayBodyFont}"
-        Foreground="{StaticResource PrimaryText}">
+        Background="{DynamicResource WindowSurface}"
+        FontFamily="{DynamicResource KlayBodyFont}"
+        Foreground="{DynamicResource PrimaryText}">
     <Window.Resources>
         <Style x:Key="MarketFilterStyle" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="Margin" Value="0,0,6,0" />
@@ -18,22 +19,23 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Chip" Background="Transparent" BorderBrush="{StaticResource Line}"
-                                BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Chip" Background="{DynamicResource FieldSurface}"
+                                BorderBrush="{DynamicResource ControlLine}" BorderThickness="1"
+                                CornerRadius="8" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource SelectedSurface}" />
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
-                                <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource SelectedSurface}" />
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryText}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource HoverSurface}" />
+                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource HoverSurface}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55" />
@@ -43,9 +45,10 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="PreviewImageButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
+        <Style x:Key="CoverButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource NoImageSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Stretch" />
@@ -53,16 +56,17 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="ImageButtonSurface" Background="{TemplateBinding Background}"
-                                BorderBrush="Transparent" BorderThickness="1" CornerRadius="8">
+                        <Border x:Name="CoverSurface" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10" ClipToBounds="True">
                             <ContentPresenter />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="CoverSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="ImageButtonSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="CoverSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -70,207 +74,331 @@
             </Setter>
         </Style>
         <Style x:Key="MarketCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource PanelSurface}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="14" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="Margin" Value="6" />
         </Style>
-        <Style x:Key="MarketExpanderStyle" TargetType="Expander"
-               BasedOn="{StaticResource {x:Type Expander}}">
-            <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Margin" Value="0,4,0,0" />
+        <Style x:Key="MarketSecondaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="11,7" />
         </Style>
+        <DataTemplate x:Key="GridSkinTemplate">
+            <Border Style="{StaticResource MarketCardStyle}" Loaded="MarketCard_Loaded">
+                <StackPanel>
+                    <Grid>
+                        <Button x:Name="GridCoverButton" Style="{StaticResource CoverButtonStyle}"
+                                Height="168" Click="OpenDetailsButton_Click"
+                                AutomationProperties.Name="查看皮肤详情">
+                            <Grid>
+                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                <TextBlock Text="{Binding ThumbnailLabel}" ToolTip="{Binding ThumbnailError}" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextAlignment="Center" TextWrapping="Wrap" Margin="18" />
+                            </Grid>
+                        </Button>
+                        <Button Content="重试图片" Padding="9,5" FontSize="11"
+                                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8"
+                                Visibility="{Binding ThumbnailRetryVisibility}"
+                                Click="RetryThumbnailButton_Click" AutomationProperties.Name="重试封面缩略图" />
+                    </Grid>
+                    <Grid Margin="2,10,2,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" MinWidth="0">
+                            <Button Click="OpenDetailsButton_Click"
+                                    HorizontalContentAlignment="Left" Padding="0" BorderThickness="0"
+                                    Background="{DynamicResource PanelSurface}" Foreground="{DynamicResource PrimaryText}"
+                                    FontSize="17" FontWeight="SemiBold" AutomationProperties.Name="打开皮肤详情">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            </Button>
+                            <TextBlock Text="{Binding SummaryLabel}" FontSize="12" Margin="0,4,0,0"
+                                       Foreground="{DynamicResource SecondaryText}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding InstallStatusLabel}" FontSize="11"
+                                   Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                   Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                    <TextBlock Text="{Binding ShortDescription}" FontSize="12" Margin="2,7,2,0"
+                               Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap"
+                               MaxHeight="38" TextTrimming="CharacterEllipsis" />
+                    <Grid Margin="2,8,2,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
+                                   Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button Grid.Column="1" Content="查看详情" Padding="10,6"
+                                Style="{StaticResource MarketSecondaryButton}" Click="OpenDetailsButton_Click"
+                                AutomationProperties.Name="查看皮肤详情" />
+                    </Grid>
+                    <TextBlock Text="{Binding OperationStatus}" FontSize="11" Margin="2,5,2,0"
+                               TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding OperationIsError}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource ErrorText}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <ProgressBar Height="4" Margin="2,5,2,0" Minimum="0" Maximum="100"
+                                 Value="{Binding DownloadProgress, Mode=OneWay}"
+                                 Visibility="{Binding ProgressVisibility}" />
+                    <Grid Margin="2,8,2,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding UpdatedLabel}" FontSize="11"
+                                   Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button Grid.Column="1" Content="{Binding DownloadButtonText}"
+                                Style="{StaticResource PrimaryButton}" MinWidth="110"
+                                IsEnabled="{Binding CanDownload}" Click="DownloadButton_Click"
+                                AutomationProperties.Name="下载并安装皮肤" />
+                        <Button Grid.Column="3" Content="取消" Visibility="{Binding CancelVisibility}"
+                                Click="CancelDownloadButton_Click" AutomationProperties.Name="取消皮肤下载" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="ListSkinTemplate">
+            <Border Style="{StaticResource MarketCardStyle}" Loaded="MarketCard_Loaded">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="176" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid>
+                        <Button Style="{StaticResource CoverButtonStyle}" Height="112"
+                                Click="OpenDetailsButton_Click" AutomationProperties.Name="查看皮肤详情">
+                            <Grid>
+                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                <TextBlock Text="{Binding ThumbnailLabel}" ToolTip="{Binding ThumbnailError}" FontSize="11"
+                                           Foreground="{DynamicResource SecondaryText}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextAlignment="Center" TextWrapping="Wrap" Margin="12" />
+                            </Grid>
+                        </Button>
+                        <Button Content="重试图片" Padding="8,4" FontSize="10"
+                                HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,5"
+                                Visibility="{Binding ThumbnailRetryVisibility}"
+                                Click="RetryThumbnailButton_Click" AutomationProperties.Name="重试封面缩略图" />
+                    </Grid>
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <DockPanel Grid.Row="0" LastChildFill="True">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding InstallStatusLabel}" FontSize="11"
+                                       Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                       Margin="10,0,0,0" />
+                            <Button Click="OpenDetailsButton_Click"
+                                    HorizontalContentAlignment="Left" Padding="0" BorderThickness="0"
+                                    Background="{DynamicResource PanelSurface}" Foreground="{DynamicResource PrimaryText}"
+                                    FontSize="16" FontWeight="SemiBold" AutomationProperties.Name="打开皮肤详情">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            </Button>
+                        </DockPanel>
+                        <TextBlock Grid.Row="1" Text="{Binding SummaryLabel}" FontSize="12" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource SecondaryText}" />
+                        <TextBlock Grid.Row="2" Text="{Binding ShortDescription}" FontSize="12" Margin="0,7,0,5"
+                                   Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap"
+                                   MaxHeight="48" TextTrimming="CharacterEllipsis" />
+                        <DockPanel Grid.Row="3" Margin="0,5,0,0">
+                            <Button DockPanel.Dock="Right" Content="查看详情" Padding="10,6" Margin="8,0,0,0"
+                                    Style="{StaticResource MarketSecondaryButton}" Click="OpenDetailsButton_Click"
+                                    AutomationProperties.Name="查看皮肤详情" />
+                            <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
+                                       Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </DockPanel>
+                        <Grid Grid.Row="4" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <ProgressBar Height="4" Margin="0,0,0,5" Minimum="0" Maximum="100"
+                                             Value="{Binding DownloadProgress, Mode=OneWay}"
+                                             Visibility="{Binding ProgressVisibility}" />
+                                <TextBlock Text="{Binding UpdatedLabel}" FontSize="11"
+                                           Foreground="{DynamicResource SecondaryText}" />
+                                <TextBlock Text="{Binding OperationStatus}" FontSize="11" Margin="0,3,0,0"
+                                           TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding OperationIsError}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource ErrorText}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="{Binding DownloadButtonText}"
+                                    Style="{StaticResource PrimaryButton}" MinWidth="110"
+                                    IsEnabled="{Binding CanDownload}" Click="DownloadButton_Click"
+                                    AutomationProperties.Name="下载并安装皮肤" />
+                            <Button Grid.Column="3" Content="取消" Visibility="{Binding CancelVisibility}"
+                                    Click="CancelDownloadButton_Click" AutomationProperties.Name="取消皮肤下载" />
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
 
-    <Grid Margin="14">
+    <Grid Margin="18">
         <Grid.RowDefinitions>
-            <RowDefinition Height="38" />
-            <RowDefinition Height="12" />
+            <RowDefinition Height="44" />
+            <RowDefinition Height="14" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-
         <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
             <TextBlock Text="皮肤市场" FontSize="28" Style="{StaticResource PageTitle}" VerticalAlignment="Center" />
-            <Button x:Name="RefreshButton" Content="刷新目录" HorizontalAlignment="Right"
-                    Click="RefreshButton_Click" AutomationProperties.Name="刷新市场目录" />
+            <TextBlock x:Name="AccountDisplayText" Grid.Column="1" Visibility="Collapsed"
+                       Foreground="{DynamicResource SecondaryText}" FontSize="11"
+                       VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,10,0"
+                       TextTrimming="CharacterEllipsis" MaxWidth="135" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="LoginButton" Content="登录" Padding="9,6" Margin="0,0,4,0"
+                        Click="LoginButton_Click" AutomationProperties.Name="登录皮肤市场账号" />
+                <Button x:Name="RegisterButton" Content="注册" Padding="9,6" Margin="0,0,4,0"
+                        Click="RegisterButton_Click" AutomationProperties.Name="注册皮肤市场账号" />
+                <Button x:Name="LogoutButton" Content="退出" Padding="9,6" Margin="0,0,4,0"
+                        Visibility="Collapsed" Click="LogoutButton_Click" AutomationProperties.Name="退出皮肤市场账号" />
+                <Button x:Name="OpenUploadButton" Content="上传皮肤" Padding="9,6" Margin="0,0,4,0"
+                        Click="OpenUploadButton_Click" AutomationProperties.Name="上传皮肤" />
+                <Button x:Name="RefreshButton" Content="刷新" Padding="9,6"
+                        Click="RefreshButton_Click" AutomationProperties.Name="刷新市场目录" />
+            </StackPanel>
         </Grid>
 
         <Grid x:Name="CatalogPane" Grid.Row="2">
             <Grid.RowDefinitions>
-                <RowDefinition Height="42" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="12" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="12" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-
             <Grid Grid.Row="0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="12" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="4" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0">
-                    <TextBox x:Name="SearchBox" VerticalContentAlignment="Center" MaxLength="200"
-                             TextChanged="SearchBox_TextChanged" KeyDown="SearchBox_KeyDown"
-                             AutomationProperties.Name="搜索市场皮肤" />
-                    <TextBlock x:Name="SearchHint" Text="搜索皮肤名称或简介" FontSize="12"
-                               Foreground="{StaticResource SecondaryText}" Margin="13,0,0,0"
-                               VerticalAlignment="Center" IsHitTestVisible="False" />
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="42" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="4" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Grid.Column="0">
+                        <TextBox x:Name="SearchBox" VerticalContentAlignment="Center" MaxLength="200"
+                                 TextChanged="SearchBox_TextChanged" KeyDown="SearchBox_KeyDown"
+                                 AutomationProperties.Name="搜索市场皮肤" />
+                        <TextBlock x:Name="SearchHint" Text="搜索皮肤名称或简介" FontSize="12"
+                                   Foreground="{DynamicResource SecondaryText}" Margin="13,0,0,0"
+                                   VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Grid>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <RadioButton x:Name="FilterAllButton" GroupName="AppearanceFilter" Content="全部" Tag=""
+                                     IsChecked="True" Style="{StaticResource MarketFilterStyle}"
+                                     Checked="AppearanceFilter_Checked" AutomationProperties.Name="全部外观" />
+                        <RadioButton x:Name="FilterLightButton" GroupName="AppearanceFilter" Content="浅色" Tag="light"
+                                     Style="{StaticResource MarketFilterStyle}" Checked="AppearanceFilter_Checked"
+                                     AutomationProperties.Name="浅色外观" />
+                        <RadioButton x:Name="FilterDarkButton" GroupName="AppearanceFilter" Content="深色" Tag="dark"
+                                     Style="{StaticResource MarketFilterStyle}" Checked="AppearanceFilter_Checked"
+                                     AutomationProperties.Name="深色外观" />
+                    </StackPanel>
+                    <Button x:Name="SearchButton" Grid.Column="4" Content="搜索" MinWidth="72"
+                            Click="SearchButton_Click" AutomationProperties.Name="搜索市场目录" />
                 </Grid>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <RadioButton x:Name="FilterAllButton" GroupName="AppearanceFilter" Content="全部" Tag=""
-                                 IsChecked="True" Style="{StaticResource MarketFilterStyle}"
-                                 Checked="AppearanceFilter_Checked" AutomationProperties.Name="全部外观" />
-                    <RadioButton x:Name="FilterLightButton" GroupName="AppearanceFilter" Content="浅色" Tag="light"
-                                 Style="{StaticResource MarketFilterStyle}" Checked="AppearanceFilter_Checked"
-                                 AutomationProperties.Name="浅色外观" />
-                    <RadioButton x:Name="FilterDarkButton" GroupName="AppearanceFilter" Content="深色" Tag="dark"
-                                 Style="{StaticResource MarketFilterStyle}" Checked="AppearanceFilter_Checked"
-                                 AutomationProperties.Name="深色外观" />
-                </StackPanel>
-                <Button x:Name="SearchButton" Grid.Column="4" Content="搜索" MinWidth="72"
-                        Click="SearchButton_Click" AutomationProperties.Name="搜索市场目录" />
+                <DockPanel Grid.Row="1" LastChildFill="False" Margin="0,8,0,0">
+                    <TextBlock Text="排序" Foreground="{DynamicResource SecondaryText}" FontSize="12"
+                               VerticalAlignment="Center" Margin="0,0,7,0" />
+                    <ComboBox x:Name="SortBox" Width="132" SelectedValuePath="Tag"
+                              SelectionChanged="SortBox_SelectionChanged" AutomationProperties.Name="市场排序">
+                        <ComboBoxItem Content="最近更新" Tag="latest" IsSelected="True" />
+                        <ComboBoxItem Content="最多点赞" Tag="likes" />
+                    </ComboBox>
+                    <TextBlock x:Name="TagFilterLabel" Text="标签" Foreground="{DynamicResource SecondaryText}"
+                               FontSize="12" VerticalAlignment="Center" Margin="18,0,7,0" />
+                    <ComboBox x:Name="TagBox" Width="180" SelectedValuePath="Tag" Visibility="Collapsed"
+                              SelectionChanged="TagBox_SelectionChanged" AutomationProperties.Name="市场标签筛选" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+                        <RadioButton x:Name="GridViewButton" Content="网格" GroupName="MarketView"
+                                     Style="{StaticResource MarketFilterStyle}" IsChecked="True"
+                                     Checked="GridView_Checked" AutomationProperties.Name="网格视图" />
+                        <RadioButton x:Name="ListViewButton" Content="列表" GroupName="MarketView"
+                                     Style="{StaticResource MarketFilterStyle}"
+                                     Checked="ListView_Checked" AutomationProperties.Name="列表视图" />
+                    </StackPanel>
+                </DockPanel>
             </Grid>
 
-            <ScrollViewer x:Name="CatalogScrollViewer" Grid.Row="2"
-                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                          CanContentScroll="False" KeyboardNavigation.TabNavigation="Continue">
-                <ItemsControl x:Name="CatalogCards" AutomationProperties.Name="市场皮肤卡片列表">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Columns="2" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Style="{StaticResource MarketCardStyle}" Loaded="MarketCard_Loaded">
-                                <StackPanel>
-                                    <Grid ToolTip="包内背景预览图。点击图片可查看完整的静态皮肤效果。">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <Border Background="{StaticResource NoImageSurface}" CornerRadius="8"
-                                                ClipToBounds="True">
-                                                <Grid x:Name="PreviewFrame" Height="188" SizeChanged="PreviewFrame_SizeChanged">
-                                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
-                                                       RenderOptions.BitmapScalingMode="HighQuality" />
-                                                <TextBlock x:Name="PreviewPlaceholder" Text="{Binding PreviewLabel}"
-                                                           FontSize="12" Foreground="{StaticResource SecondaryText}"
-                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                           TextAlignment="Center" TextWrapping="Wrap" Margin="20"
-                                                           ToolTip="{Binding PreviewError}" />
-                                                <Button x:Name="PreviewButton" Style="{StaticResource PreviewImageButtonStyle}"
-                                                        Click="PreviewButton_Click" AutomationProperties.Name="打开皮肤效果预览"
-                                                        ToolTip="点击查看静态皮肤效果预览" />
-                                                <Button x:Name="RetryPreviewButton" Content="重试图片" Padding="12,7"
-                                                        HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12"
-                                                        Visibility="Collapsed" Click="RetryPreviewButton_Click"
-                                                        ToolTip="{Binding PreviewError}" AutomationProperties.Name="重试预览图片" />
-                                            </Grid>
-                                        </Border>
-                                        <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="9"
-                                                Padding="8,4" Background="{StaticResource OverlaySurface}" CornerRadius="8"
-                                                IsHitTestVisible="False">
-                                            <TextBlock Text="背景预览" FontSize="11" FontWeight="SemiBold" />
-                                        </Border>
-                                    </Grid>
-
-                                    <Grid Margin="2,10,2,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" MinWidth="0">
-                                            <TextBlock Text="{Binding Name}" FontSize="17" Style="{StaticResource SectionTitle}"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
-                                            <TextBlock Text="{Binding SummaryLabel}" FontSize="12" Margin="0,4,0,0"
-                                                       Foreground="{StaticResource SecondaryText}" />
-                                        </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="{Binding InstallStatus}" FontSize="11"
-                                                   Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center"
-                                                   Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
-                                    </Grid>
-
-                                    <TextBlock Text="{Binding ShortDescription}" FontSize="12" Margin="2,7,2,0"
-                                               Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
-                                               MaxHeight="38" TextTrimming="CharacterEllipsis" />
-                                    <Expander Style="{StaticResource MarketExpanderStyle}">
-                                        <Expander.Header>
-                                            <TextBlock Text="查看详情" Foreground="{StaticResource SecondaryText}"
-                                                       FontSize="12" />
-                                        </Expander.Header>
-                                        <StackPanel Margin="0,2,0,6">
-                                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap" />
-                                            <TextBlock Text="{Binding DetailMetadata}" Margin="0,7,0,0"
-                                                       Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Expander>
-                                    <TextBlock Text="{Binding OperationStatus}" FontSize="11" Margin="2,4,2,0"
-                                               TextWrapping="Wrap">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding OperationIsError}" Value="True">
-                                                        <Setter Property="Foreground" Value="{StaticResource ErrorText}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <ProgressBar Height="4" Margin="2,5,2,0" Minimum="0" Maximum="100"
-                                                 Value="{Binding DownloadProgress, Mode=OneWay}"
-                                                 Visibility="{Binding ProgressVisibility}" />
-                                    <Grid Margin="2,8,2,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="8" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding UpdatedLabel}" FontSize="11"
-                                                   Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center"
-                                                   TextTrimming="CharacterEllipsis" />
-                                        <Button x:Name="DownloadButton" Grid.Column="1" Content="{Binding DownloadButtonText}"
-                                                Style="{StaticResource PrimaryButton}" MinWidth="110"
-                                                IsEnabled="{Binding CanDownload}" Click="DownloadButton_Click"
-                                                AutomationProperties.Name="下载并安装皮肤" />
-                                        <Button x:Name="CancelDownloadButton" Grid.Column="3" Content="取消"
-                                                Visibility="{Binding CancelVisibility}"
-                                                Click="CancelDownloadButton_Click" AutomationProperties.Name="取消皮肤下载" />
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-                            <DataTemplate.Triggers>
-                                <DataTrigger Binding="{Binding HasThumbnail}" Value="True">
-                                    <Setter TargetName="PreviewPlaceholder" Property="Visibility" Value="Collapsed" />
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding HasPreviewError}" Value="True">
-                                    <Setter TargetName="RetryPreviewButton" Property="Visibility" Value="Visible" />
-                                    <Setter TargetName="PreviewPlaceholder" Property="Foreground" Value="{StaticResource ErrorText}" />
-                                </DataTrigger>
-                            </DataTemplate.Triggers>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-
-            <StackPanel x:Name="CatalogEmptyState" Grid.Row="2" Visibility="Collapsed"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16" MaxWidth="300">
-                <TextBlock x:Name="CatalogEmptyTitle" Text="正在读取市场目录" FontSize="15"
-                           FontWeight="SemiBold" TextAlignment="Center" />
-                <TextBlock x:Name="CatalogEmptyMessage" Text="请稍候。" FontSize="12"
-                           Foreground="{StaticResource SecondaryText}" TextAlignment="Center"
-                           TextWrapping="Wrap" Margin="0,7,0,12" />
-                <Button x:Name="EmptyRetryButton" Content="重试" HorizontalAlignment="Center"
-                        Visibility="Collapsed" Click="RefreshButton_Click" />
-            </StackPanel>
+            <Grid Grid.Row="2">
+                <ScrollViewer x:Name="CatalogScrollViewer" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled" CanContentScroll="False"
+                              KeyboardNavigation.TabNavigation="Continue">
+                    <Grid>
+                        <ItemsControl x:Name="GridCards" AutomationProperties.Name="市场皮肤网格">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate><StaticResource ResourceKey="GridSkinTemplate" /></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl x:Name="ListCards" Visibility="Collapsed" AutomationProperties.Name="市场皮肤列表">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate><StaticResource ResourceKey="ListSkinTemplate" /></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+                </ScrollViewer>
+                <StackPanel x:Name="CatalogEmptyState" Visibility="Collapsed"
+                            HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16" MaxWidth="320">
+                    <TextBlock x:Name="CatalogEmptyTitle" Text="正在读取市场目录" FontSize="16"
+                               FontWeight="SemiBold" TextAlignment="Center" />
+                    <TextBlock x:Name="CatalogEmptyMessage" Text="请稍候。" FontSize="12"
+                               Foreground="{DynamicResource SecondaryText}" TextAlignment="Center"
+                               TextWrapping="Wrap" Margin="0,7,0,12" />
+                    <Button x:Name="EmptyRetryButton" Content="重试" HorizontalAlignment="Center"
+                            Visibility="Collapsed" Click="RefreshButton_Click" />
+                </StackPanel>
+            </Grid>
 
             <Grid Grid.Row="4">
                 <Grid.ColumnDefinitions>
@@ -278,13 +406,13 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock x:Name="CatalogCount" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                    <TextBlock x:Name="CatalogCount" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                VerticalAlignment="Center" Margin="0,0,10,0" />
-                    <TextBlock x:Name="CatalogStatus" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                    <TextBlock x:Name="CatalogStatus" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="430" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock x:Name="PageText" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                    <TextBlock x:Name="PageText" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                VerticalAlignment="Center" Margin="0,0,8,0" />
                     <Button x:Name="PreviousPageButton" Content="上一页" Padding="10,7" Margin="0,0,6,0"
                             Click="PreviousPageButton_Click" AutomationProperties.Name="上一页" />
@@ -294,7 +422,11 @@
             </Grid>
         </Grid>
 
-        <Grid x:Name="PreviewPane" Grid.Row="2" Visibility="Collapsed">
+        <TextBlock x:Name="MarketAccountStatusText" Grid.Row="1" Visibility="Collapsed" FontSize="11"
+                   Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" />
+
+        <Grid x:Name="UploadPane" Grid.Row="2" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48" />
                 <RowDefinition Height="12" />
@@ -305,55 +437,259 @@
             <Grid Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackFromUploadButton" Content="返回市场" Padding="12,7"
+                        Click="BackFromUploadButton_Click" AutomationProperties.Name="返回皮肤市场" />
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                    <TextBlock Text="上传皮肤" FontSize="22" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="投稿会经过网站审核，通过前不会公开展示。" FontSize="12"
+                               Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" />
+                </StackPanel>
+            </Grid>
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="0,0,8,0" MaxWidth="820" HorizontalAlignment="Stretch">
+                    <StackPanel x:Name="UploadAccessPrompt" Visibility="Collapsed" Margin="0,12,0,0">
+                        <TextBlock x:Name="UploadAccessMessage" FontSize="14" TextWrapping="Wrap" />
+                        <Button x:Name="UploadLoginButton" Content="登录或注册" HorizontalAlignment="Left"
+                                Margin="0,12,0,0" Click="UploadLoginButton_Click"
+                                AutomationProperties.Name="登录后上传皮肤" />
+                    </StackPanel>
+                    <StackPanel x:Name="UploadForm" Visibility="Collapsed">
+                        <TextBlock Text="选择已有皮肤" FontSize="14" FontWeight="SemiBold" />
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="6" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="LocalSkinBox" Grid.Column="0" DisplayMemberPath="DisplayLabel"
+                                      AutomationProperties.Name="本地皮肤库中的皮肤" />
+                            <Button x:Name="ExportLocalSkinButton" Grid.Column="2" Content="使用本地皮肤"
+                                    Click="ExportLocalSkinButton_Click" AutomationProperties.Name="选择本地皮肤投稿" />
+                            <Button x:Name="PickUploadZipButton" Grid.Column="4" Content="选择 ZIP"
+                                    Click="PickUploadZipButton_Click" AutomationProperties.Name="选择皮肤 ZIP 文件" />
+                        </Grid>
+                        <TextBlock Text="上传包信息" FontSize="14" FontWeight="SemiBold" Margin="0,18,0,0" />
+                        <TextBlock x:Name="UploadPackageSummary" Text="请选择本地皮肤或 ZIP 包。"
+                                   Foreground="{DynamicResource SecondaryText}" Margin="0,7,0,0"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="皮肤简介" FontSize="12" Margin="0,16,0,5" />
+                        <TextBox x:Name="UploadDescriptionBox" MinHeight="76" AcceptsReturn="True"
+                                 TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                                 AutomationProperties.Name="投稿皮肤简介"
+                                 TextChanged="UploadSubmissionField_TextChanged" />
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="作者" FontSize="12" Margin="0,0,0,5" />
+                                <TextBox x:Name="UploadAuthorBox" AutomationProperties.Name="投稿皮肤作者" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="版权与授权说明" FontSize="12" Margin="0,0,0,5" />
+                                <TextBox x:Name="UploadLicenseBox" AutomationProperties.Name="投稿皮肤版权说明" />
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="最低管理器版本" FontSize="12" Margin="0,0,0,5" />
+                                <TextBox x:Name="UploadMinimumVersionBox" Text="1.0.0"
+                                         AutomationProperties.Name="最低管理器版本"
+                                         TextChanged="UploadSubmissionField_TextChanged" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="标签名称（逗号分隔）" FontSize="12" Margin="0,0,0,5" />
+                                <TextBox x:Name="UploadTagsBox" AutomationProperties.Name="投稿皮肤标签" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock x:Name="UploadStatusText" FontSize="12" Margin="0,12,0,0"
+                                   Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+            <Grid Grid.Row="4">
+                <TextBlock x:Name="UploadPermissionSummary" FontSize="12"
+                           Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                           TextWrapping="Wrap" Margin="0,0,12,0" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelSubmissionButton" Content="取消提交" Margin="0,0,6,0"
+                            Visibility="Collapsed" Click="CancelSubmissionButton_Click" />
+                    <Button x:Name="SubmitUploadButton" Content="提交审核" MinWidth="120"
+                            Style="{StaticResource PrimaryButton}" Click="SubmitUploadButton_Click"
+                            AutomationProperties.Name="提交皮肤审核" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <Grid x:Name="DetailsPane" Grid.Row="2" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+                <RowDefinition Height="12" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="10" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="14" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button x:Name="BackToCatalogButton" Content="返回市场" Padding="12,7"
                         Click="BackToCatalogButton_Click" AutomationProperties.Name="返回皮肤市场" />
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" MinWidth="0">
-                <TextBlock x:Name="PreviewPageTitle" FontSize="21" Style="{StaticResource PageTitle}"
+                    <TextBlock x:Name="DetailsTitle" FontSize="22" Style="{StaticResource PageTitle}"
                                TextTrimming="CharacterEllipsis" />
-                    <TextBlock x:Name="PreviewPageSummary" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                    <TextBlock x:Name="DetailsSummary" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
-                <TextBlock x:Name="PreviewPageInstallState" Grid.Column="3" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                <TextBlock x:Name="DetailsInstallState" Grid.Column="3" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center" Margin="12,0,0,0" />
             </Grid>
 
-            <Border Grid.Row="2" Background="{StaticResource PanelSurface}"
-                    BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12"
-                    ClipToBounds="True">
-                <Grid>
-                    <ContentControl x:Name="PreviewBrowserHost" />
-                    <StackPanel x:Name="PreviewStateOverlay" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                MaxWidth="360" Margin="24" IsHitTestVisible="False">
-                        <TextBlock x:Name="PreviewStateTitle" Text="正在读取皮肤预览…" FontSize="15"
-                                   FontWeight="SemiBold" TextAlignment="Center" />
-                        <TextBlock x:Name="PreviewStateDetail" Text="正在校验皮肤包并准备静态效果预览。"
-                                   FontSize="12" Foreground="{StaticResource SecondaryText}"
-                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,0" />
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid Margin="0,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="300" />
+                        <ColumnDefinition Width="18" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <Border Background="{DynamicResource NoImageSurface}" BorderBrush="{DynamicResource Line}"
+                                BorderThickness="1" CornerRadius="12" ClipToBounds="True">
+                            <Grid Height="210">
+                                <Image x:Name="DetailsThumbnail" Stretch="UniformToFill"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                <TextBlock x:Name="DetailsThumbnailPlaceholder" Text="未提供封面缩略图"
+                                           Foreground="{DynamicResource SecondaryText}" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border Background="{DynamicResource PanelSurface}" BorderBrush="{DynamicResource Line}"
+                                BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="版本与兼容性" FontWeight="SemiBold" FontSize="14" />
+                                <TextBlock x:Name="DetailsTechnical" Margin="0,9,0,0" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="DetailsCounts" Margin="0,11,0,0" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}" />
+                            </StackPanel>
+                        </Border>
+                        <Button x:Name="WebsiteDetailButton" Content="在网站查看" Margin="0,12,0,0"
+                                HorizontalAlignment="Stretch" Visibility="Collapsed"
+                                Click="WebsiteDetailButton_Click" AutomationProperties.Name="在网站查看此皮肤" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="皮肤说明" FontSize="17" Style="{StaticResource SectionTitle}" />
+                        <TextBlock x:Name="DetailsDescription" Margin="0,8,0,0" FontSize="13"
+                                   TextWrapping="Wrap" LineHeight="21" />
+                        <Grid Margin="0,18,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="评论与反馈" FontSize="17" Style="{StaticResource SectionTitle}" />
+                                <TextBlock x:Name="DetailsCommunityStatus" FontSize="11" Margin="0,4,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="DetailsLikeButton" Grid.Column="1" Content="登录后点赞"
+                                    VerticalAlignment="Center" Click="DetailsLikeButton_Click"
+                                    AutomationProperties.Name="点赞或取消点赞" />
+                        </Grid>
+                        <ItemsControl x:Name="CommentsList" Margin="0,8,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1"
+                                            Padding="0,8,0,9">
+                                        <StackPanel>
+                                            <DockPanel LastChildFill="True">
+                                                <TextBlock Text="{Binding Author}" FontSize="12" FontWeight="SemiBold"
+                                                           Margin="0,0,10,0" />
+                                                <TextBlock Text="{Binding DateLabel}" FontSize="11"
+                                                           Foreground="{DynamicResource SecondaryText}"
+                                                           HorizontalAlignment="Right" />
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Content}" FontSize="12" Margin="0,5,0,0"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="CommentsEmptyText" Text="还没有评论。"
+                                   Foreground="{DynamicResource SecondaryText}" FontSize="12" Margin="0,8,0,0" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <TextBlock x:Name="CommentsPaginationText" FontSize="11"
+                                       Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
+                                       Margin="0,0,8,0" />
+                            <Button x:Name="PreviousCommentsButton" Content="上一页" Padding="9,5" Margin="0,0,5,0"
+                                    Click="PreviousCommentsButton_Click" AutomationProperties.Name="上一页评论" />
+                            <Button x:Name="NextCommentsButton" Content="下一页" Padding="9,5"
+                                    Click="NextCommentsButton_Click" AutomationProperties.Name="下一页评论" />
+                        </StackPanel>
+                        <TextBox x:Name="CommentInput" MinHeight="66" AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Margin="0,12,0,0"
+                                 AutomationProperties.Name="输入评论"
+                                 TextChanged="CommunityInput_TextChanged" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,7,0,0">
+                            <Button x:Name="LoginToCommentButton" Content="登录后评论"
+                                    Click="LoginToCommentButton_Click" AutomationProperties.Name="登录后发表评论" />
+                            <Button x:Name="SendCommentButton" Content="发表评论"
+                                    Style="{StaticResource PrimaryButton}" Margin="6,0,0,0"
+                                    Click="SendCommentButton_Click" AutomationProperties.Name="发表评论" />
+                        </StackPanel>
+                        <TextBlock x:Name="CommentStatusText" FontSize="11" Margin="0,7,0,0"
+                                   Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                        <Border Background="{DynamicResource PanelSurface}" BorderBrush="{DynamicResource Line}"
+                                BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,18,0,0">
+                            <StackPanel>
+                                <TextBlock Text="作者与授权" FontWeight="SemiBold" FontSize="14" />
+                                <TextBlock x:Name="DetailsAuthor" Margin="0,8,0,0" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="DetailsLicense" Margin="0,5,0,0" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="DetailsSubmitter" Margin="0,5,0,0" FontSize="12"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="DetailsOperationStatus" Margin="0,14,0,0" FontSize="12"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" />
+                        <ProgressBar x:Name="DetailsProgress" Height="4" Margin="0,7,0,0"
+                                     Minimum="0" Maximum="100" />
+                        <Button x:Name="DetailsCancelButton" Content="取消下载" Margin="0,8,0,0"
+                                HorizontalAlignment="Left" Visibility="Collapsed"
+                                Click="CancelDownloadButton_Click" AutomationProperties.Name="取消皮肤下载" />
                     </StackPanel>
                 </Grid>
-            </Border>
+            </ScrollViewer>
 
             <Grid Grid.Row="4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="PreviewStatusText" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                <TextBlock x:Name="DetailsStatusText" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                            VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,10,0" />
-                <Button x:Name="PreviewRetryButton" Grid.Column="1" Content="重试预览"
-                        Visibility="Collapsed" Click="PreviewRetryButton_Click"
-                        AutomationProperties.Name="重试皮肤效果预览" />
-                <Button x:Name="PreviewInstallButton" Grid.Column="3" Content="下载并安装"
-                        Style="{StaticResource PrimaryButton}" MinWidth="124"
-                        Click="PreviewInstallButton_Click" IsEnabled="False"
-                        AutomationProperties.Name="下载并安装预览皮肤" />
+                <Button x:Name="DetailsDownloadButton" Grid.Column="1" Content="下载并安装"
+                        Style="{StaticResource PrimaryButton}" MinWidth="138"
+                        Click="DetailsDownloadButton_Click" AutomationProperties.Name="下载并安装皮肤" />
             </Grid>
         </Grid>
+        <wv2:WebView2 x:Name="AccountCookieBridge" Grid.Row="2" Width="1" Height="1"
+                      Visibility="Hidden" Focusable="False" IsHitTestVisible="False" />
     </Grid>
 </Window>

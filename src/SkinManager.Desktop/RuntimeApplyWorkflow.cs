@@ -12,6 +12,7 @@ internal sealed class RuntimeApplyWorkflow
     private readonly TimeSpan _readinessTimeout;
     private readonly TimeSpan _pollInterval;
     private readonly Action<RuntimeStatus>? _progress;
+    private readonly Func<CodexInstance, CancellationToken, Task<bool>>? _confirmDebugModeSwitch;
 
     internal RuntimeApplyWorkflow(
         Func<DebugClientLaunchOptions, CancellationToken, Task<RuntimeStatus>> launchDebugClient,
@@ -19,7 +20,8 @@ internal sealed class RuntimeApplyWorkflow
         ICodexInstanceService? instances,
         TimeSpan? readinessTimeout = null,
         TimeSpan? pollInterval = null,
-        Action<RuntimeStatus>? progress = null)
+        Action<RuntimeStatus>? progress = null,
+        Func<CodexInstance, CancellationToken, Task<bool>>? confirmDebugModeSwitch = null)
     {
         _launchDebugClient = launchDebugClient;
         _apply = apply;
@@ -27,6 +29,7 @@ internal sealed class RuntimeApplyWorkflow
         _readinessTimeout = readinessTimeout ?? TimeSpan.FromSeconds(45);
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(900);
         _progress = progress;
+        _confirmDebugModeSwitch = confirmDebugModeSwitch;
     }
 
     internal async Task<RuntimeStatus> StartOrApplyAsync(
@@ -121,13 +124,32 @@ internal sealed class RuntimeApplyWorkflow
         {
             return TargetResolution.Failed(Error(
                 compatibilityOnly
-                    ? "无法核验 Codex 实例身份。请使用“管理实例”选择窗口后重试。"
-                    : "无法核验 Codex 实例身份。请使用“管理实例”选择窗口后再应用。",
+                    ? "无法核验 Codex 实例身份。请打开“选择窗口”确认目标后重试。"
+                    : "无法核验 Codex 实例身份。请打开“选择窗口”确认目标后再应用。",
                 endpoint,
                 skinId));
         }
 
         var instances = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        var running = GetRunningInstances(instances);
+        var normalTargets = running.Where(instance => instance.Kind == CodexInstanceKind.Normal).ToArray();
+        var debugTargets = running.Where(instance => instance.Kind == CodexInstanceKind.Debug).ToArray();
+        if (instances.Count == 1 && normalTargets.Length == 1 && debugTargets.Length == 0)
+        {
+            var switchError = await ConfirmAndSwitchNormalInstanceAsync(
+                normalTargets[0], endpoint, skinId, cancellationToken).ConfigureAwait(false);
+            if (switchError is not null)
+                return TargetResolution.Failed(switchError);
+            instances = Array.Empty<CodexInstance>();
+        }
+        else if (normalTargets.Length > 1 && debugTargets.Length == 0)
+        {
+            return TargetResolution.Failed(Error(
+                "检测到多个普通版 Codex。请在“选择窗口”中处理具体实例后重试；未关闭任何窗口。",
+                endpoint,
+                skinId));
+        }
+
         var latestSelectedTarget = selectedTarget is null
             ? null
             : instances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
@@ -173,13 +195,13 @@ internal sealed class RuntimeApplyWorkflow
         if (residual is not null)
         {
             return TargetResolution.Failed(Error(
-                $"检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）。请在“管理实例”中检查并处理后再启动。",
+                $"检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）。请在“选择窗口”中检查并处理后再启动。",
                 endpoint,
                 skinId));
         }
 
-        var running = GetRunningInstances(instances);
-        var debugTargets = running.Where(instance => instance.Kind == CodexInstanceKind.Debug).ToArray();
+        running = GetRunningInstances(instances);
+        debugTargets = running.Where(instance => instance.Kind == CodexInstanceKind.Debug).ToArray();
         if (debugTargets.Length > 1)
         {
             return TargetResolution.Failed(Error(DescribeMultipleDebugTargets(debugTargets, port, "检测到多个正在运行的调试版 Codex"), endpoint, skinId));
@@ -210,7 +232,7 @@ internal sealed class RuntimeApplyWorkflow
         if (running.Any(instance => instance.Kind == CodexInstanceKind.Normal))
         {
             return TargetResolution.Failed(Error(
-                "检测到普通版 Codex 仍在运行。请先在“管理实例”中定位并手动退出，再启动调试版；管理器不会自动关闭或重启 Codex。",
+                "仍检测到普通版 Codex。请在“选择窗口”中处理退出失败或其他实例后，再启动调试版。",
                 endpoint,
                 skinId));
         }
@@ -230,6 +252,108 @@ internal sealed class RuntimeApplyWorkflow
         return launched.Error is not null
             ? TargetResolution.Failed(launched.Error)
             : new TargetResolution(launched.Target, null, false, null);
+    }
+
+    private async Task<RuntimeStatus?> ConfirmAndSwitchNormalInstanceAsync(
+        CodexInstance initialInstance,
+        string endpoint,
+        string? skinId,
+        CancellationToken cancellationToken)
+    {
+        if (_confirmDebugModeSwitch is null)
+        {
+            return Error(
+                "检测到唯一普通版 Codex。切换到调试版前需要确认退出；请在“选择窗口”中处理该实例。",
+                endpoint,
+                skinId);
+        }
+
+        bool accepted;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            accepted = await _confirmDebugModeSwitch(initialInstance, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Error($"无法确认普通版 Codex 切换：{exception.Message}", endpoint, skinId);
+        }
+
+        if (!accepted)
+            return new RuntimeStatus(
+                RuntimeStatusState.Stopped,
+                skinId,
+                endpoint,
+                "已取消切换；当前 Codex 保持运行，未启动调试版或应用皮肤。",
+                false);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<CodexInstance> beforeClose;
+        try
+        {
+            beforeClose = await _instances!.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Error($"确认后无法重新核验 Codex 窗口：{exception.Message}。未关闭或启动实例。", endpoint, skinId);
+        }
+
+        var stillSelected = beforeClose.Count == 1 &&
+            SameIdentity(beforeClose[0].Identity, initialInstance.Identity) &&
+            beforeClose[0].Kind == CodexInstanceKind.Normal &&
+            !beforeClose[0].IsExitResidual;
+        if (!stillSelected)
+            return Error("确认期间 Codex 窗口或完整进程身份发生变化。未关闭或启动实例；请在“选择窗口”中刷新。", endpoint, skinId);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        CodexCloseOperationResult closeResult;
+        try
+        {
+            closeResult = await _instances.CloseAsync(beforeClose[0], force: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Error($"退出普通版 Codex 时未能确认完成：{exception.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+        }
+
+        if (closeResult.Outcome != CodexCloseResult.Closed)
+        {
+            return Error($"普通版 Codex 尚未确认完全退出：{closeResult.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<CodexInstance> afterClose;
+        try
+        {
+            afterClose = await _instances.GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return Error($"普通版退出后无法核验是否仍有 Codex 窗口或后台残留：{exception.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+        }
+
+        if (afterClose.Count != 0)
+        {
+            return Error("普通版 Codex 退出后仍检测到实例或后台残留。请在“选择窗口”中处理后重试；未启动调试版或应用皮肤。", endpoint, skinId);
+        }
+
+        return null;
     }
 
     private async Task<(CodexInstance? Target, RuntimeStatus? Error)> WaitForPinnedTargetAsync(
@@ -331,7 +455,7 @@ internal sealed class RuntimeApplyWorkflow
             if (residual is not null)
             {
                 return (null, Error(
-                    $"启动等待期间检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）；{operationNotSent}。请在“管理实例”中检查并处理。",
+                    $"启动等待期间检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）；{operationNotSent}。请在“选择窗口”中检查并处理。",
                     endpoint,
                     skinId));
             }
@@ -340,7 +464,7 @@ internal sealed class RuntimeApplyWorkflow
             if (running.Any(instance => instance.Kind == CodexInstanceKind.Normal))
             {
                 return (null, Error(
-                    $"启动后检测到普通版 Codex；{operationNotSent}。请在“管理实例”中检查当前窗口。",
+                    $"启动后检测到普通版 Codex；{operationNotSent}。请在“选择窗口”中检查当前窗口。",
                     endpoint,
                     skinId));
             }
@@ -367,7 +491,7 @@ internal sealed class RuntimeApplyWorkflow
 
                 if (target.DebugPort != port)
                 {
-                    return (null, Error($"启动后检测到端口为 {FormatPort(target.DebugPort)} 的调试实例，与请求端口 {port} 不同；{operationNotSent}。请在“管理实例”中选择窗口。", endpoint, skinId));
+                    return (null, Error($"启动后检测到端口为 {FormatPort(target.DebugPort)} 的调试实例，与请求端口 {port} 不同；{operationNotSent}。请在“选择窗口”中选择窗口。", endpoint, skinId));
                 }
 
                 discoveredIdentity ??= target.Identity;
@@ -416,7 +540,7 @@ internal sealed class RuntimeApplyWorkflow
         if (target.IsExitResidual)
         {
             return Error(
-                $"所选调试实例 PID {target.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留。{GetOperationNotSent(compatibilityOnly)}。请在“管理实例”中检查并处理后再启动。",
+                $"所选调试实例 PID {target.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留。{GetOperationNotSent(compatibilityOnly)}。请在“选择窗口”中检查并处理后再启动。",
                 endpoint,
                 skinId);
         }
@@ -547,13 +671,13 @@ internal sealed class RuntimeApplyWorkflow
         };
 
     private static string DescribePortMismatch(CodexInstance instance, int requestedPort) =>
-        $"检测到正在运行的调试版 Codex（端口 {FormatPort(instance.DebugPort)}），与当前端口 {requestedPort} 不匹配。请在“管理实例”中选择窗口。";
+        $"检测到正在运行的调试版 Codex（端口 {FormatPort(instance.DebugPort)}），与当前端口 {requestedPort} 不匹配。请在“选择窗口”中选择窗口。";
 
     private static string DescribeMultipleDebugTargets(IReadOnlyList<CodexInstance> targets, int requestedPort, string prefix)
     {
         var ports = string.Join("、", targets.Select(instance => instance.DebugPort).Distinct()
             .OrderBy(port => port ?? int.MaxValue).Select(FormatPort));
-        return $"{prefix}（端口 {ports}），当前请求端口为 {requestedPort}。请在“管理实例”中选择窗口。";
+        return $"{prefix}（端口 {ports}），当前请求端口为 {requestedPort}。请在“选择窗口”中选择窗口。";
     }
 
     private static string FormatPort(int? port) => port?.ToString(CultureInfo.InvariantCulture) ?? "未知";

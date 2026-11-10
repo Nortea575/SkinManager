@@ -59,6 +59,9 @@ internal static class CompatibilityWindowTests
                     Find<Button>(window, "LaunchDebugCodexButton").IsVisible &&
                     Find<Button>(window, "CloseButton").IsVisible,
                 "不展开Magpie条目也能找到调试版启动入口与固定关闭按钮");
+            Require(Find<TextBlock>(window, "CodexConfigStatusText").Text == "config.toml 可读取" &&
+                    Find<TextBlock>(window, "CodexConfigPathText").Text.Contains("SkinManager-fixture", StringComparison.Ordinal),
+                "Codex 配置可读状态单独展示，测试使用隔离的 fixture 路径");
             Require(toggle.IsChecked == true && saved.Text.Contains("已保存", StringComparison.Ordinal) &&
                     runtime.Text.StartsWith("已生效", StringComparison.Ordinal) && writes == 0 && configureCalls == 0,
                 "重新打开时读取保存值与最近结果，初始化不保存、不连接");
@@ -419,7 +422,8 @@ internal static class CompatibilityWindowTests
             launchDebugCodex ?? (() => Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null, null, "fake", true))),
             inspectMagpie ?? (_ => new MagpieCompatibilityResult(
                 false, false, null, null, MagpieCompatibilitySupport.NotInstalled, false, "fake evidence", "未检测到")),
-            launchMagpie ?? ((_, _) => Task.CompletedTask))
+            launchMagpie ?? ((_, _) => Task.CompletedTask),
+            new FixtureCodexConfigReadabilityService())
         {
             Width = 620,
             Height = 440,
@@ -433,6 +437,13 @@ internal static class CompatibilityWindowTests
         window.FindName(name) is T element
             ? element
             : throw new InvalidOperationException($"兼容设置页缺少控件 {name}。");
+
+    private sealed class FixtureCodexConfigReadabilityService : ICodexConfigReadabilityService
+    {
+        public CodexConfigReadabilityResult Inspect() => new(
+            Path.Combine(Path.GetTempPath(), "SkinManager-fixture", "codex", "config.toml"),
+            CodexConfigReadabilityState.Readable);
+    }
 
     private static void Toggle(CheckBox checkBox)
     {

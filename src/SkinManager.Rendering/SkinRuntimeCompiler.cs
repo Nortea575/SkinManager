@@ -714,6 +714,22 @@ public static class SkinRuntimeCompiler
 
           manager.imageUrl = (key) => manager.blobUrls.get(key) || manager.package.images?.[key] || "";
 
+          manager.syncActiveStyle = () => {
+            const css = manager.active?.css || "";
+            if (!css) {
+              manager.styleElement?.remove();
+              manager.styleElement = null;
+              return;
+            }
+            if (!manager.styleElement) {
+              manager.styleElement = document.createElement("style");
+              manager.styleElement.id = "skin-manager-runtime-style";
+              manager.styleElement.setAttribute("data-skin-manager-owned", "true");
+            }
+            if (!manager.styleElement.isConnected) document.head.insertBefore(manager.styleElement, document.head.firstChild);
+            if (manager.styleElement.textContent !== css) manager.styleElement.textContent = css;
+          };
+
           manager.setBackgroundActive = (active) => {
             const root = document.documentElement;
             if (!manager.rootBackgroundOriginal) {
@@ -800,23 +816,14 @@ public static class SkinRuntimeCompiler
             const theme = manager.theme();
             const scene = manager.scene();
             const key = `${theme}:${scene}`;
-            if (!force && key === manager.activeKey) return;
+            if (!force && key === manager.activeKey) {
+              manager.syncActiveStyle();
+              return;
+            }
             manager.activeKey = key;
             manager.active = manager.package.styles?.[theme]?.[scene] || null;
             manager.nativeBackgroundCache.clear();
-            const css = manager.active?.css || "";
-            if (css) {
-              if (!manager.styleElement) {
-                manager.styleElement = document.createElement("style");
-                manager.styleElement.id = "skin-manager-runtime-style";
-                manager.styleElement.setAttribute("data-skin-manager-owned", "true");
-                document.head.insertBefore(manager.styleElement, document.head.firstChild);
-              }
-              if (manager.styleElement.textContent !== css) manager.styleElement.textContent = css;
-            } else {
-              manager.styleElement?.remove();
-              manager.styleElement = null;
-            }
+            manager.syncActiveStyle();
             manager.setBackgroundActive(!!manager.active?.background);
             manager.updateBackground();
             manager.rebindAll();

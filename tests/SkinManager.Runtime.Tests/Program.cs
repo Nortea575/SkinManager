@@ -18,12 +18,14 @@ internal static class Program
                 return await RunLiveDiscoveryAsync();
 
             await MagpieCompatibilityServiceTests.RunAsync();
+            CodexConfigReadabilityServiceTests.Run();
             CompatibilitySettingsStoreTests.Run();
             await LocaleCompatibilityScriptTests.RunAsync();
             await TestLocaleCompatibilityLifecycleAsync();
             await TestDebugClientLaunchAsync();
             await TestAgentRestartAfterExitRaceAsync();
             await TestCodexInstanceEnumerationAndActionsAsync();
+            await TestActiveConnectionHealthAsync();
             await TestExpectedInstanceAndPipeIdentityAsync();
             await TestIgnoredLargeEventsAndPayloadAllocationsAsync();
             await TestCorrelatedCommandsAndEventsAsync();
@@ -803,6 +805,76 @@ internal static class Program
             "the Agent pipe response carries ConnectedInstance identity through JSON serialization");
     }
 
+    private static async Task TestActiveConnectionHealthAsync()
+    {
+        const int port = 19447;
+        var candidate = Candidate(7947, FakeCodexExecutablePath, $"\"{FakeCodexExecutablePath}\" --remote-debugging-port={port}");
+        var platform = new FakeCodexInstancePlatform();
+        platform.AddRoot(candidate, 90);
+        platform.ListenerEndpoints[port] = [new CodexListenerEndpoint(candidate.Identity.ProcessId, IPAddress.Loopback)];
+        var service = new WindowsCodexInstanceService(platform);
+
+        var verified = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}/");
+        Assert(verified.State == ActiveConnectionHealthState.Verified && !verified.ShouldDisconnect,
+            "active health核验直接确认完整进程身份与精确 listener owner，不要求HTTP探测");
+
+        platform.ListenerEndpoints[port] = [];
+        var listenerMissing = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(listenerMissing.State == ActiveConnectionHealthState.Unverifiable && !listenerMissing.ShouldDisconnect,
+            "活动 WebSocket 仍可能有效时，暂时缺失的 listener 不会被误判为断开");
+
+        platform.ListenerEndpoints[port] = [new CodexListenerEndpoint(candidate.Identity.ProcessId + 1, IPAddress.Loopback)];
+        var ownerChanged = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(ownerChanged.State == ActiveConnectionHealthState.EndpointOwnershipChanged && ownerChanged.ShouldDisconnect,
+            "精确活动地址改由另一个 PID 监听时拒绝继续保留连接");
+
+        platform.ListenerEndpoints[port] = [new CodexListenerEndpoint(candidate.Identity.ProcessId, IPAddress.IPv6Loopback)];
+        var otherAddress = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(otherAddress.State == ActiveConnectionHealthState.Unverifiable && !otherAddress.ShouldDisconnect,
+            "同端口的另一个 loopback 地址不被误当成活动 endpoint 的监听归属");
+
+        platform.ListenerEndpoints[port] = [new CodexListenerEndpoint(candidate.Identity.ProcessId, IPAddress.Loopback)];
+        platform.CurrentIdentities[candidate.Identity.ProcessId] = candidate.Identity with
+        {
+            StartedAtUtc = candidate.Identity.StartedAtUtc.AddSeconds(1)
+        };
+        var pidReused = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(pidReused.State == ActiveConnectionHealthState.IdentityChanged && pidReused.ShouldDisconnect,
+            "PID复用后由启动时间变化拒绝保留活动连接");
+
+        platform.CurrentIdentities.Remove(candidate.Identity.ProcessId);
+        var exited = await service.VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(exited.State == ActiveConnectionHealthState.ProcessExited && exited.ShouldDisconnect,
+            "进程退出时明确拒绝保留活动连接");
+
+        var temporarilyUnreachable = new CodexInstance(candidate.Identity, "Codex", 0, port, null)
+        {
+            Kind = CodexInstanceKind.Debug,
+            CanConnect = false,
+            DebugConnectionState = CodexDebugConnectionState.WaitingForCdp,
+            DebugEndpoint = null
+        };
+        ICodexInstanceService snapshotService = new HealthSnapshotInstanceService([temporarilyUnreachable]);
+        var snapshotHealth = await snapshotService
+            .VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(snapshotHealth.State == ActiveConnectionHealthState.Unverifiable && !snapshotHealth.ShouldDisconnect,
+            "默认接口遇到HTTP/CDP探测暂时失败时不要求已建立连接断开");
+
+        var replacedIdentity = candidate.Identity with { StartedAtUtc = candidate.Identity.StartedAtUtc.AddSeconds(1) };
+        var replacement = temporarilyUnreachable with { Identity = replacedIdentity };
+        snapshotService = new HealthSnapshotInstanceService([replacement]);
+        var replacedHealth = await snapshotService
+            .VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(replacedHealth.State == ActiveConnectionHealthState.IdentityChanged && replacedHealth.ShouldDisconnect,
+            "默认接口仍能从实例快照识别同 PID 的启动时间变化");
+
+        snapshotService = new HealthSnapshotInstanceService([]);
+        var missingHealth = await snapshotService
+            .VerifyActiveConnectionAsync(candidate.Identity, $"http://127.0.0.1:{port}");
+        Assert(missingHealth.State == ActiveConnectionHealthState.ProcessExited && missingHealth.ShouldDisconnect,
+            "默认接口仍能从实例快照识别进程退出");
+    }
+
     private static CodexProcessCandidate Candidate(int processId, string executablePath, string commandLine) => new(
         new CodexProcessIdentity(processId, DateTimeOffset.FromUnixTimeSeconds(1_700_000_000 + processId), Path.GetFullPath(executablePath)),
         "Codex",
@@ -1299,6 +1371,24 @@ internal static class Program
             throw new InvalidOperationException("FAIL: " + description);
         Console.WriteLine("PASS: " + description);
     }
+}
+
+internal sealed class HealthSnapshotInstanceService(IReadOnlyList<CodexInstance> instances) : ICodexInstanceService
+{
+    public Task<IReadOnlyList<CodexInstance>> GetInstancesAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(instances);
+    }
+
+    public Task<CodexLocateResult> LocateAsync(CodexInstance instance, CancellationToken cancellationToken = default) =>
+        Task.FromException<CodexLocateResult>(new InvalidOperationException("Unexpected locate call."));
+
+    public Task<CodexCloseOperationResult> CloseAsync(
+        CodexInstance instance,
+        bool force = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<CodexCloseOperationResult>(new InvalidOperationException("Unexpected close call."));
 }
 
 internal sealed record FakeStoreActivationRequest(string AppUserModelId, string Arguments);

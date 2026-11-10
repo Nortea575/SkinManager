@@ -51,8 +51,57 @@ public enum CodexLocateResult
 public interface ICodexInstanceService
 {
     Task<IReadOnlyList<CodexInstance>> GetInstancesAsync(CancellationToken cancellationToken = default);
+    async Task<ActiveConnectionHealthResult> VerifyActiveConnectionAsync(
+        CodexProcessIdentity identity,
+        string? endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<CodexInstance> instances;
+        try
+        {
+            instances = await GetInstancesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return ActiveConnectionHealthResult.Unverifiable($"暂时无法检查 Codex 实例列表：{exception.Message}");
+        }
+
+        var matching = instances.FirstOrDefault(instance => SameIdentity(instance.Identity, identity));
+        if (matching is null)
+        {
+            var replacement = instances.FirstOrDefault(instance => instance.Identity.ProcessId == identity.ProcessId);
+            return replacement is null
+                ? new(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已不在实例列表中。")
+                : new(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+        }
+
+        if (matching.IsExitResidual)
+            return new(ActiveConnectionHealthState.ProcessExited, $"Codex 主进程 PID {identity.ProcessId} 已退出。 ");
+        if (matching.Kind != CodexInstanceKind.Debug || matching.DebugPort is null)
+            return new(ActiveConnectionHealthState.EndpointOwnershipChanged, "活动 Codex 实例不再声明调试连接。 ");
+        if (!matching.CanConnect || !ActiveConnectionEndpoint.TryParse(endpoint, out var activeEndpoint) ||
+            !ActiveConnectionEndpoint.TryParse(matching.DebugEndpoint, out var discoveredEndpoint))
+            return ActiveConnectionHealthResult.Unverifiable("HTTP listener 探测暂时不可用，未据此断开已建立的 CDP 会话。 ");
+
+        return ActiveConnectionEndpoint.SameAddress(activeEndpoint!, discoveredEndpoint!)
+            ? ActiveConnectionHealthResult.Verified()
+            : ActiveConnectionHealthResult.Unverifiable("实例快照发现了不同地址；默认核验器无法证明活动地址的监听归属。 ");
+    }
+
     Task<CodexLocateResult> LocateAsync(CodexInstance instance, CancellationToken cancellationToken = default);
     Task<CodexCloseOperationResult> CloseAsync(CodexInstance instance, bool force = false, CancellationToken cancellationToken = default);
+
+    private static bool SameIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
+        left.ProcessId == right.ProcessId &&
+        left.StartedAtUtc.UtcDateTime == right.StartedAtUtc.UtcDateTime &&
+        string.Equals(Path.GetFullPath(left.ExecutablePath), Path.GetFullPath(right.ExecutablePath), StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed record CodexProcessCandidate(
@@ -249,6 +298,59 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         {
             throw CreateRefreshException(ex);
         }
+    }, cancellationToken);
+
+    public Task<ActiveConnectionHealthResult> VerifyActiveConnectionAsync(
+        CodexProcessIdentity identity,
+        string? endpoint,
+        CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var observation = _platform.ObserveProcess(identity.ProcessId);
+        if (observation.State == CodexProcessObservationState.Exited)
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已退出。 ");
+        if (observation.State == CodexProcessObservationState.Unknown || observation.Identity is null)
+            return ActiveConnectionHealthResult.Unverifiable(observation.Issue ?? "暂时无法核验活动 Codex 进程身份。 ");
+        if (!SameIdentity(observation.Identity, identity) || !_platform.IsCodexIdentity(observation.Identity))
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+
+        if (!ActiveConnectionEndpoint.TryParse(endpoint, out var activeEndpoint))
+            return ActiveConnectionHealthResult.Unverifiable("活动 CDP endpoint 不是可核验的 loopback 地址。 ");
+
+        IReadOnlyList<CodexListenerEndpoint> listeners;
+        try
+        {
+            listeners = _platform.GetLoopbackListenerEndpoints(activeEndpoint!.Port);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception or NotSupportedException or System.Security.SecurityException)
+        {
+            return ActiveConnectionHealthResult.Unverifiable($"暂时无法读取活动 endpoint 的 listener 归属：{exception.Message}");
+        }
+
+        var exactOwners = listeners
+            .Select(listener => (Listener: listener, Endpoint: listener.ToLoopbackEndpoint(activeEndpoint!.Port)))
+            .Where(entry => entry.Endpoint is not null && ActiveConnectionEndpoint.SameAddress(activeEndpoint!, entry.Endpoint))
+            .Select(entry => entry.Listener.ProcessId)
+            .Distinct()
+            .ToArray();
+        if (exactOwners.Length == 0)
+            return ActiveConnectionHealthResult.Unverifiable("活动 endpoint 当前没有可核验的 listener；已建立的 CDP 会话保持原状态。 ");
+        if (exactOwners.Length != 1 || exactOwners[0] != identity.ProcessId)
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.EndpointOwnershipChanged,
+                $"活动 endpoint {activeEndpoint} 不再由所选 Codex 进程唯一监听。 ");
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var finalObservation = _platform.ObserveProcess(identity.ProcessId);
+        if (finalObservation.State == CodexProcessObservationState.Exited)
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已退出。 ");
+        if (finalObservation.State == CodexProcessObservationState.Unknown || finalObservation.Identity is null)
+            return ActiveConnectionHealthResult.Unverifiable(finalObservation.Issue ?? "读取 listener 后无法重新核验活动进程身份。 ");
+        if (!SameIdentity(finalObservation.Identity, identity) || !_platform.IsCodexIdentity(finalObservation.Identity))
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+
+        return ActiveConnectionHealthResult.Verified();
     }, cancellationToken);
 
     public Task<CodexCloseOperationResult> CloseAsync(CodexInstance instance, bool force = false, CancellationToken cancellationToken = default) => Task.Run(() =>

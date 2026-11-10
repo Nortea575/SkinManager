@@ -81,13 +81,13 @@ internal static class UpdateChannelChecks
             client,
             updatesDirectory,
             new Version(1, 1, 3),
-            currentVersionTag: "1.1.3-beta.1");
+            currentVersionTag: "1.1.3-beta.2");
         coordinator.AutomaticCheckAndDownload = false;
         coordinator.IncludePrereleases = true;
         await coordinator.CheckAsync();
-        Check(client.LastRequest is { IncludePrereleases: true, CurrentVersionTag: "1.1.3-beta.1" },
+        Check(client.LastRequest is { IncludePrereleases: true, CurrentVersionTag: "1.1.3-beta.2" },
             "检查请求携带测试版通道及完整当前版本标签");
-        Check(coordinator.CurrentVersionLabel == "1.1.3-beta.1" &&
+        Check(coordinator.CurrentVersionLabel == "1.1.3-beta.2" &&
               client.Release.DisplayVersion == "1.1.4-beta.2" && client.Release.IsPrerelease,
             "beta 当前版本和可用版本保留完整显示标签");
 
@@ -183,7 +183,7 @@ internal static class UpdateChannelChecks
             betaClient,
             Path.Combine(testRoot, "screenshot-beta"),
             new Version(1, 1, 3),
-            currentVersionTag: "1.1.3-beta.1");
+            currentVersionTag: "1.1.3-beta.2");
         betaCoordinator.IncludePrereleases = true;
         await betaCoordinator.CheckAsync();
         await betaCoordinator.DownloadAsync();

@@ -384,9 +384,7 @@ public partial class InstancesWindow : Window
     {
         ActionStatus.Text = message;
         ActionStatus.ToolTip = message;
-        ActionStatus.Foreground = isError
-            ? (Brush)FindResource("ErrorText")
-            : (Brush)FindResource("SecondaryText");
+        ActionStatus.SetResourceReference(TextBlock.ForegroundProperty, isError ? "ErrorText" : "SecondaryText");
     }
 
     private static string GetInstanceSummary(CodexInstance instance)

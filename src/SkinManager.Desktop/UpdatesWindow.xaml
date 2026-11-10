@@ -3,15 +3,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="版本与更新" Width="580" Height="650" MinWidth="500" MinHeight="560"
         ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
-        Background="{StaticResource WindowSurface}"
+        Background="{DynamicResource WindowSurface}"
         FontFamily="{StaticResource KlayBodyFont}"
-        Foreground="{StaticResource PrimaryText}">
+        Foreground="{DynamicResource PrimaryText}">
     <Window.Resources>
         <Style x:Key="ViewTabStyle" TargetType="RadioButton">
             <Setter Property="FontFamily" Value="{StaticResource KlayBodyFont}" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource SecondaryText}" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryText}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="BorderThickness" Value="1" />
@@ -33,15 +33,15 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter Property="Background" Value="{StaticResource Accent}" />
-                                <Setter Property="Foreground" Value="{StaticResource AccentForeground}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
+                                <Setter Property="Background" Value="{DynamicResource Accent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentForeground}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{StaticResource FocusAccent}" />
+                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource FocusAccent}" />
                                 <Setter TargetName="TabSurface" Property="BorderThickness" Value="2" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -67,13 +67,13 @@
         <StackPanel Grid.Row="0">
             <TextBlock Text="版本与更新" FontSize="24" Style="{StaticResource PageTitle}" />
             <TextBlock x:Name="CurrentVersionText" Margin="0,5,0,0" FontSize="12"
-                       Foreground="{StaticResource SecondaryText}" />
+                       Foreground="{DynamicResource SecondaryText}" />
             <TextBlock x:Name="ChannelText" Margin="0,3,0,0" FontSize="12"
-                       Foreground="{StaticResource SecondaryText}" />
+                       Foreground="{DynamicResource SecondaryText}" />
         </StackPanel>
 
-        <Border Grid.Row="2" Background="{StaticResource PanelSurface}"
-                BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="3">
+        <Border Grid.Row="2" Background="{DynamicResource PanelSurface}"
+                BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="9" Padding="3">
             <StackPanel Orientation="Horizontal">
                 <RadioButton x:Name="CheckUpdatesTab" GroupName="UpdatesView" Content="检查更新"
                              IsChecked="True" Style="{StaticResource ViewTabStyle}"
@@ -89,16 +89,16 @@
                 <ScrollViewer x:Name="UpdateScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                               AutomationProperties.Name="更新检查内容">
                     <StackPanel>
-                        <Border Background="{StaticResource PanelSurface}"
-                                BorderBrush="{StaticResource Line}" BorderThickness="1"
+                        <Border Background="{DynamicResource PanelSurface}"
+                                BorderBrush="{DynamicResource Line}" BorderThickness="1"
                                 CornerRadius="12" Padding="14">
                             <StackPanel>
                                 <TextBlock x:Name="StatusText" FontSize="14" FontWeight="SemiBold"
                                            TextWrapping="Wrap" AutomationProperties.Name="更新状态" />
                                 <TextBlock x:Name="ReleaseVersionText" Margin="0,7,0,0" FontSize="12"
-                                           Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap" />
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
                                 <TextBlock x:Name="ReleaseSizeText" Margin="0,3,0,0" FontSize="12"
-                                           Foreground="{StaticResource SecondaryText}" />
+                                           Foreground="{DynamicResource SecondaryText}" />
                             </StackPanel>
                         </Border>
 
@@ -112,7 +112,7 @@
                                       Checked="PrereleaseCheckBox_Changed" Unchecked="PrereleaseCheckBox_Changed"
                                       AutomationProperties.Name="接收测试版更新" />
                             <TextBlock Margin="22,3,0,0" FontSize="11"
-                                       Foreground="{StaticResource SecondaryText}" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap"
                                        Text="开启后也会接收测试版；测试版可能包含尚未验证的改动。" />
                         </StackPanel>
 
@@ -121,7 +121,7 @@
                             <TextBox x:Name="ReleaseNotesText" IsReadOnly="True" AcceptsReturn="True"
                                      TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Disabled" Height="138" MinHeight="88"
-                                     Background="{StaticResource RaisedSurface}"
+                                     Background="{DynamicResource RaisedSurface}"
                                      AutomationProperties.Name="发布说明" />
                         </StackPanel>
 
@@ -129,9 +129,9 @@
                             <ProgressBar x:Name="DownloadProgress" Height="8" Minimum="0" Maximum="100"
                                          Visibility="Collapsed" AutomationProperties.Name="下载进度" />
                             <TextBlock x:Name="ProgressText" Margin="0,5,0,0" FontSize="11"
-                                       Foreground="{StaticResource SecondaryText}" Visibility="Collapsed" />
+                                       Foreground="{DynamicResource SecondaryText}" Visibility="Collapsed" />
                             <TextBlock Text="安装会断开当前皮肤连接，并在完成后重新打开管理器。皮肤库会保留，重开后需重新应用皮肤。"
-                                       Margin="0,7,0,0" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                                       Margin="0,7,0,0" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
                     </StackPanel>
@@ -148,7 +148,7 @@
                     <TextBlock Text="历史日志" FontSize="18" FontWeight="SemiBold"
                                Style="{StaticResource SectionTitle}" />
                     <TextBlock Text="随应用安装的版本记录，可离线查看。"
-                               Margin="0,3,0,0" FontSize="12" Foreground="{StaticResource SecondaryText}" />
+                               Margin="0,3,0,0" FontSize="12" Foreground="{DynamicResource SecondaryText}" />
                 </StackPanel>
                 <ScrollViewer x:Name="HistoryScrollViewer" Grid.Row="2"
                               VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -156,7 +156,7 @@
                     <ItemsControl x:Name="HistoryEntries">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1"
+                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1"
                                         Padding="0,12,12,14">
                                     <Grid>
                                         <Grid.RowDefinitions>
@@ -169,14 +169,14 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="{Binding Version}" FontSize="16" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource PrimaryText}" />
+                                                       Foreground="{DynamicResource PrimaryText}" />
                                             <TextBlock Grid.Column="1" Text="{Binding DateLabel}" FontSize="11"
-                                                       Foreground="{StaticResource SecondaryText}"
+                                                       Foreground="{DynamicResource SecondaryText}"
                                                        VerticalAlignment="Center" />
                                         </Grid>
                                         <TextBlock Grid.Row="1" Text="{Binding Body}" Margin="0,7,0,0"
                                                    FontSize="12" LineHeight="19" TextWrapping="Wrap"
-                                                   Foreground="{StaticResource PrimaryText}" />
+                                                   Foreground="{DynamicResource PrimaryText}" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>

@@ -17,13 +17,18 @@ using SkinManager.Market;
 
 namespace SkinManager.Desktop;
 
-internal sealed class SkinMarketRow(SkinMarketItem item) : INotifyPropertyChanged
+internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion) : INotifyPropertyChanged
 {
     private BitmapSource? _thumbnail;
-    private string _previewLabel = string.IsNullOrWhiteSpace(item.PreviewUrl) ? "作者未提供预览图片" : "正在加载预览图片…";
-    private string? _previewError;
-    private bool _hasPreviewError;
-    private bool _isPreviewLoading;
+    private string _thumbnailLabel = string.IsNullOrWhiteSpace(item.EffectiveThumbnailUrl)
+        ? "未提供封面缩略图"
+        : "正在加载封面缩略图…";
+    private string? _thumbnailError;
+    private bool _hasThumbnailError;
+    private bool _isThumbnailLoading;
+    private int _likeCount = item.LikeCount;
+    private bool _likedByMe = item.LikedByMe;
+    private int _commentCount = item.CommentCount;
     private string _installStatus = "未安装";
     private bool _canDownload;
     private string _downloadButtonText = "下载并安装";
@@ -44,25 +49,76 @@ internal sealed class SkinMarketRow(SkinMarketItem item) : INotifyPropertyChange
         _ => "系统"
     };
     public string SummaryLabel => $"{AppearanceLabel}外观 · skin v{Item.SkinFormatVersion} · v{Item.Version}";
-    public string Description => string.IsNullOrWhiteSpace(Item.Description) ? "作者没有提供简介。" : Item.Description;
-    public string ShortDescription => Description;
-    public string DetailMetadata => string.Join("\n", new[]
+    public string Description => string.IsNullOrWhiteSpace(Item.EffectiveDescription)
+        ? "作者没有提供皮肤说明。"
+        : Item.EffectiveDescription;
+    public string ShortDescription => string.IsNullOrWhiteSpace(Item.Description)
+        ? "作者没有提供简介。"
+        : Item.Description;
+    public int LikeCount
     {
-        string.IsNullOrWhiteSpace(Item.Author) ? "作者：未提供" : $"作者：{Item.Author}",
-        string.IsNullOrWhiteSpace(Item.LicenseNotes) ? "授权说明：未提供" : $"授权说明：{Item.LicenseNotes}",
-        $"皮肤格式：v{Item.SkinFormatVersion} · 包大小：{SkinMarketWindow.FormatSize(Item.Size)}",
-        $"最低管理器版本：{Item.MinimumManagerVersion}",
-        $"SHA-256：{Item.Sha256}"
+        get => _likeCount;
+        private set
+        {
+            if (SetField(ref _likeCount, value))
+            {
+                OnPropertyChanged(nameof(AuthorAndSocialLabel));
+            }
+        }
+    }
+    public bool LikedByMe
+    {
+        get => _likedByMe;
+        private set => SetField(ref _likedByMe, value);
+    }
+    public int CommentCount
+    {
+        get => _commentCount;
+        private set
+        {
+            if (SetField(ref _commentCount, value))
+            {
+                OnPropertyChanged(nameof(AuthorAndSocialLabel));
+            }
+        }
+    }
+    public string AuthorAndSocialLabel => string.Join(" · ", new[]
+    {
+        string.IsNullOrWhiteSpace(Item.Author) ? "作者未提供" : $"作者 {Item.Author}",
+        $"赞 {LikeCount}",
+        $"评论 {CommentCount}"
     });
+    public string CompatibilityLabel => SkinMarketClient.IsManagerCompatible(
+        Item.MinimumManagerVersion, managerVersion, out var message)
+        ? "兼容管理器"
+        : message;
+    public string DetailTechnical => string.Join("\n", new[]
+    {
+        $"外观：{AppearanceLabel}",
+        $"皮肤版本：v{Item.Version} · skin 格式 v{Item.SkinFormatVersion}",
+        $"最低管理器版本：{Item.MinimumManagerVersion}",
+        $"安装包：{SkinMarketWindow.FormatSize(Item.Size)}",
+        $"兼容状态：{CompatibilityLabel}",
+        string.IsNullOrWhiteSpace(Item.UpdatedAt) ? string.Empty : $"更新时间：{SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt)}",
+        Item.Tags is { Count: > 0 } ? $"标签：{string.Join("、", Item.Tags.Select(tag => tag.Name))}" : string.Empty
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
     public string UpdatedLabel => string.IsNullOrWhiteSpace(Item.UpdatedAt)
         ? string.Empty
         : $"更新于 {SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt)}";
+    public bool HasWebsiteDetail => !string.IsNullOrWhiteSpace(Item.DetailUrl);
 
     public string InstallStatus
     {
         get => _installStatus;
-        set => SetField(ref _installStatus, value);
+        set
+        {
+            if (SetField(ref _installStatus, value))
+            {
+                OnPropertyChanged(nameof(InstallStatusLabel));
+            }
+        }
     }
+    public string InstallStatusLabel => $"{InstallStatus} · {CompatibilityLabel}";
 
     public BitmapSource? Thumbnail
     {
@@ -75,28 +131,34 @@ internal sealed class SkinMarketRow(SkinMarketItem item) : INotifyPropertyChange
             }
         }
     }
-
     public bool HasThumbnail => Thumbnail is not null;
-    public string PreviewLabel
+    public string ThumbnailLabel
     {
-        get => _previewLabel;
-        private set => SetField(ref _previewLabel, value);
+        get => _thumbnailLabel;
+        private set => SetField(ref _thumbnailLabel, value);
     }
-    public string? PreviewError
+    public string? ThumbnailError
     {
-        get => _previewError;
-        private set => SetField(ref _previewError, value);
+        get => _thumbnailError;
+        private set => SetField(ref _thumbnailError, value);
     }
-    public bool HasPreviewError
+    public bool HasThumbnailError
     {
-        get => _hasPreviewError;
-        private set => SetField(ref _hasPreviewError, value);
+        get => _hasThumbnailError;
+        private set
+        {
+            if (SetField(ref _hasThumbnailError, value))
+            {
+                OnPropertyChanged(nameof(ThumbnailRetryVisibility));
+            }
+        }
     }
-    public bool IsPreviewLoading
+    public bool IsThumbnailLoading
     {
-        get => _isPreviewLoading;
-        private set => SetField(ref _isPreviewLoading, value);
+        get => _isThumbnailLoading;
+        private set => SetField(ref _isThumbnailLoading, value);
     }
+    public Visibility ThumbnailRetryVisibility => HasThumbnailError ? Visibility.Visible : Visibility.Collapsed;
     public bool CanDownload
     {
         get => _canDownload;
@@ -133,31 +195,31 @@ internal sealed class SkinMarketRow(SkinMarketItem item) : INotifyPropertyChange
         private set => SetField(ref _cancelVisibility, value);
     }
 
-    public void SetPreviewLoading()
+    public void SetThumbnailLoading()
     {
         Thumbnail = null;
-        PreviewError = null;
-        HasPreviewError = false;
-        IsPreviewLoading = true;
-        PreviewLabel = "正在加载预览图片…";
+        ThumbnailError = null;
+        HasThumbnailError = false;
+        IsThumbnailLoading = true;
+        ThumbnailLabel = "正在加载封面缩略图…";
     }
 
-    public void SetPreview(BitmapSource image)
+    public void SetThumbnail(BitmapSource image)
     {
         Thumbnail = image;
-        PreviewError = null;
-        HasPreviewError = false;
-        IsPreviewLoading = false;
-        PreviewLabel = string.Empty;
+        ThumbnailError = null;
+        HasThumbnailError = false;
+        IsThumbnailLoading = false;
+        ThumbnailLabel = string.Empty;
     }
 
-    public void SetPreviewFailure(string message)
+    public void SetThumbnailFailure(string message)
     {
         Thumbnail = null;
-        PreviewError = message;
-        HasPreviewError = true;
-        IsPreviewLoading = false;
-        PreviewLabel = "预览图片暂不可用";
+        ThumbnailError = message;
+        HasThumbnailError = true;
+        IsThumbnailLoading = false;
+        ThumbnailLabel = "封面缩略图暂不可用";
     }
 
     public void SetDownloadControls(bool canDownload, string buttonText, bool canCancel)
@@ -172,6 +234,14 @@ internal sealed class SkinMarketRow(SkinMarketItem item) : INotifyPropertyChange
         OperationStatus = text;
         OperationIsError = isError;
     }
+
+    public void SetLikeState(bool liked, int likeCount)
+    {
+        LikedByMe = liked;
+        LikeCount = Math.Max(0, likeCount);
+    }
+
+    public void SetCommentCount(int commentCount) => CommentCount = Math.Max(0, commentCount);
 
     public void SetDownloadProgress(double percentage, bool visible)
     {
@@ -200,72 +270,113 @@ public partial class SkinMarketWindow : Window
     private const int ItemsPerPage = 12;
     private readonly SkinMarketClient _client;
     private readonly Version _managerVersion;
-    private readonly BasePackage _basePackage;
-    private readonly string _previewProfileDirectory;
     private readonly Func<SkinPackage, Task<bool>> _installPackage;
     private readonly Func<IReadOnlyDictionary<string, string>> _readInstalledVersions;
     private readonly ObservableCollection<SkinMarketRow> _rows = [];
-    private readonly SemaphoreSlim _previewGate = new(4, 4);
+    private readonly SemaphoreSlim _thumbnailGate = new(4, 4);
     private CancellationTokenSource? _catalogCancellation;
-    private CancellationTokenSource? _previewCancellation;
+    private CancellationTokenSource? _thumbnailCancellation;
     private CancellationTokenSource? _downloadCancellation;
-    private CancellationTokenSource? _packagePreviewCancellation;
-    private SkinMarketRow? _previewRow;
+    private SkinMarketRow? _selectedRow;
     private SkinMarketRow? _downloadingRow;
-    private SkinPackage? _previewPackage;
-    private ThemePreviewRenderer? _previewRenderer;
-    private WebView2? _previewWebView;
     private string? _failedItemId;
     private int _page = 1;
     private int _totalPages;
-    private long _previewSequence;
+    private long _catalogSequence;
     private double _catalogScrollOffset;
     private bool _isLoading;
     private bool _isDownloading;
     private bool _canCancelDownload;
     private bool _isClosed;
+    private bool _isUpdatingTags;
 
     internal SkinMarketWindow(
         SkinMarketClient client,
         Version managerVersion,
         BasePackage basePackage,
-        string previewProfileDirectory,
+        string unusedProfilePath,
         Func<SkinPackage, Task<bool>> installPackage,
-        Func<IReadOnlyDictionary<string, string>> readInstalledVersions)
+        Func<IReadOnlyDictionary<string, string>> readInstalledVersions,
+        IMarketAccountAuthProvider? accountAuthProvider = null,
+        bool useDefaultAccountAuth = true,
+        string? accountProfileDirectory = null,
+        Func<IReadOnlyList<SkinCatalogEntry>>? readLocalSkinCatalog = null,
+        Action<string, string>? exportLocalSkinPackage = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _managerVersion = managerVersion ?? throw new ArgumentNullException(nameof(managerVersion));
-        _basePackage = basePackage ?? throw new ArgumentNullException(nameof(basePackage));
-        _previewProfileDirectory = Path.GetFullPath(previewProfileDirectory ?? throw new ArgumentNullException(nameof(previewProfileDirectory)));
+        ArgumentNullException.ThrowIfNull(basePackage);
+        _ = unusedProfilePath;
         _installPackage = installPackage ?? throw new ArgumentNullException(nameof(installPackage));
         _readInstalledVersions = readInstalledVersions ?? throw new ArgumentNullException(nameof(readInstalledVersions));
         InitializeComponent();
+        InitializeCommunity(accountAuthProvider, useDefaultAccountAuth, accountProfileDirectory,
+            readLocalSkinCatalog, exportLocalSkinPackage);
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this, animateWindow: false, animateClose: false);
-        CatalogCards.ItemsSource = _rows;
-        Loaded += async (_, _) => await RefreshAsync(resetPage: true);
+        GridCards.ItemsSource = _rows;
+        ListCards.ItemsSource = _rows;
+        Loaded += (_, _) =>
+        {
+            _ = RefreshAsync(resetPage: true);
+            _ = InitializeAccountSessionAsync();
+        };
         Closing += SkinMarketWindow_Closing;
         Closed += SkinMarketWindow_Closed;
         UpdateControls();
     }
 
     internal IReadOnlyList<SkinMarketRow> Rows => _rows;
-    internal SkinMarketRow? SelectedRow => _previewRow;
-    internal SkinPackage? PreviewPackage => _previewPackage;
-    internal ThemePreviewRenderer? PreviewRenderer => _previewRenderer;
-    internal ContentControl PreviewBrowserHostForTests => PreviewBrowserHost;
+    internal SkinMarketRow? SelectedRow => _selectedRow;
+    internal bool IsDetailsVisible => DetailsPane.Visibility == Visibility.Visible;
+    internal bool IsCatalogVisible => CatalogPane.Visibility == Visibility.Visible;
+    internal bool IsLoading => _isLoading;
+    internal bool IsDownloading => _isDownloading;
+    internal bool IsListView => ListCards.Visibility == Visibility.Visible;
+    internal double CatalogScrollOffset => CatalogScrollViewer.VerticalOffset;
     internal ScrollViewer CatalogScrollViewerForTests => CatalogScrollViewer;
     internal RadioButton DarkFilterButtonForTests => FilterDarkButton;
     internal RadioButton FilterAllButtonForTests => FilterAllButton;
-    internal bool PreviewInstallButtonIsEnabledForTests => PreviewInstallButton.IsEnabled;
-    internal bool IsPreviewPageVisible => PreviewPane.Visibility == Visibility.Visible;
-    internal bool IsPackagePreviewLoading => _packagePreviewCancellation is not null;
-    internal bool IsDownloading => _isDownloading;
-    internal double CatalogScrollOffset => CatalogScrollViewer.VerticalOffset;
+    internal TextBox SearchBoxForTests => SearchBox;
+    internal ComboBox SortBoxForTests => SortBox;
+    internal ComboBox TagBoxForTests => TagBox;
+    internal RadioButton GridViewButtonForTests => GridViewButton;
+    internal RadioButton ListViewButtonForTests => ListViewButton;
+    internal ItemsControl GridCardsForTests => GridCards;
+    internal ItemsControl ListCardsForTests => ListCards;
+    internal Button DetailsDownloadButtonForTests => DetailsDownloadButton;
+    internal Button LoginButtonForTests => LoginButton;
+    internal Button RegisterButtonForTests => RegisterButton;
+    internal Button LogoutButtonForTests => LogoutButton;
+    internal Button OpenUploadButtonForTests => OpenUploadButton;
+    internal Button DetailsLikeButtonForTests => DetailsLikeButton;
+    internal TextBox CommentInputForTests => CommentInput;
+    internal Button SendCommentButtonForTests => SendCommentButton;
+    internal ItemsControl CommentsListForTests => CommentsList;
+    internal TextBlock CommentStatusTextForTests => CommentStatusText;
+    internal Button NextCommentsButtonForTests => NextCommentsButton;
+    internal Button PickUploadZipButtonForTests => PickUploadZipButton;
+    internal Button ExportLocalSkinButtonForTests => ExportLocalSkinButton;
+    internal Button SubmitUploadButtonForTests => SubmitUploadButton;
+    internal Button CancelSubmissionButtonForTests => CancelSubmissionButton;
+    internal TextBox UploadDescriptionBoxForTests => UploadDescriptionBox;
+    internal TextBox UploadAuthorBoxForTests => UploadAuthorBox;
+    internal TextBox UploadLicenseBoxForTests => UploadLicenseBox;
+    internal TextBox UploadMinimumVersionBoxForTests => UploadMinimumVersionBox;
+    internal TextBox UploadTagsBoxForTests => UploadTagsBox;
+    internal TextBlock UploadStatusTextForTests => UploadStatusText;
+    internal TextBlock UploadPackageSummaryForTests => UploadPackageSummary;
+    internal ComboBox LocalSkinBoxForTests => LocalSkinBox;
+    internal bool IsUploadVisibleForTests => UploadPane.Visibility == Visibility.Visible;
+    internal WebView2 AccountCookieBridgeForTests => AccountCookieBridge;
+    internal string? UploadPackagePathForTests => _uploadPackagePath;
+    internal bool IsSubmittingForTests => _isSubmitting;
+    internal Task LoadUploadPackageForTestsAsync(string path) => PrepareUploadPackageAsync(path, isTemporary: false);
+    internal Task SubmitUploadForTestsAsync() => SubmitSkinAsync();
 
     internal async Task RefreshAsync(bool resetPage = false)
     {
-        if (_isClosed || _isLoading || _isDownloading)
+        if (_isClosed || _isDownloading || IsDetailsVisible)
         {
             return;
         }
@@ -276,11 +387,12 @@ public partial class SkinMarketWindow : Window
             _catalogScrollOffset = 0;
         }
 
-        var selectionToRestore = _previewRow?.Id;
         _catalogCancellation?.Cancel();
-        _catalogCancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
         _catalogCancellation = cancellation;
+        var sequence = Interlocked.Increment(ref _catalogSequence);
+        var requestUserId = _client.Account?.UserId ?? 0;
+        var requestAccountGeneration = _accountGeneration;
         _isLoading = true;
         SetCatalogStatus("正在读取市场目录…");
         CatalogEmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -290,6 +402,7 @@ public partial class SkinMarketWindow : Window
             CatalogEmptyMessage.Text = "请稍候。";
             EmptyRetryButton.Visibility = Visibility.Collapsed;
         }
+
         UpdateControls();
 
         try
@@ -299,54 +412,94 @@ public partial class SkinMarketWindow : Window
                 ItemsPerPage,
                 SearchBox.Text.Trim(),
                 GetSelectedAppearance(),
-                cancellation.Token);
-            if (cancellation.IsCancellationRequested || _isClosed)
+                cancellation.Token,
+                GetSelectedSort(),
+                GetSelectedTag());
+            if (!IsCurrentCatalogRequest(sequence, cancellation))
             {
                 return;
             }
 
             _page = result.Pagination.Page;
             _totalPages = result.Pagination.TotalPages;
-            _previewCancellation?.Cancel();
-            _previewCancellation?.Dispose();
-            var previewCancellation = new CancellationTokenSource();
-            _previewCancellation = previewCancellation;
-
+            _thumbnailCancellation?.Cancel();
+            _thumbnailCancellation = new CancellationTokenSource();
+            var thumbnailToken = _thumbnailCancellation.Token;
             _rows.Clear();
             foreach (var item in result.Items)
             {
-                _rows.Add(new SkinMarketRow(item));
+                _rows.Add(new SkinMarketRow(item, _managerVersion));
             }
 
             RefreshInstalledVersions();
+            var selectedTagStillAvailable = UpdateAvailableTags(result.AvailableTags ?? Array.Empty<SkinMarketTag>());
             UpdatePager(result.Pagination.Total);
             CatalogEmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (!selectedTagStillAvailable)
+            {
+                _page = 1;
+                _ = RefreshAsync(resetPage: true);
+                return;
+            }
+
             if (_rows.Count == 0)
             {
                 CatalogEmptyTitle.Text = "没有找到符合条件的皮肤";
-                CatalogEmptyMessage.Text = "调整搜索内容或外观筛选，再刷新目录。";
+                CatalogEmptyMessage.Text = "调整搜索、外观或标签筛选，再刷新目录。";
                 EmptyRetryButton.Visibility = Visibility.Collapsed;
                 SetCatalogStatus("市场目录中没有匹配结果。");
             }
             else
             {
-                SetCatalogStatus($"共读取 {result.Items.Count} 款皮肤。" );
+                SetCatalogStatus($"共读取 {result.Items.Count} 款皮肤。");
                 foreach (var row in _rows.ToArray())
                 {
-                    _ = LoadPreviewAsync(row, previewCancellation.Token);
+                    _ = LoadThumbnailAsync(row, thumbnailToken);
                 }
             }
 
-            if (selectionToRestore is not null)
-            {
-                _previewRow = _rows.FirstOrDefault(row => row.Id.Equals(selectionToRestore, StringComparison.OrdinalIgnoreCase));
-            }
+            _ = Dispatcher.BeginInvoke(new Action(() => CatalogScrollViewer.ScrollToVerticalOffset(_catalogScrollOffset)),
+                DispatcherPriority.Loaded);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
         }
+        catch (SkinMarketReauthenticationException exception)
+        {
+            if (!IsCurrentCatalogRequest(sequence, cancellation))
+            {
+                return;
+            }
+
+            var handled = HandleReauthenticationFailure(
+                exception,
+                requestUserId,
+                requestAccountGeneration,
+                "目录刷新");
+            if (!IsCurrentCatalogRequest(sequence, cancellation))
+            {
+                return;
+            }
+
+            var message = handled
+                ? "市场登录状态已过期；请重新登录后同步个人点赞状态。"
+                : DescribeError(exception);
+            SetCatalogStatus(message, isError: true);
+            if (_rows.Count == 0)
+            {
+                CatalogEmptyState.Visibility = Visibility.Visible;
+                CatalogEmptyTitle.Text = "无法读取市场目录";
+                CatalogEmptyMessage.Text = message;
+                EmptyRetryButton.Visibility = Visibility.Visible;
+            }
+        }
         catch (Exception exception)
         {
+            if (!IsCurrentCatalogRequest(sequence, cancellation))
+            {
+                return;
+            }
+
             SetCatalogStatus(DescribeError(exception), isError: true);
             if (_rows.Count == 0)
             {
@@ -361,31 +514,62 @@ public partial class SkinMarketWindow : Window
             if (ReferenceEquals(_catalogCancellation, cancellation))
             {
                 _catalogCancellation = null;
+                _isLoading = false;
+                UpdateControls();
             }
 
             cancellation.Dispose();
-            _isLoading = false;
-            UpdateControls();
         }
     }
 
-    private async Task LoadPreviewAsync(SkinMarketRow row, CancellationToken cancellationToken)
+    private bool IsCurrentCatalogRequest(long sequence, CancellationTokenSource cancellation) =>
+        !_isClosed && !cancellation.IsCancellationRequested && sequence == Volatile.Read(ref _catalogSequence) &&
+        ReferenceEquals(_catalogCancellation, cancellation);
+
+    private bool UpdateAvailableTags(IReadOnlyList<SkinMarketTag> tags)
     {
-        if (string.IsNullOrWhiteSpace(row.Item.PreviewUrl) || row.IsPreviewLoading || _isClosed)
+        var selectedTag = GetSelectedTag();
+        _isUpdatingTags = true;
+        try
+        {
+            TagBox.Items.Clear();
+            TagBox.Items.Add(new ComboBoxItem { Content = "全部标签", Tag = string.Empty });
+            foreach (var tag in tags)
+            {
+                TagBox.Items.Add(new ComboBoxItem { Content = tag.Name, Tag = tag.Id });
+            }
+
+            TagFilterLabel.Visibility = tags.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            TagBox.Visibility = tags.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            var match = TagBox.Items.Cast<ComboBoxItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, selectedTag, StringComparison.Ordinal));
+            var selectedStillAvailable = selectedTag.Length == 0 || match is not null;
+            TagBox.SelectedItem = selectedStillAvailable ? match ?? TagBox.Items[0] : TagBox.Items[0];
+            return selectedStillAvailable;
+        }
+        finally
+        {
+            _isUpdatingTags = false;
+        }
+    }
+
+    private async Task LoadThumbnailAsync(SkinMarketRow row, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(row.Item.EffectiveThumbnailUrl) || row.IsThumbnailLoading || _isClosed)
         {
             return;
         }
 
-        row.SetPreviewLoading();
+        row.SetThumbnailLoading();
         var gateEntered = false;
         try
         {
-            await _previewGate.WaitAsync(cancellationToken);
+            await _thumbnailGate.WaitAsync(cancellationToken);
             gateEntered = true;
-            var bytes = await _client.GetPreviewImageAsync(row.Item, cancellationToken);
+            var bytes = await _client.GetThumbnailImageAsync(row.Item, cancellationToken);
             if (bytes is null || bytes.Length == 0)
             {
-                throw new InvalidDataException("服务器没有返回预览图片。");
+                throw new InvalidDataException("服务器没有返回封面缩略图。");
             }
 
             if (cancellationToken.IsCancellationRequested || _isClosed || !_rows.Contains(row))
@@ -393,10 +577,14 @@ public partial class SkinMarketWindow : Window
                 return;
             }
 
-            var image = DecodePreview(bytes);
+            var image = DecodeThumbnail(bytes);
             if (!cancellationToken.IsCancellationRequested && !_isClosed && _rows.Contains(row))
             {
-                row.SetPreview(image);
+                row.SetThumbnail(image);
+                if (ReferenceEquals(_selectedRow, row))
+                {
+                    UpdateDetails(row);
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -404,28 +592,32 @@ public partial class SkinMarketWindow : Window
         }
         catch (Exception exception)
         {
-            Debug.WriteLine($"市场预览图片读取失败：{row.Id}\n{exception}");
+            Debug.WriteLine($"市场封面缩略图读取失败：{row.Id}\n{exception}");
             if (!cancellationToken.IsCancellationRequested && !_isClosed && _rows.Contains(row))
             {
-                row.SetPreviewFailure(DescribePreviewImageError(exception));
+                row.SetThumbnailFailure(DescribeThumbnailError(exception));
+                if (ReferenceEquals(_selectedRow, row))
+                {
+                    UpdateDetails(row);
+                }
             }
         }
         finally
         {
             if (gateEntered)
             {
-                _previewGate.Release();
+                _thumbnailGate.Release();
             }
         }
     }
 
-    internal static BitmapSource DecodePreview(byte[] bytes)
+    internal static BitmapSource DecodeThumbnail(byte[] bytes)
     {
         using var stream = new MemoryStream(bytes, writable: false);
         var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
         if (decoder.Frames.Count == 0)
         {
-            throw new InvalidDataException("预览图片没有可读取的帧。");
+            throw new InvalidDataException("封面缩略图没有可读取的帧。");
         }
 
         var frame = decoder.Frames[0];
@@ -433,25 +625,23 @@ public partial class SkinMarketWindow : Window
         var height = frame.PixelHeight;
         if (width <= 0 || height <= 0 || width > 16_000 || height > 16_000 || (long)width * height > 50_000_000)
         {
-            throw new InvalidDataException("预览图片尺寸无效或过大。");
+            throw new InvalidDataException("封面缩略图尺寸无效或过大。");
         }
 
         var scale = Math.Min(1d, Math.Min(640d / width, 420d / height));
-        var decodeWidth = Math.Max(1, (int)Math.Round(width * scale));
-        var decodeHeight = Math.Max(1, (int)Math.Round(height * scale));
         stream.Position = 0;
         var image = new BitmapImage();
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
-        image.DecodePixelWidth = decodeWidth;
-        image.DecodePixelHeight = decodeHeight;
+        image.DecodePixelWidth = Math.Max(1, (int)Math.Round(width * scale));
+        image.DecodePixelHeight = Math.Max(1, (int)Math.Round(height * scale));
         image.StreamSource = stream;
         image.EndInit();
         image.Freeze();
         return image;
     }
 
-    internal async Task OpenPreviewAsync(SkinMarketRow row)
+    internal void OpenDetails(SkinMarketRow row)
     {
         ArgumentNullException.ThrowIfNull(row);
         if (_isClosed || !_rows.Contains(row))
@@ -460,144 +650,74 @@ public partial class SkinMarketWindow : Window
         }
 
         _catalogScrollOffset = CatalogScrollViewer.VerticalOffset;
-        var requestSequence = Interlocked.Increment(ref _previewSequence);
-        _packagePreviewCancellation?.Cancel();
-        _packagePreviewCancellation?.Dispose();
-        var cancellation = new CancellationTokenSource();
-        _packagePreviewCancellation = cancellation;
-        _previewRow = row;
-        _previewPackage = null;
-        DisposePreviewRenderer();
-        PreviewPageTitle.Text = row.Name;
-        PreviewPageSummary.Text = row.SummaryLabel;
-        PreviewPageInstallState.Text = row.InstallStatus;
-        PreviewStatusText.Text = string.Empty;
-        PreviewPane.Visibility = Visibility.Visible;
+        if (_selectedRow is not null)
+        {
+            _selectedRow.PropertyChanged -= SelectedRow_PropertyChanged;
+        }
+
+        _selectedRow = row;
+        _selectedRow.PropertyChanged += SelectedRow_PropertyChanged;
+        UpdateDetails(row);
+        DetailsPane.Visibility = Visibility.Visible;
         CatalogPane.Visibility = Visibility.Collapsed;
-        RefreshButton.IsEnabled = false;
-        ShowPreviewWaiting("正在读取皮肤预览…", $"正在下载并校验 {FormatSize(row.Item.Size)} 的皮肤包。", showRetry: false);
         UpdateControls();
-
-        try
-        {
-            var progress = new Progress<SkinMarketDownloadProgress>(value =>
-            {
-                if (!IsCurrentPreviewRequest(requestSequence, cancellation))
-                {
-                    return;
-                }
-
-                var total = value.TotalBytes > 0 ? value.TotalBytes : row.Item.Size;
-                PreviewStateDetail.Text = $"正在读取皮肤预览… {FormatSize(value.BytesReceived)} / {FormatSize(total)}";
-            });
-            var package = _previewPackage ?? await _client.DownloadPackageAsync(
-                row.Item,
-                _managerVersion,
-                progress,
-                cancellation.Token);
-            if (!IsCurrentPreviewRequest(requestSequence, cancellation))
-            {
-                return;
-            }
-
-            _previewPackage = package;
-            UpdateControls();
-            ShowPreviewWaiting("正在显示皮肤预览…", "正在依据已校验的皮肤包生成静态效果。", showRetry: false);
-            var renderer = EnsurePreviewRenderer();
-            var displayed = await renderer.DisplayPackageAsync(package);
-            if (!IsCurrentPreviewRequest(requestSequence, cancellation))
-            {
-                return;
-            }
-
-            if (!displayed)
-            {
-                throw new InvalidOperationException("静态预览没有完成渲染。");
-            }
-
-            PreviewStateOverlay.Visibility = Visibility.Collapsed;
-            PreviewStatusText.Foreground = (Brush)FindResource("SecondaryText");
-            PreviewStatusText.Text = $"{row.Name} v{row.Item.Version} · 静态效果预览";
-            PreviewPageInstallState.Text = row.InstallStatus;
-            UpdateControls();
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception)
-        {
-            if (!IsCurrentPreviewRequest(requestSequence, cancellation))
-            {
-                return;
-            }
-
-            Debug.WriteLine($"市场皮肤效果预览失败：{row.Id}\n{exception}");
-            ShowPreviewFailure(DescribePackagePreviewError(exception));
-        }
-        finally
-        {
-            if (ReferenceEquals(_packagePreviewCancellation, cancellation))
-            {
-                _packagePreviewCancellation = null;
-            }
-
-            cancellation.Dispose();
-            UpdateControls();
-        }
+        BeginDetailsCommunityLoad(row);
     }
 
-    private bool IsCurrentPreviewRequest(long requestSequence, CancellationTokenSource cancellation) =>
-        !_isClosed && !cancellation.IsCancellationRequested && requestSequence == Volatile.Read(ref _previewSequence) &&
-        ReferenceEquals(_packagePreviewCancellation, cancellation);
-
-    private ThemePreviewRenderer EnsurePreviewRenderer()
+    private void UpdateDetails(SkinMarketRow row)
     {
-        if (_previewRenderer is not null)
-        {
-            return _previewRenderer;
-        }
+        DetailsTitle.Text = row.Name;
+        DetailsSummary.Text = row.SummaryLabel;
+        DetailsInstallState.Text = row.InstallStatus;
+        DetailsDescription.Text = row.Description;
+        DetailsTechnical.Text = row.DetailTechnical;
+        DetailsCounts.Text = row.AuthorAndSocialLabel;
+        DetailsAuthor.Text = string.IsNullOrWhiteSpace(row.Item.Author) ? "作者：未提供" : $"作者：{row.Item.Author}";
+        DetailsLicense.Text = string.IsNullOrWhiteSpace(row.Item.LicenseNotes)
+            ? "版权与授权：未提供说明"
+            : $"版权与授权：{row.Item.LicenseNotes}";
+        DetailsSubmitter.Text = string.IsNullOrWhiteSpace(row.Item.Submitter)
+            ? string.Empty
+            : $"投稿人：{row.Item.Submitter}";
+        DetailsThumbnail.Source = row.Thumbnail;
+        DetailsThumbnailPlaceholder.Visibility = row.HasThumbnail ? Visibility.Collapsed : Visibility.Visible;
+        WebsiteDetailButton.Visibility = row.HasWebsiteDetail ? Visibility.Visible : Visibility.Collapsed;
+        DetailsOperationStatus.Text = row.OperationStatus;
+        DetailsProgress.Value = row.DownloadProgress;
+        DetailsProgress.Visibility = row.ProgressVisibility;
+        DetailsCancelButton.Visibility = row.CancelVisibility;
+        DetailsStatusText.Text = row.OperationStatus;
+        DetailsStatusText.SetResourceReference(TextBlock.ForegroundProperty,
+            row.OperationIsError ? "ErrorText" : "SecondaryText");
+        DetailsOperationStatus.SetResourceReference(TextBlock.ForegroundProperty,
+            row.OperationIsError ? "ErrorText" : "SecondaryText");
+        DetailsDownloadButton.Content = row.DownloadButtonText;
+        DetailsDownloadButton.IsEnabled = row.CanDownload && !_isDownloading;
+        UpdateCommunityDetails(row);
+    }
 
-        _previewWebView = new WebView2
+    private void SelectedRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is SkinMarketRow row && ReferenceEquals(_selectedRow, row))
         {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch
-        };
-        PreviewBrowserHost.Content = _previewWebView;
-        _previewRenderer = new ThemePreviewRenderer(_previewWebView, _previewProfileDirectory, _basePackage);
-        return _previewRenderer;
+            UpdateDetails(row);
+        }
     }
 
     internal void BackToCatalog()
     {
-        Interlocked.Increment(ref _previewSequence);
-        _packagePreviewCancellation?.Cancel();
-        _packagePreviewCancellation?.Dispose();
-        _packagePreviewCancellation = null;
-        DisposePreviewRenderer();
-        _previewPackage = null;
-        _previewRow = null;
-        PreviewPane.Visibility = Visibility.Collapsed;
+        if (_selectedRow is not null)
+        {
+            _selectedRow.PropertyChanged -= SelectedRow_PropertyChanged;
+        }
+
+        _selectedRow = null;
+        DetailsPane.Visibility = Visibility.Collapsed;
         CatalogPane.Visibility = Visibility.Visible;
-        RefreshButton.IsEnabled = !_isLoading && !_isDownloading;
+        LeaveDetailsCommunityView();
         UpdateControls();
         _ = Dispatcher.BeginInvoke(new Action(() => CatalogScrollViewer.ScrollToVerticalOffset(_catalogScrollOffset)),
             DispatcherPriority.Loaded);
-    }
-
-    private void DisposePreviewRenderer()
-    {
-        try
-        {
-            _previewRenderer?.Dispose();
-        }
-        catch (Exception exception)
-        {
-            Debug.WriteLine($"释放市场预览渲染器失败：{exception.Message}");
-        }
-
-        _previewRenderer = null;
-        _previewWebView = null;
-        PreviewBrowserHost.Content = null;
     }
 
     private async Task DownloadRowAsync(SkinMarketRow row)
@@ -639,9 +759,7 @@ public partial class SkinMarketWindow : Window
 
         try
         {
-            var package = ReferenceEquals(_previewRow, row) && _previewPackage is { } previewPackage
-                ? previewPackage
-                : await _client.DownloadPackageAsync(row.Item, _managerVersion, progress, cancellation.Token);
+            var package = await _client.DownloadPackageAsync(row.Item, _managerVersion, progress, cancellation.Token);
             if (cancellation.IsCancellationRequested || _isClosed)
             {
                 return;
@@ -662,19 +780,12 @@ public partial class SkinMarketWindow : Window
                 _failedItemId = null;
                 RefreshInstalledVersions();
                 row.SetOperationStatus($"已将“{row.Name}” v{row.Item.Version}加入本地皮肤库。需要时可手动连接并应用。");
-                SetCatalogStatus("皮肤已安装到本地库。", isError: false);
+                SetCatalogStatus("皮肤已安装到本地库。");
             }
             else
             {
                 row.SetOperationStatus("已取消替换，现有皮肤未更改。");
                 SetCatalogStatus("替换已取消；现有皮肤保持不变。");
-            }
-
-            if (ReferenceEquals(_previewRow, row))
-            {
-                PreviewPageInstallState.Text = row.InstallStatus;
-                PreviewStatusText.Text = row.OperationStatus;
-                PreviewStatusText.Foreground = (Brush)FindResource("SecondaryText");
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -758,8 +869,12 @@ public partial class SkinMarketWindow : Window
         FilterAllButton.IsEnabled = browsingEnabled;
         FilterLightButton.IsEnabled = browsingEnabled;
         FilterDarkButton.IsEnabled = browsingEnabled;
+        SortBox.IsEnabled = browsingEnabled;
+        TagBox.IsEnabled = browsingEnabled;
+        GridViewButton.IsEnabled = browsingEnabled;
+        ListViewButton.IsEnabled = browsingEnabled;
         SearchButton.IsEnabled = browsingEnabled;
-        RefreshButton.IsEnabled = browsingEnabled && PreviewPane.Visibility != Visibility.Visible;
+        RefreshButton.IsEnabled = browsingEnabled && !IsDetailsVisible;
         EmptyRetryButton.IsEnabled = browsingEnabled;
         PreviousPageButton.IsEnabled = browsingEnabled && _page > 1;
         NextPageButton.IsEnabled = browsingEnabled && _totalPages > 0 && _page < _totalPages;
@@ -780,16 +895,12 @@ public partial class SkinMarketWindow : Window
                 _canCancelDownload && ReferenceEquals(_downloadingRow, row));
         }
 
-        if (_previewRow is null)
-        {
-            PreviewInstallButton.IsEnabled = false;
-            return;
-        }
+        UpdateCommunityControls();
 
-        PreviewPageInstallState.Text = _previewRow.InstallStatus;
-        PreviewInstallButton.Content = _previewRow.DownloadButtonText;
-        PreviewInstallButton.IsEnabled = !_isDownloading && _previewPackage is not null &&
-            CanDownload(_previewRow, out _);
+        if (_selectedRow is not null)
+        {
+            UpdateDetails(_selectedRow);
+        }
     }
 
     private void RefreshInstalledVersions()
@@ -829,8 +940,7 @@ public partial class SkinMarketWindow : Window
         UpdateControls();
     }
 
-    private static bool HasValidSha256(string value) =>
-        value.Length == 64 && value.All(Uri.IsHexDigit);
+    private static bool HasValidSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
 
     private void UpdatePager(int total)
     {
@@ -846,7 +956,7 @@ public partial class SkinMarketWindow : Window
     private void SetCatalogStatus(string text, bool isError = false)
     {
         CatalogStatus.Text = text;
-        CatalogStatus.Foreground = (Brush)FindResource(isError ? "ErrorText" : "SecondaryText");
+        CatalogStatus.SetResourceReference(TextBlock.ForegroundProperty, isError ? "ErrorText" : "SecondaryText");
         CatalogStatus.ToolTip = text;
     }
 
@@ -860,41 +970,19 @@ public partial class SkinMarketWindow : Window
         _ => $"操作失败：{exception.Message}"
     };
 
-    private static string DescribePreviewImageError(Exception exception)
+    private static string DescribeThumbnailError(Exception exception)
     {
         IEnumerable<Exception> inners = exception is AggregateException aggregate
             ? aggregate.Flatten().InnerExceptions
-            : new[] { exception };
+            : [exception];
         var effective = inners.LastOrDefault() ?? exception;
         return effective switch
         {
-            HttpRequestException { StatusCode: { } statusCode } => $"图片请求失败（HTTP {(int)statusCode}）",
+            HttpRequestException { StatusCode: { } statusCode } => $"缩略图请求失败（HTTP {(int)statusCode}）",
             HttpRequestException or IOException => "图片连接中断，点击重试图片",
             TimeoutException or TaskCanceledException => "图片读取超时，点击重试图片",
             InvalidDataException => effective.Message,
-            _ => "图片暂时无法读取，点击重试图片"
-        };
-    }
-
-    private static string DescribePackagePreviewError(Exception exception)
-    {
-        if (exception is AggregateException aggregate)
-        {
-            var inners = aggregate.Flatten().InnerExceptions;
-            var effective = inners.LastOrDefault();
-            if (effective is not null)
-            {
-                exception = effective;
-            }
-        }
-
-        return exception switch
-        {
-            HttpRequestException { StatusCode: { } statusCode } => $"皮肤包请求失败（HTTP {(int)statusCode}），可以重试。",
-            HttpRequestException or IOException => "读取皮肤包时网络连接中断，可以重试。",
-            TimeoutException or TaskCanceledException => "读取皮肤包超时，可以重试。",
-            InvalidDataException => exception.Message,
-            _ => "无法生成皮肤静态预览，可以重试。"
+            _ => "封面缩略图暂时无法读取，点击重试图片"
         };
     }
 
@@ -919,30 +1007,9 @@ public partial class SkinMarketWindow : Window
             ? "dark"
             : string.Empty;
 
-    private void ShowPreviewWaiting(string title, string detail, bool showRetry)
-    {
-        PreviewStateTitle.Text = title;
-        PreviewStateDetail.Text = detail;
-        PreviewStateTitle.Foreground = (Brush)FindResource("PrimaryText");
-        PreviewStateDetail.Foreground = (Brush)FindResource("SecondaryText");
-        PreviewStateOverlay.Visibility = Visibility.Visible;
-        PreviewStatusText.Text = string.Empty;
-        PreviewStatusText.Foreground = (Brush)FindResource("SecondaryText");
-        PreviewRetryButton.Visibility = showRetry ? Visibility.Visible : Visibility.Collapsed;
-    }
+    private string GetSelectedSort() => SortBox.SelectedValue as string ?? "latest";
 
-    private void ShowPreviewFailure(string message)
-    {
-        PreviewStateTitle.Text = "暂时无法显示皮肤预览";
-        PreviewStateDetail.Text = message;
-        PreviewStateTitle.Foreground = (Brush)FindResource("ErrorText");
-        PreviewStateDetail.Foreground = (Brush)FindResource("ErrorText");
-        PreviewStateOverlay.Visibility = Visibility.Visible;
-        PreviewStatusText.Text = message;
-        PreviewStatusText.Foreground = (Brush)FindResource("ErrorText");
-        PreviewRetryButton.Visibility = Visibility.Visible;
-        UpdateControls();
-    }
+    private string GetSelectedTag() => (TagBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
 
     private void MarketCard_Loaded(object sender, RoutedEventArgs e)
     {
@@ -952,47 +1019,49 @@ public partial class SkinMarketWindow : Window
         }
     }
 
-    private void PreviewFrame_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (sender is Grid frame && frame.ActualWidth > 0)
-        {
-            var height = frame.ActualWidth * 9d / 16d;
-            if (double.IsNaN(frame.Height) || Math.Abs(frame.Height - height) > 0.5)
-            {
-                frame.Height = height;
-            }
-        }
-    }
-
-    private void PreviewButton_Click(object sender, RoutedEventArgs e)
+    private void OpenDetailsButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: SkinMarketRow row })
         {
-            _ = OpenPreviewAsync(row);
+            OpenDetails(row);
         }
     }
 
-    private void RetryPreviewButton_Click(object sender, RoutedEventArgs e)
+    private void RetryThumbnailButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: SkinMarketRow row } && _previewCancellation is { IsCancellationRequested: false } cancellation)
+        if (sender is Button { DataContext: SkinMarketRow row } &&
+            _thumbnailCancellation is { IsCancellationRequested: false } cancellation)
         {
-            _ = LoadPreviewAsync(row, cancellation.Token);
+            _ = LoadThumbnailAsync(row, cancellation.Token);
         }
     }
 
-    private async void PreviewRetryButton_Click(object sender, RoutedEventArgs e)
+    private async void DetailsDownloadButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_previewRow is { } row)
-        {
-            await OpenPreviewAsync(row);
-        }
-    }
-
-    private async void PreviewInstallButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_previewRow is { } row)
+        if (_selectedRow is { } row)
         {
             await DownloadRowAsync(row);
+        }
+    }
+
+    private void WebsiteDetailButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedRow is not { } row || string.IsNullOrWhiteSpace(row.Item.DetailUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            var uri = SkinMarketClient.GetDetailUri(row.Item.DetailUrl);
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception exception) when (exception is InvalidDataException or Win32Exception or InvalidOperationException)
+        {
+            DetailsStatusText.Text = exception is InvalidDataException
+                ? "网站详情地址无效。"
+                : "无法打开网站详情，请检查系统浏览器设置。";
+            DetailsStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
         }
     }
 
@@ -1008,11 +1077,7 @@ public partial class SkinMarketWindow : Window
     {
         if (_canCancelDownload)
         {
-            if (_downloadingRow is { } row)
-            {
-                row.SetOperationStatus("正在取消下载…");
-            }
-
+            _downloadingRow?.SetOperationStatus("正在取消下载…");
             _downloadCancellation?.Cancel();
         }
     }
@@ -1044,6 +1109,40 @@ public partial class SkinMarketWindow : Window
         }
     }
 
+    private void SortBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IsLoaded && !_isLoading)
+        {
+            _ = RefreshAsync(resetPage: true);
+        }
+    }
+
+    private void TagBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IsLoaded && !_isLoading && !_isUpdatingTags)
+        {
+            _ = RefreshAsync(resetPage: true);
+        }
+    }
+
+    private void GridView_Checked(object sender, RoutedEventArgs e) => SetListView(false);
+
+    private void ListView_Checked(object sender, RoutedEventArgs e) => SetListView(true);
+
+    private void SetListView(bool list)
+    {
+        if (GridCards is null)
+        {
+            return;
+        }
+
+        GridCards.Visibility = list ? Visibility.Collapsed : Visibility.Visible;
+        ListCards.Visibility = list ? Visibility.Visible : Visibility.Collapsed;
+        GridViewButton.IsChecked = !list;
+        ListViewButton.IsChecked = list;
+        CatalogScrollViewer.ScrollToTop();
+    }
+
     private void SearchButton_Click(object sender, RoutedEventArgs e) => _ = RefreshAsync(resetPage: true);
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e) => _ = RefreshAsync();
@@ -1053,6 +1152,7 @@ public partial class SkinMarketWindow : Window
         if (_page > 1)
         {
             _page--;
+            _catalogScrollOffset = 0;
             _ = RefreshAsync();
         }
     }
@@ -1062,6 +1162,7 @@ public partial class SkinMarketWindow : Window
         if (_totalPages > 0 && _page < _totalPages)
         {
             _page++;
+            _catalogScrollOffset = 0;
             _ = RefreshAsync();
         }
     }
@@ -1069,20 +1170,19 @@ public partial class SkinMarketWindow : Window
     private void SkinMarketWindow_Closing(object? sender, CancelEventArgs e)
     {
         _isClosed = true;
-        Interlocked.Increment(ref _previewSequence);
+        CancelCommunityOperations();
+        Interlocked.Increment(ref _catalogSequence);
         _catalogCancellation?.Cancel();
-        _previewCancellation?.Cancel();
+        _thumbnailCancellation?.Cancel();
         _downloadCancellation?.Cancel();
-        _packagePreviewCancellation?.Cancel();
-        DisposePreviewRenderer();
     }
 
     private void SkinMarketWindow_Closed(object? sender, EventArgs e)
     {
+        _ = DisposeCommunityAsync();
         _client.Dispose();
         _catalogCancellation?.Dispose();
-        _previewCancellation?.Dispose();
+        _thumbnailCancellation?.Dispose();
         _downloadCancellation?.Dispose();
-        _packagePreviewCancellation?.Dispose();
     }
 }

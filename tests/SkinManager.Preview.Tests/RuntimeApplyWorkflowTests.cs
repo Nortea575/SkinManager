@@ -22,6 +22,11 @@ internal static class RuntimeApplyWorkflowTests
         await RefusesIdentityChangeAfterLaunchedInstanceIsDiscoveredAsync();
         await RefusesAmbiguousOrMismatchedTargetsAsync();
         await DoesNotLaunchAlongsideNormalCodexAsync();
+        await SwitchesUniqueNormalInstanceAfterConfirmationAsync();
+        await DeclinedOrFailedNormalSwitchDoesNotLaunchAsync();
+        await NormalSwitchRevalidatesIdentityAndCancellationAsync();
+        await NormalSwitchRequiresNoResidualOrOtherInstancesAsync();
+        await CompatibilityConnectionUsesNormalSwitchAsync();
         await DoesNotLaunchAlongsideExitResidualAsync();
         await DoesNotWaitForUnconnectableDebugFlagAsync();
         await LaunchesAndAppliesAfterMatchingDebugTargetAppearsAsync();
@@ -275,6 +280,137 @@ internal static class RuntimeApplyWorkflowTests
 
         Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0,
             "普通版 Codex 仍运行时既不退出它也不启动另一个实例");
+    }
+
+    private static async Task SwitchesUniqueNormalInstanceAfterConfirmationAsync()
+    {
+        var normal = CreateTarget(4201, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var debug = CreateTarget(4202, 9391);
+        var instances = new FakeInstances([normal], [normal], [], [debug]);
+        instances.CloseHandler = (instance, force, token) => Task.FromResult(new CodexCloseOperationResult(
+            CodexCloseResult.Closed, instance, "fake normal exit confirmed"));
+        var services = new FakeServices(instances);
+        CodexInstance? confirmed = null;
+        var result = await services.CreateWorkflow(confirmDebugModeSwitch: (instance, _) =>
+        {
+            confirmed = instance;
+            return Task.FromResult(true);
+        }).StartOrApplyAsync(CreateRequest(), 9391, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && confirmed?.Identity == normal.Identity &&
+                instances.CloseRequests.Count == 1 && !instances.CloseRequests[0].Force &&
+                services.LaunchCount == 1 && services.Applies.Count == 1 && services.Applies[0].ExpectedInstance == debug.Identity,
+            "唯一普通实例经确认、普通退出及空实例复查后，以非强制方式启动调试版并只应用一次");
+    }
+
+    private static async Task DeclinedOrFailedNormalSwitchDoesNotLaunchAsync()
+    {
+        var normal = CreateTarget(4203, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var declinedInstances = new FakeInstances([normal]);
+        var declined = new FakeServices(declinedInstances);
+        var declinedResult = await declined.CreateWorkflow(confirmDebugModeSwitch: (_, _) => Task.FromResult(false))
+            .StartOrApplyAsync(CreateRequest(), 9392, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(declinedResult.State == RuntimeStatusState.Stopped &&
+                declinedResult.Message?.Contains("已取消切换", StringComparison.Ordinal) == true &&
+                declinedInstances.CloseRequests.Count == 0 && declined.LaunchCount == 0 && declined.Applies.Count == 0,
+            "取消普通版切换时保留现有实例且不关闭、不启动或应用");
+
+        var callbackCancellationInstances = new FakeInstances([normal]);
+        var callbackCancellation = new FakeServices(callbackCancellationInstances);
+        var callbackCancellationResult = await callbackCancellation.CreateWorkflow(confirmDebugModeSwitch: (_, _) =>
+                Task.FromException<bool>(new OperationCanceledException("not linked to the workflow token")))
+            .StartOrApplyAsync(CreateRequest(), 9392, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(callbackCancellationResult.State == RuntimeStatusState.Error &&
+                callbackCancellationInstances.CloseRequests.Count == 0 && callbackCancellation.LaunchCount == 0 &&
+                callbackCancellation.Applies.Count == 0,
+            "未关联 workflow token 的回调 OperationCanceledException 被报告为错误，不向调用方伪装成用户取消");
+
+        var failedInstances = new FakeInstances([normal], [normal]);
+        failedInstances.CloseHandler = (instance, force, token) => Task.FromResult(new CodexCloseOperationResult(
+            CodexCloseResult.StillRunning, instance, "fake normal process still running"));
+        var failed = new FakeServices(failedInstances);
+        var failedResult = await failed.CreateWorkflow(confirmDebugModeSwitch: (_, _) => Task.FromResult(true))
+            .StartOrApplyAsync(CreateRequest(), 9392, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(failedResult.State == RuntimeStatusState.Error && failedInstances.CloseRequests.Count == 1 &&
+                !failedInstances.CloseRequests[0].Force && failed.LaunchCount == 0 && failed.Applies.Count == 0,
+            "普通版未确认退出时不强杀、不启动调试版、不应用皮肤");
+
+        var multiple = new FakeInstances([normal, CreateTarget(4204, null, kind: CodexInstanceKind.Normal, canConnect: false)]);
+        var confirmations = 0;
+        var multiServices = new FakeServices(multiple);
+        var multiResult = await multiServices.CreateWorkflow(confirmDebugModeSwitch: (_, _) =>
+        {
+            confirmations++;
+            return Task.FromResult(true);
+        }).StartOrApplyAsync(CreateRequest(), 9392, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(multiResult.State == RuntimeStatusState.Error && confirmations == 0 && multiple.CloseRequests.Count == 0 &&
+                multiServices.LaunchCount == 0 && multiServices.Applies.Count == 0 &&
+                multiResult.Message?.Contains("选择窗口", StringComparison.Ordinal) == true,
+            "多个普通实例不会自动选择或关闭，交由选择窗口处理");
+    }
+
+    private static async Task NormalSwitchRevalidatesIdentityAndCancellationAsync()
+    {
+        var normal = CreateTarget(4205, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var replacement = CreateTarget(4205, null, startedAt: normal.Identity.StartedAtUtc.AddSeconds(1),
+            kind: CodexInstanceKind.Normal, canConnect: false);
+        var changedInstances = new FakeInstances([normal], [replacement]);
+        var changedServices = new FakeServices(changedInstances);
+        var changedResult = await changedServices.CreateWorkflow(confirmDebugModeSwitch: (_, _) => Task.FromResult(true))
+            .StartOrApplyAsync(CreateRequest(), 9393, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(changedResult.State == RuntimeStatusState.Error && changedInstances.CloseRequests.Count == 0 &&
+                changedServices.LaunchCount == 0 && changedServices.Applies.Count == 0,
+            "确认后PID启动时间身份变化时拒绝关闭并拒绝启动");
+
+        var cancelledInstances = new FakeInstances([normal]);
+        var cancelledServices = new FakeServices(cancelledInstances);
+        using var cancellation = new CancellationTokenSource();
+        var operation = cancelledServices.CreateWorkflow(confirmDebugModeSwitch: (_, _) =>
+        {
+            cancellation.Cancel();
+            return Task.FromResult(true);
+        }).StartOrApplyAsync(CreateRequest(), 9393, null, null, hasActiveConnection: false, cancellation.Token);
+        try
+        {
+            await operation;
+            throw new InvalidOperationException("确认过程中取消应停止普通版切换。");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        Require(cancelledInstances.CloseRequests.Count == 0 && cancelledServices.LaunchCount == 0 && cancelledServices.Applies.Count == 0,
+            "确认期间取消不会发起退出、启动或 Apply");
+    }
+
+    private static async Task NormalSwitchRequiresNoResidualOrOtherInstancesAsync()
+    {
+        var normal = CreateTarget(4206, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var residual = CreateTarget(4207, 9394) with { IsExitResidual = true };
+        var instances = new FakeInstances([normal], [normal], [residual]);
+        instances.CloseHandler = (instance, force, token) => Task.FromResult(new CodexCloseOperationResult(
+            CodexCloseResult.Closed, instance, "root exit confirmed"));
+        var services = new FakeServices(instances);
+        var result = await services.CreateWorkflow(confirmDebugModeSwitch: (_, _) => Task.FromResult(true))
+            .StartOrApplyAsync(CreateRequest(), 9394, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(result.State == RuntimeStatusState.Error && instances.CloseRequests.Count == 1 &&
+                services.LaunchCount == 0 && services.Applies.Count == 0 &&
+                result.Message?.Contains("后台残留", StringComparison.Ordinal) == true,
+            "普通版返回Closed但仍有后台残留时不启动调试版或应用");
+    }
+
+    private static async Task CompatibilityConnectionUsesNormalSwitchAsync()
+    {
+        var normal = CreateTarget(4208, null, kind: CodexInstanceKind.Normal, canConnect: false);
+        var debug = CreateTarget(4209, 9395);
+        var instances = new FakeInstances([normal], [normal], [], [debug]);
+        instances.CloseHandler = (instance, force, token) => Task.FromResult(new CodexCloseOperationResult(
+            CodexCloseResult.Closed, instance, "fake normal exit confirmed"));
+        var services = new FakeServices(instances);
+        var result = await services.CreateWorkflow(confirmDebugModeSwitch: (_, _) => Task.FromResult(true))
+            .StartOrConnectAsync(9395, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(result.State == RuntimeStatusState.Connected && services.LaunchCount == 1 && services.Applies.Count == 0 &&
+                instances.CloseRequests.Count == 1 && !instances.CloseRequests[0].Force,
+            "仅连接语言兼容功能复用普通版确认、非强制退出与调试版就绪流程且不发送Apply");
     }
 
     private static async Task DoesNotLaunchAlongsideExitResidualAsync()
@@ -538,7 +674,8 @@ internal static class RuntimeApplyWorkflowTests
         public RuntimeApplyWorkflow CreateWorkflow(
             TimeSpan? readinessTimeout = null,
             TimeSpan? pollInterval = null,
-            Action<RuntimeStatus>? progress = null) =>
+            Action<RuntimeStatus>? progress = null,
+            Func<CodexInstance, CancellationToken, Task<bool>>? confirmDebugModeSwitch = null) =>
             new(
                 (options, _) =>
                 {
@@ -561,7 +698,8 @@ internal static class RuntimeApplyWorkflowTests
                 instances,
                 readinessTimeout,
                 pollInterval,
-                progress);
+                progress,
+                confirmDebugModeSwitch);
     }
 
     private sealed class FakeInstances(params IReadOnlyList<CodexInstance>[] snapshots) : ICodexInstanceService
@@ -570,6 +708,8 @@ internal static class RuntimeApplyWorkflowTests
 
         public int ReadCount { get; private set; }
         public Action<int>? OnRead { get; set; }
+        public List<(CodexInstance Instance, bool Force)> CloseRequests { get; } = [];
+        public Func<CodexInstance, bool, CancellationToken, Task<CodexCloseOperationResult>>? CloseHandler { get; set; }
 
         public Task<IReadOnlyList<CodexInstance>> GetInstancesAsync(CancellationToken cancellationToken = default)
         {
@@ -590,7 +730,12 @@ internal static class RuntimeApplyWorkflowTests
         public Task<CodexCloseOperationResult> CloseAsync(
             CodexInstance instance,
             bool force = false,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException<CodexCloseOperationResult>(new InvalidOperationException("Unexpected fake Close call."));
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CloseRequests.Add((instance, force));
+            return CloseHandler?.Invoke(instance, force, cancellationToken) ??
+                Task.FromException<CodexCloseOperationResult>(new InvalidOperationException("Unexpected fake Close call."));
+        }
     }
 }
