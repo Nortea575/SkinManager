@@ -5,7 +5,7 @@ using SkinManager.Runtime;
 
 namespace SkinManager.Desktop;
 
-public partial class CompatibilityWindow : Window
+public partial class SettingsWindow : Window
 {
     private readonly Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>> _saveAndConfigure;
     private readonly Func<RuntimeCompatibilityOptions> _reloadSettings;
@@ -19,7 +19,7 @@ public partial class CompatibilityWindow : Window
     private bool _isBusy;
     private bool _hasInspectedMagpie;
 
-    public CompatibilityWindow(
+    public SettingsWindow(
         RuntimeCompatibilityOptions options,
         bool settingsLoaded,
         string? settingsLoadError,
@@ -40,7 +40,7 @@ public partial class CompatibilityWindow : Window
     {
     }
 
-    internal CompatibilityWindow(
+    internal SettingsWindow(
         RuntimeCompatibilityOptions options,
         bool settingsLoaded,
         string? settingsLoadError,
@@ -62,7 +62,7 @@ public partial class CompatibilityWindow : Window
     {
     }
 
-    private CompatibilityWindow(
+    private SettingsWindow(
         RuntimeCompatibilityOptions options,
         bool settingsLoaded,
         string? settingsLoadError,
@@ -402,7 +402,7 @@ public partial class CompatibilityWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
-    private void CompatibilityWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    private void SettingsWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != System.Windows.Input.Key.Escape)
         {

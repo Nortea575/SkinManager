@@ -20,6 +20,7 @@ public partial class UpdatesWindow : Window
         InitializeComponent();
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this);
+        HistoryEntries.ItemsSource = ChangelogReader.ReadEmbedded();
         _availabilityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         _availabilityTimer.Tick += (_, _) => RefreshState();
         if (_coordinator is not null)
@@ -40,6 +41,7 @@ public partial class UpdatesWindow : Window
         }
 
         _initializing = false;
+        SetActiveView(history: false);
         Loaded += (_, _) => _availabilityTimer.Start();
         Closed += (_, _) =>
         {
@@ -55,6 +57,21 @@ public partial class UpdatesWindow : Window
     public event Func<Task<bool>>? InstallRequested;
 
     private void Coordinator_PropertyChanged(object? sender, PropertyChangedEventArgs e) => RefreshState();
+
+    private void ViewTab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+        {
+            SetActiveView(HistoryTab.IsChecked == true);
+        }
+    }
+
+    private void SetActiveView(bool history)
+    {
+        UpdateView.Visibility = history ? Visibility.Collapsed : Visibility.Visible;
+        HistoryView.Visibility = history ? Visibility.Visible : Visibility.Collapsed;
+        UpdateActions.Visibility = history ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     private void RefreshState()
     {

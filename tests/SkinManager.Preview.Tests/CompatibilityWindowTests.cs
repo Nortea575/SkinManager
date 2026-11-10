@@ -399,7 +399,7 @@ internal static class CompatibilityWindowTests
         }
     }
 
-    private static CompatibilityWindow CreateWindow(
+    private static SettingsWindow CreateWindow(
         RuntimeCompatibilityOptions? options = null,
         bool settingsLoaded = true,
         string? settingsLoadError = null,

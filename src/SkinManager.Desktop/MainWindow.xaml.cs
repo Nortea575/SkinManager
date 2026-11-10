@@ -24,6 +24,7 @@ namespace SkinManager.Desktop;
 public partial class MainWindow : Window
 {
     private readonly SkinStore _store;
+    private readonly SkinOrderStore _skinOrderStore;
     private ThemePreviewRenderer? _previewRenderer;
     private readonly BasePackage _basePackage;
     private readonly UpdateCoordinator? _updateCoordinator;
@@ -68,7 +69,7 @@ public partial class MainWindow : Window
     private bool _closePreparationInProgress;
     private UpdatesWindow? _updatesWindow;
     private SkinMarketWindow? _skinMarketWindow;
-    private CompatibilityWindow? _compatibilityWindow;
+    private SettingsWindow? _settingsWindow;
     private SkinPackage? _editOriginalPackage;
     private string? _editOriginalId;
     private int _previewTransparency = 30;
@@ -80,6 +81,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _runtimeStatusRefreshTimer;
     private CodexInstance? _selectedConnectionInstance;
     private RuntimeStatus? _lastRuntimeStatus;
+    private string? _protectedRuntimeResultMessage;
     private CodexProcessIdentity? _lastConnectedInstance;
     private bool _runtimeStatusRefreshInProgress;
     private bool _windowClosed;
@@ -113,6 +115,7 @@ public partial class MainWindow : Window
         Func<SkinMarketClient>? skinMarketClientFactory = null)
     {
         _store = store;
+        _skinOrderStore = new SkinOrderStore(Path.Combine(store.DataDirectory, ".skin-order.json"));
         _basePackage = basePackage;
         _readRuntimeStatusOnLoad = readRuntimeStatusOnLoad;
         _updateCoordinator = updateCoordinator;
@@ -121,7 +124,8 @@ public partial class MainWindow : Window
         _runtimeApplyWorkflow = new RuntimeApplyWorkflow(
             _runtimeController.LaunchDebugClientAsync,
             _runtimeController.ApplyAsync,
-            codexInstanceService);
+            codexInstanceService,
+            progress: QueueRuntimeProgress);
         _configureCompatibility = _runtimeController.ConfigureCompatibilityAsync;
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
@@ -152,7 +156,7 @@ public partial class MainWindow : Window
         PreviewViewport.ToolTip = $"本地原生样板 {basePackage.SourceVersion} · 离线静态结构预览";
         PreviewBaseVersion.ToolTip = $"依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{basePackage.SourceVersion}";
         AppVersionLabel.Text = UpdateCoordinator.ReadCurrentVersionTag();
-        UpdateEntryLabel.Text = _updateCoordinator?.UpdateEntryLabel ?? $"版本与更新 · {UpdateCoordinator.ReadCurrentVersionTag()}";
+        UpdateUpdateEntryLabel();
         if (_updateCoordinator is not null)
         {
             _updateCoordinator.PropertyChanged += UpdateCoordinator_PropertyChanged;
@@ -184,7 +188,7 @@ public partial class MainWindow : Window
                 _updateCoordinator.Dispose();
             }
             _skinMarketWindow?.Close();
-            _compatibilityWindow?.Close();
+            _settingsWindow?.Close();
             _previewStatusSequence++;
             _originalTransitionSequence++;
             _editorPreviewTimer.Stop();
@@ -202,6 +206,7 @@ public partial class MainWindow : Window
         _skinsView = CollectionViewSource.GetDefaultView(_skins);
         _skinsView.Filter = MatchesSearch;
         SkinList.ItemsSource = _skinsView;
+        UpdateSortStatus();
         UpdateListEmptyState();
         ShowNoSelection("皮肤库还是空的", "从市场浏览并下载皮肤，或导入本地皮肤包。");
         UpdateRuntimeControls();
@@ -219,10 +224,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        Interlocked.Increment(ref _runtimeStatusSequence);
         var cancellation = new CancellationTokenSource();
         _runtimeActionCancellation = cancellation;
-        SetRuntimeOperationInProgress(true, "正在核验连接目标…", cancellable: true);
+        var operationGeneration = BeginRuntimeOperation("正在核验连接目标…", cancellable: true);
         try
         {
             var transparency = PreviewTransparencyFollowCheckBox.IsChecked == true
@@ -241,7 +245,10 @@ public partial class MainWindow : Window
                 status,
                 status.State == RuntimeStatusState.Error
                     ? "本次操作未完成。请查看原因后重试。"
-                    : $"当前皮肤：{package.Name}");
+                    : status.AppliedTargetCount > 0
+                        ? $"当前皮肤：{package.Name}，已应用到 {status.AppliedTargetCount} 个页面。"
+                        : $"Codex 已连接，当前页面尚未就绪；皮肤“{package.Name}”尚未应用。",
+                protectRuntimeResult: status.State == RuntimeStatusState.Error);
             if (status.State == RuntimeStatusState.Connected && _compatibilitySettingsLoaded)
             {
                 RuntimeCompatibilityResult? compatibilityResult = status.CompatibilityResult;
@@ -259,7 +266,9 @@ public partial class MainWindow : Window
                         compatibilityResult = new RuntimeCompatibilityResult(
                             RuntimeCompatibilityState.Pending,
                             status.Endpoint,
-                            "皮肤应用已完成；语言状态确认已取消。已保存设置会在下次连接后重试。",
+                            status.AppliedTargetCount > 0
+                                ? "皮肤已应用；语言状态确认已取消。已保存设置会在下次连接后重试。"
+                                : "Codex 连接已建立，皮肤尚未应用；语言状态确认已取消。已保存设置会在下次连接后重试。",
                             status.IsDebugPortOpen,
                             status.ConnectedInstance);
                     }
@@ -268,10 +277,12 @@ public partial class MainWindow : Window
                 _lastCompatibilityResult = compatibilityResult ?? new RuntimeCompatibilityResult(
                     RuntimeCompatibilityState.Pending,
                     status.Endpoint,
-                    "皮肤应用已完成；当前实例的语言状态尚未确认。",
+                    status.AppliedTargetCount > 0
+                        ? "皮肤已应用；当前实例的语言状态尚未确认。"
+                        : "Codex 连接已建立，皮肤尚未应用；当前实例的语言状态尚未确认。",
                     status.IsDebugPortOpen,
                     status.ConnectedInstance);
-                _compatibilityWindow?.UpdateRuntimePreference(_lastCompatibilityResult);
+                _settingsWindow?.UpdateRuntimePreference(_lastCompatibilityResult);
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -289,7 +300,7 @@ public partial class MainWindow : Window
                 _runtimeActionCancellation = null;
             }
             cancellation.Dispose();
-            SetRuntimeOperationInProgress(false);
+            FinishRuntimeOperation(operationGeneration);
         }
     }
 
@@ -419,7 +430,7 @@ public partial class MainWindow : Window
                 false,
                 candidate.Value.Identity);
             _lastCompatibilityResult = missingService;
-            _compatibilityWindow?.UpdateRuntimePreference(missingService);
+            _settingsWindow?.UpdateRuntimePreference(missingService);
             return missingService;
         }
 
@@ -432,7 +443,7 @@ public partial class MainWindow : Window
                 false,
                 candidate.Value.Identity);
             _lastCompatibilityResult = deferred;
-            _compatibilityWindow?.UpdateRuntimePreference(deferred);
+            _settingsWindow?.UpdateRuntimePreference(deferred);
             return deferred;
         }
 
@@ -461,7 +472,7 @@ public partial class MainWindow : Window
                     false,
                     candidate.Value.Identity);
                 _lastCompatibilityResult = unavailable;
-                _compatibilityWindow?.UpdateRuntimePreference(unavailable);
+                _settingsWindow?.UpdateRuntimePreference(unavailable);
                 return unavailable;
             }
 
@@ -475,7 +486,7 @@ public partial class MainWindow : Window
             };
             var result = await _configureCompatibility(request, cancellationToken);
             _lastCompatibilityResult = result;
-            _compatibilityWindow?.UpdateRuntimePreference(result);
+            _settingsWindow?.UpdateRuntimePreference(result);
             return result;
         }
         catch (OperationCanceledException)
@@ -491,7 +502,7 @@ public partial class MainWindow : Window
                 false,
                 candidate.Value.Identity);
             _lastCompatibilityResult = failed;
-            _compatibilityWindow?.UpdateRuntimePreference(failed);
+            _settingsWindow?.UpdateRuntimePreference(failed);
             return failed;
         }
         finally
@@ -559,7 +570,7 @@ public partial class MainWindow : Window
             activeEndpoint: hasActiveConnection ? _lastRuntimeStatus?.Endpoint : null);
         if (status.State != RuntimeStatusState.Connected)
         {
-            DisplayRuntimeStatus(status);
+            DisplayRuntimeStatus(status, protectRuntimeResult: status.State == RuntimeStatusState.Error);
             return status;
         }
 
@@ -613,8 +624,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        Interlocked.Increment(ref _runtimeStatusSequence);
-        SetRuntimeOperationInProgress(true, "正在核验调试目标并同步界面语言…");
+        var operationGeneration = BeginRuntimeOperation("正在核验调试目标并同步界面语言…");
         try
         {
             await StartOrConnectAndConfigureCompatibilityAsync(port, CancellationToken.None);
@@ -625,7 +635,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SetRuntimeOperationInProgress(false);
+            FinishRuntimeOperation(operationGeneration);
         }
     }
 
@@ -645,7 +655,8 @@ public partial class MainWindow : Window
                 stopped,
                 stopped.State == RuntimeStatusState.Error
                     ? "未能恢复原生外观。请确认桌面应用仍在运行后重试。"
-                    : "原生外观已恢复。管理器连接已断开。调试端口仍由桌面应用管理。");
+                    : "原生外观已恢复。管理器连接已断开。调试端口仍由桌面应用管理。",
+                protectRuntimeResult: stopped.State == RuntimeStatusState.Error);
         }
         catch (Exception exception)
         {
@@ -669,7 +680,7 @@ public partial class MainWindow : Window
         {
             if (!_windowClosed && sequence == Volatile.Read(ref _runtimeStatusSequence))
             {
-                DisplayRuntimeStatus(status);
+                DisplayRuntimeStatus(status, preserveRuntimeResult: true);
             }
         });
     }
@@ -690,7 +701,7 @@ public partial class MainWindow : Window
              configuredEndpoint.Port != selectedPort))
         {
             _lastCompatibilityResult = null;
-            _compatibilityWindow?.UpdateRuntimePreference(null);
+            _settingsWindow?.UpdateRuntimePreference(null);
         }
     }
 
@@ -763,7 +774,7 @@ public partial class MainWindow : Window
             _settingInstancePort = false;
             UpdateRuntimeTargetSummary();
             _lastCompatibilityResult = null;
-            _compatibilityWindow?.UpdateRuntimePreference(null);
+            _settingsWindow?.UpdateRuntimePreference(null);
             RuntimeStatusMessage.Text = "已选择调试实例。界面语言会在该目标连接后单独配置；应用皮肤仍需点击主操作。";
             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
 
@@ -786,7 +797,7 @@ public partial class MainWindow : Window
                         false,
                         instance.Identity);
                     _lastCompatibilityResult = failed;
-                    _compatibilityWindow?.UpdateRuntimePreference(failed);
+                    _settingsWindow?.UpdateRuntimePreference(failed);
                 }
                 finally
                 {
@@ -805,20 +816,20 @@ public partial class MainWindow : Window
 
     private void MarketEntryButton_Click(object sender, RoutedEventArgs e) => OpenMarketWindow();
 
-    private void CompatibilityEntryButton_Click(object sender, RoutedEventArgs e)
+    private void SettingsEntryButton_Click(object sender, RoutedEventArgs e)
     {
         if (_runtimeOperationInProgress || _isBusy || _isEditing)
         {
             return;
         }
 
-        if (_compatibilityWindow is { IsVisible: true } existing)
+        if (_settingsWindow is { IsVisible: true } existing)
         {
             existing.Activate();
             return;
         }
 
-        var window = new CompatibilityWindow(
+        var window = new SettingsWindow(
             _compatibilityOptions,
             _compatibilitySettingsLoaded,
             _compatibilitySettingsLoadError,
@@ -829,12 +840,12 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        _compatibilityWindow = window;
+        _settingsWindow = window;
         window.Closed += (_, _) =>
         {
-            if (ReferenceEquals(_compatibilityWindow, window))
+            if (ReferenceEquals(_settingsWindow, window))
             {
-                _compatibilityWindow = null;
+                _settingsWindow = null;
             }
         };
         window.Show();
@@ -995,6 +1006,15 @@ public partial class MainWindow : Window
 
     private void SetRuntimeOperationInProgress(bool inProgress, string? message = null, bool cancellable = false)
     {
+        if (_runtimeOperationInProgress != inProgress)
+        {
+            Interlocked.Increment(ref _runtimeStatusSequence);
+            if (inProgress)
+            {
+                _protectedRuntimeResultMessage = null;
+            }
+        }
+
         _runtimeOperationInProgress = inProgress;
         _runtimeActionCancellable = inProgress && cancellable && _runtimeActionCancellation is not null;
         if (!inProgress)
@@ -1024,7 +1044,7 @@ public partial class MainWindow : Window
         RemoveRuntimeButton.IsEnabled = !_runtimeOperationInProgress && !_isEditing;
         ManageInstancesButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
         SelectRuntimeTargetButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing && _codexInstanceService is not null;
-        CompatibilityEntryButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing;
+        SettingsEntryButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing;
         LocateConnectedWindowButton.IsEnabled = !_runtimeOperationInProgress && !_isBusy && !_isEditing &&
             _codexInstanceService is not null && _lastRuntimeStatus?.ConnectedInstance is not null;
         CancelRuntimeActionButton.Visibility = _runtimeOperationInProgress && _runtimeActionCancellable
@@ -1528,8 +1548,19 @@ public partial class MainWindow : Window
 
         if (_updateCoordinator is not null)
         {
-            UpdateEntryLabel.Text = _updateCoordinator.UpdateEntryLabel;
+            UpdateUpdateEntryLabel();
         }
+    }
+
+    private void UpdateUpdateEntryLabel()
+    {
+        var fullLabel = _updateCoordinator?.UpdateEntryLabel ??
+                        $"版本与更新 · {UpdateCoordinator.ReadCurrentVersionTag()}";
+        UpdateEntryLabel.Text = fullLabel.StartsWith("版本与更新 · ", StringComparison.Ordinal)
+            ? "版本与更新"
+            : fullLabel;
+        UpdateEntryLabel.ToolTip = fullLabel;
+        UpdateEntryButton.ToolTip = fullLabel;
     }
 
     private void UpdateEntryButton_Click(object sender, RoutedEventArgs e)
@@ -1654,7 +1685,11 @@ public partial class MainWindow : Window
 
         UnregisterName("PreviewBrowser");
         PreviewBrowserHost.Children.Remove(PreviewBrowser);
-        PreviewClosedPanel.Visibility = Visibility.Visible;
+        PreviewActiveHeader.Visibility = Visibility.Collapsed;
+        PreviewClosedHeader.Visibility = Visibility.Visible;
+        PreviewContainer.Visibility = Visibility.Collapsed;
+        PreviewRow.MinHeight = 0;
+        PreviewRow.Height = new GridLength(0);
         PreviewPowerButton.Content = "打开预览";
         PreviewPowerButton.ToolTip = "重新打开本地离线预览";
         SetPreviewStatus("本地预览已关闭");
@@ -1668,7 +1703,11 @@ public partial class MainWindow : Window
         }
 
         _previewClosed = false;
-        PreviewClosedPanel.Visibility = Visibility.Collapsed;
+        PreviewClosedHeader.Visibility = Visibility.Collapsed;
+        PreviewActiveHeader.Visibility = Visibility.Visible;
+        PreviewContainer.Visibility = Visibility.Visible;
+        PreviewRow.MinHeight = 150;
+        PreviewRow.Height = new GridLength(1, GridUnitType.Star);
         PreviewPowerButton.Content = "关闭预览";
         PreviewPowerButton.ToolTip = "释放本地预览浏览器内存";
         var browser = new WebView2
@@ -1720,16 +1759,39 @@ public partial class MainWindow : Window
 
     private void DisplayRuntimeStatus(
         RuntimeStatus status,
-        string? fallbackMessage = null)
+        string? fallbackMessage = null,
+        bool preserveRuntimeResult = false,
+        bool protectRuntimeResult = false)
     {
         _lastRuntimeStatus = status;
         UpdateRuntimeTargetSummary();
-        var viewState = RuntimeConnectionViewState.From(status);
+        var preservesError = preserveRuntimeResult && !string.IsNullOrWhiteSpace(_protectedRuntimeResultMessage);
+        var viewStatus = preservesError && status.State != RuntimeStatusState.Stopped
+            ? new RuntimeStatus(
+                RuntimeStatusState.Error,
+                status.SkinId,
+                status.Endpoint,
+                _protectedRuntimeResultMessage,
+                status.IsDebugPortOpen,
+                status.AppliedTargetCount,
+                status.ConnectedInstance,
+                status.CompatibilityResult)
+            : status;
+        var viewState = RuntimeConnectionViewState.From(viewStatus);
         var statusBrush = (Brush)FindResource(viewState.BrushResourceKey);
         RuntimeStatusIndicator.Fill = statusBrush;
         RuntimeStatusText.Foreground = statusBrush;
         RuntimeStatusText.Text = viewState.StatusLabel;
         var message = string.IsNullOrWhiteSpace(status.Message) ? fallbackMessage ?? viewState.Message : status.Message;
+        if (protectRuntimeResult && status.State == RuntimeStatusState.Error)
+        {
+            _protectedRuntimeResultMessage = message;
+        }
+        else if (preservesError)
+        {
+            message = _protectedRuntimeResultMessage;
+        }
+
         RuntimeStatusMessage.Text = message;
         RuntimeStatusMessage.ToolTip = message;
         RuntimeStatusText.ToolTip = message;
@@ -1743,7 +1805,8 @@ public partial class MainWindow : Window
             _lastRuntimeStatus?.SkinId,
             _lastRuntimeStatus?.Endpoint,
             string.IsNullOrWhiteSpace(detail) ? fallbackMessage : detail,
-            _lastRuntimeStatus?.IsDebugPortOpen));
+            _lastRuntimeStatus?.IsDebugPortOpen),
+            protectRuntimeResult: true);
     }
 
     private void ImportButton_Click(object sender, RoutedEventArgs e)
@@ -2294,7 +2357,7 @@ public partial class MainWindow : Window
 
                 if (CanApplyRuntimeRefresh(sequence))
                 {
-                    DisplayRuntimeStatus(status);
+                    DisplayRuntimeStatus(status, preserveRuntimeResult: true);
                 }
 
                 if (CanApplyRuntimeRefresh(sequence) &&
@@ -2528,6 +2591,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        UpdateSortStatus();
+
         view.Refresh();
         if (list.SelectedItem is SkinCard selected && !view.Contains(selected))
         {
@@ -2591,7 +2656,23 @@ public partial class MainWindow : Window
         var previousId = preferredId ?? _selectedPackage?.Id;
         _imageReadWarning = false;
         _skins.Clear();
-        foreach (var entry in _store.GetCatalog())
+        var catalog = _store.GetCatalog();
+        IReadOnlyList<string> orderedIds;
+        try
+        {
+            _skinOrderPersistenceWarning = null;
+            orderedIds = _skinOrderStore.Reconcile(catalog.Select(entry => entry.Id));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _skinOrderPersistenceWarning = "无法读取或保存皮肤顺序；当前按名称显示。";
+            orderedIds = catalog.Select(entry => entry.Id).ToArray();
+        }
+
+        var order = orderedIds
+            .Select((id, index) => (id, index))
+            .ToDictionary(pair => pair.id, pair => pair.index, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in catalog.OrderBy(entry => order.TryGetValue(entry.Id, out var index) ? index : int.MaxValue))
         {
             BitmapSource? thumbnail = null;
             if (!string.IsNullOrWhiteSpace(entry.BackgroundImagePath))
@@ -2624,6 +2705,7 @@ public partial class MainWindow : Window
         }
 
         _skinsView.Refresh();
+        UpdateSortStatus();
         var selection = _skins.FirstOrDefault(item =>
             previousId is not null && string.Equals(item.Entry.Id, previousId, StringComparison.OrdinalIgnoreCase));
         if ((selection is null || !_skinsView.Contains(selection)) && _skinsView.Cast<object>().FirstOrDefault() is SkinCard firstVisible)
@@ -3239,6 +3321,7 @@ public partial class MainWindow : Window
         SearchBox.IsEnabled = !busy && !_isEditing;
         SkinList.IsEnabled = !busy && !_isEditing;
         SkinEditor.IsEnabled = !busy;
+        UpdateSortStatus();
         OriginalButton.IsEnabled = !busy && _selectedImageAvailable;
         MoreActionsButton.IsEnabled = !busy && !_isEditing && _selectedPackage is not null;
         PreviewSceneBox.IsEnabled = !busy;
@@ -3261,6 +3344,11 @@ public partial class MainWindow : Window
         if (_imageReadWarning)
         {
             warnings.Add("有皮肤图片无法解码；原文件已保留，请重新导入有效 PNG 或 JPG。 ");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_skinOrderPersistenceWarning))
+        {
+            warnings.Add(_skinOrderPersistenceWarning);
         }
 
         LibraryWarningText.Text = string.Join(" ", warnings);

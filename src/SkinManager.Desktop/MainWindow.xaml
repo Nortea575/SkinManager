@@ -24,12 +24,18 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="RowSurface" Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8" Padding="9">
-                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
-                        </Border>
+                        <Grid>
+                            <Border x:Name="RowSurface" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8" Padding="7">
+                                <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <Border x:Name="DropMarker" Height="3" Margin="8,0"
+                                    Background="{StaticResource Accent}" CornerRadius="1.5"
+                                    VerticalAlignment="Top" Visibility="Collapsed"
+                                    IsHitTestVisible="False" />
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
@@ -96,13 +102,20 @@
                         Margin="0,0,6,0" Click="UpdateEntryButton_Click"
                         ToolTip="{Binding Content, RelativeSource={RelativeSource Self}}"
                         AutomationProperties.Name="版本与更新">
-                    <StackPanel Orientation="Horizontal">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="6" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
                         <Path Data="M3,7 A6,6 0 0 1 14,4 L16,6 M16,6 L16,2 M16,6 L12,6 M17,11 A6,6 0 0 1 6,14 L4,12 M4,12 L4,16 M4,12 L8,12"
                               Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
-                              StrokeEndLineCap="Round" Fill="Transparent" Width="18" Height="18" Stretch="Uniform"
-                              Margin="0,0,6,0" />
-                        <TextBlock x:Name="UpdateEntryLabel" Text="版本与更新" VerticalAlignment="Center" />
-                    </StackPanel>
+                              StrokeEndLineCap="Round" Fill="Transparent" Width="18" Height="18" Stretch="Uniform" />
+                        <TextBlock x:Name="UpdateEntryLabel" Grid.Column="2" Text="版本与更新"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   TextWrapping="NoWrap"
+                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    </Grid>
                 </Button>
                 <Button x:Name="ManageInstancesButton" Margin="0,0,0,0" Padding="9,5"
                         Click="ManageInstancesButton_Click"
@@ -115,16 +128,16 @@
                         <TextBlock Text="管理实例" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
-                <Button x:Name="CompatibilityEntryButton" Margin="6,0,0,0" Padding="9,5"
-                        Click="CompatibilityEntryButton_Click"
-                        ToolTip="设置 Codex 界面语言，并查看 Magpie 启动方式。"
-                        AutomationProperties.Name="兼容设置">
+                <Button x:Name="SettingsEntryButton" Margin="6,0,0,0" Padding="9,5"
+                        Click="SettingsEntryButton_Click"
+                        ToolTip="管理应用设置与兼容性选项。"
+                        AutomationProperties.Name="设置">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M12,2 L20,5 V11 C20,16 16.5,19 12,21 C7.5,19 4,16 4,11 V5 Z M9,12 L11,14 L15,10"
                               Stroke="{StaticResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
-                        <TextBlock Text="兼容设置" VerticalAlignment="Center" />
+                        <TextBlock Text="设置" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -153,7 +166,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="8" />
                         <RowDefinition Height="36" />
-                        <RowDefinition Height="8" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="8" />
                         <RowDefinition Height="Auto" />
@@ -175,11 +188,17 @@
                                    Foreground="{StaticResource SecondaryText}" Margin="13,0,0,0"
                                    VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Grid>
+                    <TextBlock x:Name="SortStatusText" Grid.Row="3" Text="拖动左侧手柄调整顺序" FontSize="11"
+                               Foreground="{StaticResource SecondaryText}" Margin="2,3,0,5"
+                               TextTrimming="CharacterEllipsis" />
                     <Grid Grid.Row="4">
                         <ListBox x:Name="SkinList" BorderThickness="0" Background="Transparent"
                                  Foreground="{StaticResource PrimaryText}"
                                  Padding="0" ItemContainerStyle="{StaticResource SkinListItemStyle}"
                                  SelectionChanged="SkinList_SelectionChanged"
+                                 AllowDrop="True" DragOver="SkinList_DragOver" Drop="SkinList_Drop"
+                                 DragLeave="SkinList_DragLeave"
+                                 Tag="True"
                                  VirtualizingPanel.IsVirtualizing="True"
                                  VirtualizingPanel.VirtualizationMode="Recycling"
                                  VirtualizingPanel.ScrollUnit="Pixel"
@@ -191,11 +210,26 @@
                                 <DataTemplate>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="68" />
-                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="6" />
+                                            <ColumnDefinition Width="60" />
+                                            <ColumnDefinition Width="8" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Width="68" Height="52" CornerRadius="7"
+                                        <Button x:Name="SortHandle" Grid.Column="0" Width="20" Height="34"
+                                                Padding="0" Margin="0" VerticalAlignment="Center"
+                                                Cursor="SizeAll" Focusable="False"
+                                                IsEnabled="{Binding RelativeSource={RelativeSource AncestorType={x:Type ListBox}}, Path=Tag}"
+                                                PreviewMouseLeftButtonDown="SortHandle_PreviewMouseLeftButtonDown"
+                                                PreviewMouseMove="SortHandle_PreviewMouseMove"
+                                                ToolTip="拖动以调整皮肤顺序"
+                                                AutomationProperties.Name="拖动以调整皮肤顺序">
+                                            <Path Data="M5,6 L5,6.01 M5,12 L5,12.01 M5,18 L5,18.01 M12,6 L12,6.01 M12,12 L12,12.01 M12,18 L12,18.01"
+                                                  Stroke="{StaticResource SecondaryText}" StrokeThickness="2.2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Fill="Transparent" Width="14" Height="24" Stretch="Uniform" />
+                                        </Button>
+                                        <Border Grid.Column="2" Width="60" Height="46" CornerRadius="7"
                                                 Background="{StaticResource NoImageSurface}" ClipToBounds="True">
                                             <Grid>
                                                 <Image x:Name="ThumbnailImage" Source="{Binding Thumbnail}"
@@ -205,7 +239,7 @@
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             </Grid>
                                         </Border>
-                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" MinWidth="0">
+                                        <StackPanel Grid.Column="4" VerticalAlignment="Center" MinWidth="0">
                                             <TextBlock Text="{Binding Entry.Name}" FontSize="13"
                                                        Foreground="{StaticResource PrimaryText}"
                                                        FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
@@ -289,7 +323,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" MinHeight="150" />
+                    <RowDefinition x:Name="PreviewRow" Height="*" MinHeight="150" />
                     <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -399,7 +433,7 @@
                         </Border>
                     </Expander>
 
-                    <Grid Grid.Row="2" Margin="1,0,0,4">
+                    <Grid x:Name="PreviewActiveHeader" Grid.Row="2" Margin="1,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
@@ -419,8 +453,20 @@
                                 HorizontalAlignment="Right" Padding="8,4" MinHeight="30"
                                 Click="PreviewPowerButton_Click" ToolTip="释放本地预览浏览器内存" />
                     </Grid>
+                    <Grid x:Name="PreviewClosedHeader" Grid.Row="2" Visibility="Collapsed"
+                          Margin="1,0,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="本地预览已关闭" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                   VerticalAlignment="Center" />
+                        <Button x:Name="PreviewReopenButton" Grid.Column="1" Content="重新打开预览" Padding="9,4"
+                                Click="PreviewPowerButton_Click" AutomationProperties.Name="重新打开预览" />
+                    </Grid>
 
-                    <Border Grid.Row="3" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
+                    <Border x:Name="PreviewContainer" Grid.Row="3"
+                            BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14"
                             Background="{StaticResource PanelSurface}" ClipToBounds="True">
                         <Grid x:Name="PreviewViewport" MinHeight="150" ClipToBounds="True"
                               Background="{StaticResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
@@ -428,17 +474,6 @@
                             <Grid x:Name="PreviewBrowserHost">
                                 <wv2:WebView2 x:Name="PreviewBrowser" HorizontalAlignment="Stretch"
                                               VerticalAlignment="Stretch" Visibility="Collapsed" />
-                                <StackPanel x:Name="PreviewClosedPanel" Visibility="Collapsed"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                                            Margin="16" MaxWidth="320">
-                                    <TextBlock Text="本地预览已关闭" FontSize="15" FontWeight="SemiBold"
-                                               TextAlignment="Center" />
-                                    <TextBlock Text="重新打开后会恢复当前皮肤或草稿预览。"
-                                               FontSize="12" Foreground="{StaticResource SecondaryText}"
-                                               TextAlignment="Center" TextWrapping="Wrap" Margin="0,5,0,10" />
-                                    <Button Content="打开预览" HorizontalAlignment="Center"
-                                            Click="PreviewPowerButton_Click" />
-                                </StackPanel>
                             </Grid>
                             <Grid x:Name="OriginalImageLayer" Visibility="Collapsed" Background="{StaticResource PanelSurface}">
                                 <Image x:Name="OriginalImageSource" Stretch="Uniform" Margin="12" />

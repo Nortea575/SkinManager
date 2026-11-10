@@ -1,4 +1,4 @@
-#define ProductVersion "1.1.2"
+#define ProductVersion "1.1.3-beta.1"
 
 [Setup]
 AppId={{6FBD8E7A-8A61-4DB8-BD4A-4F2E43110B67}
@@ -6,12 +6,13 @@ AppName=SkinManager
 AppVersion={#ProductVersion}
 AppVerName=SkinManager {#ProductVersion}
 AppPublisher=SkinManager
-VersionInfoVersion=1.1.2.0
-VersionInfoProductVersion=1.1.2
+VersionInfoVersion=1.1.3.0
+VersionInfoProductVersion=1.1.3.0
+VersionInfoProductTextVersion={#ProductVersion}
 VersionInfoDescription=SkinManager Setup
 VersionInfoProductName=SkinManager
 VersionInfoCompany=SkinManager
-VersionInfoOriginalFileName=SkinManager-Setup-1.1.2.exe
+VersionInfoOriginalFileName=SkinManager-Setup-{#ProductVersion}.exe
 DefaultDirName={localappdata}\Programs\SkinManager
 DefaultGroupName=SkinManager
 DisableProgramGroupPage=yes

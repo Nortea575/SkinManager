@@ -13,6 +13,13 @@ internal static class RuntimeApplyWorkflowTests
         await AppliesToExistingConnectedTargetAsync();
         await PreservesActiveVerifiedEndpointWhenAnotherAddressIsDiscoveredAsync();
         await AppliesToUniqueExistingDebugTargetAsync();
+        await WaitsForExistingUnreadyUniqueTargetAsync();
+        await WaitsForExistingUnreadyTargetWithoutSkinAsync();
+        await CancellingExistingTargetWaitDoesNotLaunchOrApplyAsync();
+        await ExistingTargetWaitTimesOutWithoutLaunchingOrApplyingAsync();
+        await RefusesAutomaticSelectionAcrossDebugPortsButHonorsExplicitSelectionAsync();
+        await StopsAutomaticSelectionWhenAnotherDebugInstanceAppearsAsync();
+        await RefusesIdentityChangeAfterLaunchedInstanceIsDiscoveredAsync();
         await RefusesAmbiguousOrMismatchedTargetsAsync();
         await DoesNotLaunchAlongsideNormalCodexAsync();
         await DoesNotLaunchAlongsideExitResidualAsync();
@@ -106,6 +113,141 @@ internal static class RuntimeApplyWorkflowTests
             "已有唯一匹配调试实例时直接应用");
     }
 
+    private static async Task WaitsForExistingUnreadyUniqueTargetAsync()
+    {
+        var waiting = CreateTarget(4125, 9348, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForListener);
+        var ready = CreateTarget(4125, 9348);
+        var progress = new List<RuntimeStatus>();
+        var services = new FakeServices(new FakeInstances([waiting], [ready]));
+        var result = await services.CreateWorkflow(
+            readinessTimeout: TimeSpan.FromMilliseconds(250),
+            pollInterval: TimeSpan.FromMilliseconds(2),
+            progress: progress.Add).StartOrApplyAsync(
+            CreateRequest(), 9348, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && services.LaunchCount == 0 && services.Applies.Count == 1 &&
+                services.Applies[0].ExpectedInstance == ready.Identity,
+            "唯一已有调试实例 listener 尚未就绪时等待同一进程身份后只应用一次");
+        Require(progress.Count > 0 && progress.All(status => status.State == RuntimeStatusState.Connecting && status.SkinId == "ayanami") &&
+                progress.Any(status => status.ConnectedInstance == waiting.Identity),
+            "进度回调持续携带 Connecting、所选皮肤 ID 与等待中的进程身份");
+    }
+
+    private static async Task WaitsForExistingUnreadyTargetWithoutSkinAsync()
+    {
+        var waiting = CreateTarget(4131, 9353, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForCdp);
+        var ready = CreateTarget(4131, 9353);
+        var services = new FakeServices(new FakeInstances([waiting], [ready]));
+        var result = await services.CreateWorkflow(
+            readinessTimeout: TimeSpan.FromMilliseconds(250),
+            pollInterval: TimeSpan.FromMilliseconds(2)).StartOrConnectAsync(
+            9353, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Connected && result.SkinId is null && result.AppliedTargetCount == 0 &&
+                services.LaunchCount == 0 && services.Applies.Count == 0,
+            "无皮肤连接对已有未就绪实例等待后只连接，不发送 Apply");
+    }
+
+    private static async Task CancellingExistingTargetWaitDoesNotLaunchOrApplyAsync()
+    {
+        var waiting = CreateTarget(4132, 9354, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForListener);
+        var instances = new FakeInstances([waiting]);
+        var waitingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        instances.OnRead = count =>
+        {
+            if (count >= 2)
+            {
+                waitingStarted.TrySetResult();
+            }
+        };
+        var services = new FakeServices(instances);
+        using var cancellation = new CancellationTokenSource();
+        var operation = services.CreateWorkflow(pollInterval: TimeSpan.FromSeconds(10)).StartOrApplyAsync(
+            CreateRequest(), 9354, null, null, hasActiveConnection: false, cancellation.Token);
+        await waitingStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        try
+        {
+            await operation;
+            throw new InvalidOperationException("取消已有实例的就绪等待应结束流程。");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Require(services.LaunchCount == 0 && services.Applies.Count == 0,
+            "取消已有实例的就绪等待不会启动第二个 Codex 或补发 Apply");
+    }
+
+    private static async Task ExistingTargetWaitTimesOutWithoutLaunchingOrApplyingAsync()
+    {
+        var waiting = CreateTarget(4133, 9355, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForListener);
+        var services = new FakeServices(new FakeInstances([waiting]));
+        var result = await services.CreateWorkflow(
+            readinessTimeout: TimeSpan.FromMilliseconds(20),
+            pollInterval: TimeSpan.FromMilliseconds(2)).StartOrApplyAsync(
+            CreateRequest(), 9355, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0 &&
+                result.Message?.Contains("超时", StringComparison.Ordinal) == true,
+            "已有实例的有界等待超时后不重启 Codex 或发送皮肤脚本");
+    }
+
+    private static async Task RefusesAutomaticSelectionAcrossDebugPortsButHonorsExplicitSelectionAsync()
+    {
+        var first = CreateTarget(4126, 9349);
+        var second = CreateTarget(4127, 9350);
+        var automatic = new FakeServices(new FakeInstances([first, second]));
+        var automaticResult = await automatic.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest(), 9349, null, null, hasActiveConnection: false, CancellationToken.None);
+        Require(automaticResult.State == RuntimeStatusState.Error && automatic.Applies.Count == 0 && automatic.LaunchCount == 0,
+            "不同调试端口存在多个主实例时不自动连接恰好匹配请求端口的其中一个");
+
+        var selected = new FakeServices(new FakeInstances([first, second]));
+        var selectedResult = await selected.CreateWorkflow().StartOrApplyAsync(
+            CreateRequest(), 9349, first, null, hasActiveConnection: false, CancellationToken.None);
+        Require(selectedResult.State == RuntimeStatusState.Connected && selected.Applies.Count == 1 && selected.LaunchCount == 0 &&
+                selected.Applies[0].ExpectedInstance == first.Identity,
+            "显式选择的已核验调试实例在多实例环境下优先应用");
+    }
+
+    private static async Task StopsAutomaticSelectionWhenAnotherDebugInstanceAppearsAsync()
+    {
+        var waiting = CreateTarget(4128, 9351, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForCdp);
+        var otherPort = CreateTarget(4129, 9352);
+        var services = new FakeServices(new FakeInstances([waiting], [waiting, otherPort]));
+        var result = await services.CreateWorkflow(
+            readinessTimeout: TimeSpan.FromMilliseconds(250),
+            pollInterval: TimeSpan.FromMilliseconds(2)).StartOrApplyAsync(
+            CreateRequest(), 9351, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.Applies.Count == 0 && services.LaunchCount == 0,
+            "自动等待期间出现另一个端口的调试主实例后停止自动选择");
+    }
+
+    private static async Task RefusesIdentityChangeAfterLaunchedInstanceIsDiscoveredAsync()
+    {
+        var waiting = CreateTarget(4134, 9356, canConnect: false,
+            connectionState: CodexDebugConnectionState.WaitingForListener);
+        var replacement = CreateTarget(4134, 9356,
+            startedAt: waiting.Identity.StartedAtUtc.AddSeconds(1));
+        var services = new FakeServices(new FakeInstances([], [waiting], [replacement]));
+        var result = await services.CreateWorkflow(
+            readinessTimeout: TimeSpan.FromMilliseconds(250),
+            pollInterval: TimeSpan.FromMilliseconds(2)).StartOrApplyAsync(
+            CreateRequest(), 9356, null, null, hasActiveConnection: false, CancellationToken.None);
+
+        Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 1 && services.Applies.Count == 0 &&
+                result.Message?.Contains("身份发生变化", StringComparison.Ordinal) == true,
+            "启动后首次发现调试实例时锁定完整身份，后续 PID 复用不切换目标");
+    }
+
     private static async Task RefusesAmbiguousOrMismatchedTargetsAsync()
     {
         var first = CreateTarget(4105, 9335);
@@ -149,14 +291,18 @@ internal static class RuntimeApplyWorkflowTests
 
     private static async Task DoesNotWaitForUnconnectableDebugFlagAsync()
     {
-        var flaggedOnly = CreateTarget(4195, 9345, canConnect: false);
-        var services = new FakeServices(new FakeInstances([flaggedOnly]));
+        var flaggedOnly = CreateTarget(4195, 9345, canConnect: false,
+            connectionState: CodexDebugConnectionState.Rejected,
+            connectionMessage: "fake listener belongs to another process");
+        var instances = new FakeInstances([flaggedOnly]);
+        var services = new FakeServices(instances);
         var result = await services.CreateWorkflow().StartOrApplyAsync(
             CreateRequest(), 9345, null, null, hasActiveConnection: false, CancellationToken.None);
 
         Require(result.State == RuntimeStatusState.Error && services.LaunchCount == 0 && services.Applies.Count == 0 &&
-                result.Message?.Contains("9345", StringComparison.Ordinal) == true,
-            "仅有调试启动参数但当前进程未拥有可连接端口时即时说明原因，不空等端口超时");
+                result.Message?.Contains("fake listener belongs to another process", StringComparison.Ordinal) == true &&
+                instances.ReadCount == 1,
+            "拒绝状态保留端口所有权原因并在首次扫描后终止，不进入等待、启动或应用");
     }
 
     private static async Task LaunchesAndAppliesAfterMatchingDebugTargetAppearsAsync()
@@ -335,7 +481,9 @@ internal static class RuntimeApplyWorkflowTests
         DateTimeOffset? startedAt = null,
         CodexInstanceKind? kind = null,
         bool? canConnect = null,
-        string? debugEndpoint = null) =>
+        string? debugEndpoint = null,
+        CodexDebugConnectionState? connectionState = null,
+        string? connectionMessage = null) =>
         new(
             new CodexProcessIdentity(
                 processId,
@@ -348,14 +496,17 @@ internal static class RuntimeApplyWorkflowTests
         {
             Kind = kind ?? (port is null ? CodexInstanceKind.Normal : CodexInstanceKind.Debug),
             CanConnect = canConnect ?? port is >= 1 and <= 65535,
+            DebugConnectionState = connectionState ?? ((canConnect ?? port is >= 1 and <= 65535)
+                ? CodexDebugConnectionState.Ready
+                : port is null ? CodexDebugConnectionState.NotApplicable : CodexDebugConnectionState.Rejected),
             DebugEndpoint = (canConnect ?? port is >= 1 and <= 65535) && port is int debugPort
                 ? debugEndpoint ?? $"http://127.0.0.1:{debugPort}"
                 : debugEndpoint,
-            ConnectionMessage = (canConnect ?? port is >= 1 and <= 65535)
+            ConnectionMessage = connectionMessage ?? ((canConnect ?? port is >= 1 and <= 65535)
                 ? null
                 : port is int unavailablePort
                     ? $"fake listener for port {unavailablePort} is unavailable"
-                    : null
+                    : null)
         };
 
     private static RuntimeApplyRequest CreateRequest(string endpoint = "http://127.0.0.1:9335") => new()
@@ -384,7 +535,10 @@ internal static class RuntimeApplyWorkflowTests
         public RuntimeStatus LaunchResult { get; set; } =
             new(RuntimeStatusState.Connecting, null, "http://127.0.0.1:9335", "fake launching", null);
 
-        public RuntimeApplyWorkflow CreateWorkflow(TimeSpan? readinessTimeout = null, TimeSpan? pollInterval = null) =>
+        public RuntimeApplyWorkflow CreateWorkflow(
+            TimeSpan? readinessTimeout = null,
+            TimeSpan? pollInterval = null,
+            Action<RuntimeStatus>? progress = null) =>
             new(
                 (options, _) =>
                 {
@@ -406,7 +560,8 @@ internal static class RuntimeApplyWorkflowTests
                 },
                 instances,
                 readinessTimeout,
-                pollInterval);
+                pollInterval,
+                progress);
     }
 
     private sealed class FakeInstances(params IReadOnlyList<CodexInstance>[] snapshots) : ICodexInstanceService

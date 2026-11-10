@@ -12,6 +12,15 @@ public enum CodexInstanceKind
     Debug
 }
 
+public enum CodexDebugConnectionState
+{
+    NotApplicable,
+    WaitingForListener,
+    WaitingForCdp,
+    Ready,
+    Rejected
+}
+
 public sealed record CodexProcessIdentity(int ProcessId, DateTimeOffset StartedAtUtc, string ExecutablePath);
 
 public sealed record CodexInstance(
@@ -23,6 +32,9 @@ public sealed record CodexInstance(
 {
     public CodexInstanceKind Kind { get; init; } = DebugPort is null ? CodexInstanceKind.Normal : CodexInstanceKind.Debug;
     public bool CanConnect { get; init; } = DebugPort is >= 1 and <= 65535;
+    public CodexDebugConnectionState DebugConnectionState { get; init; } = DebugPort is >= 1 and <= 65535
+        ? CodexDebugConnectionState.Ready
+        : DebugPort is null ? CodexDebugConnectionState.NotApplicable : CodexDebugConnectionState.Rejected;
     public string? DebugEndpoint { get; init; }
     public string? ConnectionMessage { get; init; }
     public CodexProcessExitSnapshot? PendingExitSnapshot { get; init; }
@@ -104,9 +116,10 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 var debugAddress = GetOptionValue(arguments, "--remote-debugging-address");
                 var hasDebugOption = HasOption(arguments, "--remote-debugging-port");
                 int? debugPort = int.TryParse(port, out var parsedPort) && parsedPort is >= 1 and <= 65535 ? parsedPort : null;
-                var (debugEndpoint, connectionMessage) = debugPort is { } requestedPort
+                var (debugEndpoint, connectionMessage, connectionState) = debugPort is { } requestedPort
                     ? await FindConnectableEndpointAsync(requestedPort, candidate.Identity.ProcessId, debugAddress, cancellationToken).ConfigureAwait(false)
-                    : (null, hasDebugOption ? "调试端口参数缺失或无效。请使用 1 到 65535 之间的端口重新启动调试版。" : null);
+                    : (null, hasDebugOption ? "调试端口参数缺失或无效。请使用 1 到 65535 之间的端口重新启动调试版。" : null,
+                        hasDebugOption ? CodexDebugConnectionState.Rejected : CodexDebugConnectionState.NotApplicable);
 
                 var windows = _platform.GetVisibleTopLevelWindows(candidate.Identity.ProcessId);
                 var window = windows.FirstOrDefault();
@@ -119,6 +132,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 {
                     Kind = hasDebugOption ? CodexInstanceKind.Debug : CodexInstanceKind.Normal,
                     CanConnect = debugEndpoint is not null,
+                    DebugConnectionState = connectionState,
                     DebugEndpoint = debugEndpoint,
                     ConnectionMessage = connectionMessage
                 });
@@ -158,7 +172,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             return result.OrderBy(instance => instance.Identity.ProcessId).ToArray();
         }, cancellationToken);
 
-    private async Task<(string? Endpoint, string? Message)> FindConnectableEndpointAsync(
+    private async Task<(string? Endpoint, string? Message, CodexDebugConnectionState State)> FindConnectableEndpointAsync(
         int port,
         int processId,
         string? requestedAddress,
@@ -175,7 +189,14 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             .ToArray();
 
         if (endpoints.Length == 0)
-            return (null, $"调试端口 {port} 没有由此 Codex 进程监听。请确认调试版窗口仍在运行且端口一致。 ");
+        {
+            var ownedListenerExists = listeners.Any(listener => listener.ProcessId == processId);
+            return ownedListenerExists
+                ? (null, $"调试端口 {port} 的监听地址不是可验证的 loopback 地址。", CodexDebugConnectionState.Rejected)
+                : listeners.Count == 0
+                    ? (null, $"调试端口 {port} 尚未开始监听。", CodexDebugConnectionState.WaitingForListener)
+                    : (null, $"调试端口 {port} 正由其他进程监听，无法连接所选 Codex 实例。", CodexDebugConnectionState.Rejected);
+        }
 
         var ambiguousEndpoint = false;
         foreach (var endpoint in endpoints)
@@ -192,12 +213,12 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 continue;
             }
             if (await _isSupportedEndpoint(endpoint, cancellationToken).ConfigureAwait(false))
-                return (endpoint.ToString(), null);
+                return (endpoint.ToString(), null, CodexDebugConnectionState.Ready);
         }
 
         if (ambiguousEndpoint)
-            return (null, $"调试端口 {port} 的 loopback 地址由多个进程监听，无法安全连接。请关闭占用端口的其他服务后刷新。 ");
-        return (null, $"调试端口 {port} 虽由此进程监听，但没有返回有效的 Codex CDP 服务。请检查调试端口是否被其他服务占用。 ");
+            return (null, $"调试端口 {port} 的 loopback 地址由多个进程监听，无法安全连接。请处理端口占用后刷新。 ", CodexDebugConnectionState.Rejected);
+        return (null, $"调试端口 {port} 已由此 Codex 进程监听，正在等待 CDP 服务就绪。", CodexDebugConnectionState.WaitingForCdp);
     }
 
     private static int GetEndpointPreference(Uri endpoint, string? requestedAddress)

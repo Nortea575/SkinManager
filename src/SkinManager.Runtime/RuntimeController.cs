@@ -222,7 +222,7 @@ public sealed class RuntimeController
                 RuntimeStatusState.Connecting,
                 null,
                 $"http://127.0.0.1:{options.Port}",
-                "已请求启动，请等待主界面出现后再点击连接。",
+                "已请求启动 Codex 调试版，正在自动检测实例与端口就绪状态。",
                 null));
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException or Win32Exception)

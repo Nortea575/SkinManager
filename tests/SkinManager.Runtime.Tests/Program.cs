@@ -252,6 +252,9 @@ internal static class Program
         var defaultActivation = defaultPlatform.ActivationRequests.Single();
         Assert(defaultStatus.State == RuntimeStatusState.Connecting && defaultStatus.Endpoint == "http://127.0.0.1:9335",
             "debug activation with default options reports the default loopback endpoint");
+        Assert(defaultStatus.Message!.Contains("自动检测", StringComparison.Ordinal) &&
+            !defaultStatus.Message.Contains("再点击连接", StringComparison.Ordinal),
+            "debug activation reports automatic detection instead of asking the user to connect again");
         Assert(defaultActivation.AppUserModelId == expectedAppUserModelId &&
             defaultActivation.Arguments == $"{expectedAddress} --remote-debugging-port=9335" &&
             !defaultActivation.Arguments.Contains("--user-data-dir", StringComparison.Ordinal) &&
@@ -450,11 +453,22 @@ internal static class Program
         Assert(normalInstance.WindowTitle == "Codex normal" && normalInstance.WindowHandle == 14101 && normalInstance.UserDataDirectory == @"C:\Users\A\Codex Profile",
             "quoted command-line paths with spaces and owning visible window identity are preserved");
         Assert(waitingInstance.Kind == CodexInstanceKind.Debug && !waitingInstance.CanConnect && waitingInstance.DebugPort == 19442 &&
+            waitingInstance.DebugConnectionState == CodexDebugConnectionState.Rejected &&
             waitingInstance.UserDataDirectory == @"D:\Profiles\Debug Waiting",
             "a requested debug mode remains labeled Debug while its listener is not owned and ready");
         Assert(readyInstance.Kind == CodexInstanceKind.Debug && readyInstance.CanConnect && readyInstance.DebugPort == 19443 &&
+            readyInstance.DebugConnectionState == CodexDebugConnectionState.Ready &&
             readyInstance.DebugEndpoint == "http://[::1]:19443/" && readyInstance.UserDataDirectory == @"D:\Profiles\Debug Ready",
             "debug connectivity uses the loopback address owned by the selected process and verified as a CDP endpoint");
+
+        var noListenerCandidate = Candidate(4123, path, $"\"{path}\" --remote-debugging-port=19448");
+        platform.Candidates.Add(noListenerCandidate);
+        platform.CurrentIdentities[4123] = noListenerCandidate.Identity;
+        platform.Relations.Add(new(4123, 100, "ChatGPT.exe"));
+        var noListener = (await service.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4123);
+        Assert(noListener.DebugConnectionState == CodexDebugConnectionState.WaitingForListener &&
+            noListener.ConnectionMessage!.Contains("尚未开始监听", StringComparison.Ordinal),
+            "a debug instance with no listener is marked temporarily waiting rather than rejected");
 
         platform.ListenerEndpoints[19444] = [new CodexListenerEndpoint(4103, IPAddress.Loopback)];
         platform.Candidates.Add(Candidate(4117, path, $"\"{path}\" --remote-debugging-port=19444"));
@@ -463,7 +477,9 @@ internal static class Program
         platform.Relations.Add(new(4117, 100, "ChatGPT.exe"));
         platform.Windows[4117] = [new CodexWindowInfo(14117, "Debug wrong PID")];
         var wrongOwner = (await service.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4117);
-        Assert(!wrongOwner.CanConnect && wrongOwner.DebugEndpoint is null && wrongOwner.ConnectionMessage!.Contains("没有由此 Codex 进程监听", StringComparison.Ordinal),
+        Assert(!wrongOwner.CanConnect && wrongOwner.DebugEndpoint is null &&
+            wrongOwner.DebugConnectionState == CodexDebugConnectionState.Rejected &&
+            wrongOwner.ConnectionMessage!.Contains("其他进程监听", StringComparison.Ordinal),
             "a debug port owned by another PID is exposed as not connectable with a direct explanation");
 
         platform.ListenerEndpoints[19445] = [new CodexListenerEndpoint(4118, IPAddress.Loopback)];
@@ -474,8 +490,10 @@ internal static class Program
         platform.Windows[4118] = [new CodexWindowInfo(14118, "Debug invalid CDP")];
         var invalidCdp = new WindowsCodexInstanceService(platform, isSupportedEndpoint: (_, _) => Task.FromResult(false));
         var invalidEndpoint = (await invalidCdp.GetInstancesAsync()).Single(instance => instance.Identity.ProcessId == 4118);
-        Assert(!invalidEndpoint.CanConnect && invalidEndpoint.DebugEndpoint is null && invalidEndpoint.ConnectionMessage!.Contains("没有返回有效的 Codex CDP 服务", StringComparison.Ordinal),
-            "a same-process listener without a valid CDP response is not presented as usable");
+        Assert(!invalidEndpoint.CanConnect && invalidEndpoint.DebugEndpoint is null &&
+            invalidEndpoint.DebugConnectionState == CodexDebugConnectionState.WaitingForCdp &&
+            invalidEndpoint.ConnectionMessage!.Contains("等待 CDP 服务就绪", StringComparison.Ordinal),
+            "a same-process listener without a ready CDP response is marked as temporarily waiting");
 
         await using (var cdpServer = new FakeCdpServer())
         {
@@ -499,7 +517,9 @@ internal static class Program
             nonCdpPlatform.Relations.Add(new(4122, 100, "ChatGPT.exe"));
             nonCdpPlatform.ListenerEndpoints[nonCdpServer.Port] = [new CodexListenerEndpoint(4122, IPAddress.Loopback)];
             var notUsable = (await new WindowsCodexInstanceService(nonCdpPlatform).GetInstancesAsync()).Single();
-            Assert(!notUsable.CanConnect && notUsable.DebugEndpoint is null && notUsable.ConnectionMessage!.Contains("没有返回有效的 Codex CDP 服务", StringComparison.Ordinal),
+            Assert(!notUsable.CanConnect && notUsable.DebugEndpoint is null &&
+                notUsable.DebugConnectionState == CodexDebugConnectionState.WaitingForCdp &&
+                notUsable.ConnectionMessage!.Contains("等待 CDP 服务就绪", StringComparison.Ordinal),
                 "a process-owned HTTP listener with a non-CDP response is distinguished from a usable debug endpoint");
         }
 

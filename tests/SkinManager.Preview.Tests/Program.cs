@@ -150,6 +150,8 @@ internal static class Program
         var reviewUi = args.Contains("--review-ui", StringComparer.OrdinalIgnoreCase);
         var reviewCapture = args.Contains("--review-capture", StringComparer.OrdinalIgnoreCase);
         var updateChannelOnly = args.Contains("--update-channel-only", StringComparer.OrdinalIgnoreCase);
+        var historyOnly = args.Contains("--history-only", StringComparer.OrdinalIgnoreCase);
+        var betaWorkspaceOnly = args.Contains("--beta-workspace-only", StringComparer.OrdinalIgnoreCase);
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
         var marketLivePreviewImages = args.Contains("--market-live-preview-images", StringComparer.OrdinalIgnoreCase);
         var managerInstanceOnly = args.Contains("--manager-instance-only", StringComparer.OrdinalIgnoreCase);
@@ -206,6 +208,18 @@ internal static class Program
                 else if (updateChannelOnly)
                 {
                     await UpdateChannelChecks.RunAsync();
+                }
+                else if (historyOnly || betaWorkspaceOnly)
+                {
+                    if (historyOnly)
+                    {
+                        await HistoryChecks.RunAsync();
+                    }
+
+                    if (betaWorkspaceOnly)
+                    {
+                        await BetaWorkspaceChecks.RunAsync();
+                    }
                 }
                 else
                 {
@@ -928,6 +942,7 @@ internal static class Program
             }
 
             var core = browser.CoreWebView2 ?? throw new InvalidOperationException("WebView2 初始化后仍不可用。");
+            await RuntimeDomReadinessChecks.RunAsync(browser);
             requestAudit = (_, args) =>
             {
                 if (Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out var requestUri) &&
@@ -3695,6 +3710,7 @@ internal static class Program
         var clientWidth = content.ActualWidth + margin.Left + margin.Right;
         var clientHeight = content.ActualHeight + margin.Top + margin.Bottom;
         var dpi = VisualTreeHelper.GetDpi(content);
+        var contentOffset = VisualTreeHelper.GetOffset(content);
         var image = new RenderTargetBitmap(
             Math.Max(1, (int)Math.Ceiling(clientWidth * dpi.DpiScaleX)),
             Math.Max(1, (int)Math.Ceiling(clientHeight * dpi.DpiScaleY)),
@@ -3705,8 +3721,13 @@ internal static class Program
         using (var drawing = clientCanvas.RenderOpen())
         {
             drawing.DrawRectangle(window.Background, null, new Rect(0, 0, clientWidth, clientHeight));
+            var contentBrush = new VisualBrush(content)
+            {
+                ViewboxUnits = BrushMappingMode.Absolute,
+                Viewbox = new Rect(contentOffset.X, contentOffset.Y, content.ActualWidth, content.ActualHeight)
+            };
             drawing.DrawRectangle(
-                new VisualBrush(content),
+                contentBrush,
                 null,
                 new Rect(margin.Left, margin.Top, content.ActualWidth, content.ActualHeight));
         }
@@ -4102,14 +4123,21 @@ internal static class Program
         var oldBrowser = FindNamed<WebView2>(window, "PreviewBrowser");
         FindNamed<Button>(window, "PreviewPowerButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var host = FindNamed<Grid>(window, "PreviewBrowserHost");
+        var closedHeader = FindNamed<Grid>(window, "PreviewClosedHeader");
+        var previewContainer = FindNamed<Border>(window, "PreviewContainer");
+        var previewRow = window.FindName("PreviewRow") as RowDefinition
+            ?? throw new InvalidOperationException("找不到窗口行定义 PreviewRow。");
         await WaitUntilAsync(() => Task.FromResult(
-            FindNamed<StackPanel>(window, "PreviewClosedPanel").Visibility == Visibility.Visible &&
+            FindNamed<Grid>(window, "PreviewActiveHeader").Visibility == Visibility.Collapsed &&
+            closedHeader.Visibility == Visibility.Visible &&
+            previewContainer.Visibility == Visibility.Collapsed &&
+            previewRow.Height.Value == 0 && previewRow.MinHeight == 0 &&
             FindVisualChildren<WebView2>(host).Count() == 0 &&
             typeof(MainWindow).GetField("_previewRenderer", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(window) is null),
-            "关闭预览时释放并移除已 Dispose 的 WebView2 与 renderer");
+            "关闭预览时收起容器行、展示紧凑重开入口并释放 WebView2 与 renderer");
 
-        var openButton = FindVisualChildren<Button>(FindNamed<StackPanel>(window, "PreviewClosedPanel"))
-            .Single(button => button.Content?.ToString() == "打开预览");
+        var openButton = FindVisualChildren<Button>(closedHeader)
+            .Single(button => button.Content?.ToString() == "重新打开预览");
         openButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitUntilAsync(async () =>
         {
