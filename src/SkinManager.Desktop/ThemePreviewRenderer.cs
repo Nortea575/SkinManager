@@ -101,6 +101,7 @@ public sealed class ThemePreviewRenderer : IDisposable
     private bool _backgroundPositionMode;
     private long _displayRequestSequence;
     private ResolvedSkin? _currentResolvedSkin;
+    private bool _isShowingOriginalImage;
 
     public ThemePreviewRenderer(WebView2 webView, string userDataFolder, BasePackage basePackage)
     {
@@ -115,6 +116,13 @@ public sealed class ThemePreviewRenderer : IDisposable
     public int BlockedExternalRequests { get; private set; }
     public int BlockedExternalNavigationRequests { get; private set; }
     public ResolvedSkin? CurrentResolvedSkin => _currentResolvedSkin;
+    public bool IsShowingOriginalImage => _isShowingOriginalImage;
+    public bool IsCurrentPackageReady(SkinPackage package)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        return _currentDocumentReady && ReferenceEquals(_currentDocument?.Package, package);
+    }
+
     public event EventHandler? CurrentResolvedSkinChanged;
     public event EventHandler<PreviewComponentSelectedEventArgs>? ComponentSelected;
     public event EventHandler<PreviewBackgroundFocusEventArgs>? BackgroundFocusChanged;
@@ -181,6 +189,71 @@ public sealed class ThemePreviewRenderer : IDisposable
         ArgumentNullException.ThrowIfNull(package);
         ArgumentNullException.ThrowIfNull(options);
         return DisplayAsync(package, options);
+    }
+
+    public async Task<bool> DisplayOriginalImageAsync(string imagePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+        ThrowIfDisposed();
+
+        if (!SkinPackageReader.IsSupportedImagePath(imagePath) || !IsSafePackagePath(imagePath))
+        {
+            return false;
+        }
+
+        var observedDisplaySequence = Volatile.Read(ref _displayRequestSequence);
+        await _displayGate.WaitAsync();
+        try
+        {
+            if (observedDisplaySequence != Volatile.Read(ref _displayRequestSequence) ||
+                !_currentDocumentReady ||
+                _currentDocument is not { Package: { } package } document ||
+                !package.Files.ContainsKey(imagePath))
+            {
+                return false;
+            }
+
+            var requestSequence = Interlocked.Increment(ref _displayRequestSequence);
+            _navigationCompletion?.TrySetResult(false);
+            var core = await EnsureInitializedAsync();
+            if (!IsLatestDisplayRequest(requestSequence))
+            {
+                return false;
+            }
+
+            ResumeIfSuspended(core);
+            var imageUri = $"https://{PreviewDocumentBuilder.PreviewHost}/{document.Generation}/skin/{PreviewDocumentBuilder.EncodeRelativePath(imagePath)}";
+            var script = """
+                (() => {
+                  const imageUri = __ORIGINAL_IMAGE_URI__;
+                  const root = document.documentElement;
+                  const body = document.body;
+                  root.style.cssText = "width:100%;height:100%;overflow:hidden;background:transparent;";
+                  body.replaceChildren();
+                  body.style.cssText = "margin:0;width:100vw;height:100vh;overflow:hidden;display:grid;place-items:center;background:transparent;";
+                  const image = document.createElement("img");
+                  image.id = "skin-manager-original-image";
+                  image.alt = "皮肤背景原图";
+                  image.src = imageUri;
+                  image.style.cssText = "display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;";
+                  body.appendChild(image);
+                })();
+                """.Replace("__ORIGINAL_IMAGE_URI__", JsonSerializer.Serialize(imageUri), StringComparison.Ordinal);
+            await core.ExecuteScriptAsync(script);
+            if (!IsLatestDisplayRequest(requestSequence))
+            {
+                return false;
+            }
+
+            _isShowingOriginalImage = true;
+            _currentDocumentReady = false;
+            SetCurrentResolvedSkin(null);
+            return true;
+        }
+        finally
+        {
+            _displayGate.Release();
+        }
     }
 
     public async Task<bool> UpdatePackageStylesAsync(SkinPackage package, PreviewOptions options)
@@ -392,6 +465,7 @@ public sealed class ThemePreviewRenderer : IDisposable
                 return false;
             }
 
+            _isShowingOriginalImage = false;
             ResumeIfSuspended(core);
 
             if (_currentDocument is { } currentDocument && _currentDocumentReady &&
@@ -934,7 +1008,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         await _displayGate.WaitAsync();
         try
         {
-            if (!IsLatestDisplayRequest(requestSequence) || !ReferenceEquals(_currentDocument, document) ||
+            if (_isShowingOriginalImage || !IsLatestDisplayRequest(requestSequence) || !ReferenceEquals(_currentDocument, document) ||
                 document.AppearancePreference != "system")
             {
                 return;

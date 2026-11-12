@@ -371,7 +371,8 @@ public static class NativeSkinStyleBuilder
                   Object.assign(image.style, { position: "absolute", inset: "0", backgroundRepeat: "no-repeat" });
                   background.appendChild(image);
                 }
-                image.style.backgroundImage = `url(${JSON.stringify(payload.background.imageUrl)})`;
+                const imageBackground = `url(${JSON.stringify(payload.background.imageUrl)})`;
+                if (image.style.backgroundImage !== imageBackground) image.style.backgroundImage = imageBackground;
                 image.style.backgroundSize = payload.background.fit || "";
                 image.style.backgroundPosition = payload.background.focusX !== null && payload.background.focusY !== null
                   ? `${payload.background.focusX * 100}% ${payload.background.focusY * 100}%`

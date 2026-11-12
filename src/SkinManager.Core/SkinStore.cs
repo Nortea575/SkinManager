@@ -442,11 +442,9 @@ public sealed class SkinStore
     private static string ValidateCatalogImagePath(string path)
     {
         var normalized = SkinPackageReader.NormalizeRelativePath(path, "$.background.image");
-        if (!Path.GetExtension(normalized).Equals(".png", StringComparison.OrdinalIgnoreCase) &&
-            !Path.GetExtension(normalized).Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
-            !Path.GetExtension(normalized).Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
+        if (!SkinPackageReader.IsSupportedImagePath(normalized))
         {
-            throw new InvalidDataException("背景图片只支持 PNG、JPG 或 JPEG。 ");
+            throw new InvalidDataException("背景图片只支持 PNG、JPG、JPEG 或 GIF。 ");
         }
 
         return normalized;

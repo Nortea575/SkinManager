@@ -17,6 +17,7 @@ var passed = 0;
 try
 {
     passed += CreationWorkflowTests.Run();
+    passed += GifPackageChecks.Run(testRoot);
     var ayanamiDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "ayanami");
     var sayaDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "saya");
     var nativeDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "native");

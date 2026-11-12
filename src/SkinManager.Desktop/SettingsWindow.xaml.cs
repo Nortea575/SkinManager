@@ -16,7 +16,9 @@ public partial class SettingsWindow : Window
     private readonly Func<string?, CancellationToken, Task> _launchMagpie;
     private readonly Func<Task<RuntimeStatus>> _launchDebugCodex;
     private readonly Func<CodexConfigReadabilityResult> _inspectCodexConfig;
+    private readonly IStartupPreferencesService? _startupPreferencesService;
     private RuntimeCompatibilityOptions _options;
+    private StartupPreferencesState? _startupPreferences;
     private RuntimeCompatibilityResult? _lastRuntimeResult;
     private bool _settingsLoaded;
     private bool _updatingSettingsControl;
@@ -24,6 +26,8 @@ public partial class SettingsWindow : Window
     private bool _hasInspectedMagpie;
     private bool _themeModeReady;
     private bool _updatingThemeMode;
+    private bool _updatingStartupControls;
+    private bool _startupPreferencesLoaded;
 
     public SettingsWindow(
         RuntimeCompatibilityOptions options,
@@ -34,7 +38,8 @@ public partial class SettingsWindow : Window
         Func<RuntimeCompatibilityOptions> reloadSettings,
         Func<Task<RuntimeStatus>> launchDebugCodex,
         MagpieCompatibilityService? magpieService = null,
-        ICodexConfigReadabilityService? codexConfigReadabilityService = null)
+        ICodexConfigReadabilityService? codexConfigReadabilityService = null,
+        IStartupPreferencesService? startupPreferencesService = null)
         : this(
             options,
             settingsLoaded,
@@ -44,7 +49,8 @@ public partial class SettingsWindow : Window
             reloadSettings,
             launchDebugCodex,
             CreateMagpieActions(magpieService),
-            codexConfigReadabilityService)
+            codexConfigReadabilityService,
+            startupPreferencesService)
     {
     }
 
@@ -58,7 +64,8 @@ public partial class SettingsWindow : Window
         Func<Task<RuntimeStatus>> launchDebugCodex,
         Func<string?, MagpieCompatibilityResult> inspectMagpie,
         Func<string?, CancellationToken, Task> launchMagpie,
-        ICodexConfigReadabilityService? codexConfigReadabilityService = null)
+        ICodexConfigReadabilityService? codexConfigReadabilityService = null,
+        IStartupPreferencesService? startupPreferencesService = null)
         : this(
             options,
             settingsLoaded,
@@ -68,7 +75,8 @@ public partial class SettingsWindow : Window
             reloadSettings,
             launchDebugCodex,
             (inspectMagpie, launchMagpie),
-            codexConfigReadabilityService)
+            codexConfigReadabilityService,
+            startupPreferencesService)
     {
     }
 
@@ -82,7 +90,8 @@ public partial class SettingsWindow : Window
         Func<Task<RuntimeStatus>> launchDebugCodex,
         (Func<string?, MagpieCompatibilityResult> Inspect,
          Func<string?, CancellationToken, Task> Launch) magpieActions,
-        ICodexConfigReadabilityService? codexConfigReadabilityService)
+        ICodexConfigReadabilityService? codexConfigReadabilityService,
+        IStartupPreferencesService? startupPreferencesService)
     {
         _options = options;
         _settingsLoaded = settingsLoaded;
@@ -93,6 +102,7 @@ public partial class SettingsWindow : Window
         _inspectMagpie = magpieActions.Inspect;
         _launchMagpie = magpieActions.Launch;
         _inspectCodexConfig = (codexConfigReadabilityService ?? new CodexConfigReadabilityService()).Inspect;
+        _startupPreferencesService = startupPreferencesService;
         InitializeComponent();
         _themeModeReady = true;
         SetAppearanceSelection(AppThemeService.Mode);
@@ -114,6 +124,7 @@ public partial class SettingsWindow : Window
         RenderSavedPreference(settingsLoadError);
         RenderRuntimePreference(_settingsLoaded ? _lastRuntimeResult : null);
         RenderCodexConfigStatus(_inspectCodexConfig());
+        RefreshStartupPreferences();
     }
 
     private void AppearanceModeBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -173,6 +184,88 @@ public partial class SettingsWindow : Window
         CodexConfigPathText.Text = string.IsNullOrWhiteSpace(result.Path)
             ? "配置文件路径无法解析。"
             : result.Path;
+    }
+
+    private void RefreshStartupPreferences()
+    {
+        if (_startupPreferencesService is null)
+        {
+            _startupPreferences = null;
+            _startupPreferencesLoaded = false;
+            RenderStartupPreferences("此窗口未连接开机启动设置服务。");
+            return;
+        }
+
+        try
+        {
+            _startupPreferences = _startupPreferencesService.Read();
+            _startupPreferencesLoaded = true;
+            RenderStartupPreferences();
+        }
+        catch (Exception exception)
+        {
+            _startupPreferences = null;
+            _startupPreferencesLoaded = false;
+            RenderStartupPreferences($"无法读取开机启动设置：{exception.Message}");
+        }
+    }
+
+    private void RenderStartupPreferences(string? error = null)
+    {
+        _updatingStartupControls = true;
+        var state = _startupPreferences;
+        StartManagerAtLoginCheckBox.IsChecked = state?.ManagerStartsAtWindowsSignIn == true;
+        ApplyLastSelectedSkinCheckBox.IsChecked = state?.ApplyLastSelectedSkin == true;
+        StartManagerAtLoginCheckBox.IsEnabled = _startupPreferencesLoaded && !_isBusy;
+        ApplyLastSelectedSkinCheckBox.IsEnabled = _startupPreferencesLoaded &&
+            state?.ManagerStartsAtWindowsSignIn == true && !_isBusy;
+        _updatingStartupControls = false;
+
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            StartupPreferencesStatusText.Text = error;
+            StartupPreferencesStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
+            return;
+        }
+
+        if (state is null)
+        {
+            StartupPreferencesStatusText.Text = "开机启动状态未知。";
+            StartupPreferencesStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
+            return;
+        }
+
+        var lastSkin = string.IsNullOrWhiteSpace(state.LastSelectedSkinId)
+            ? "尚无已记录的上次皮肤。"
+            : $"上次选择的皮肤 ID：{state.LastSelectedSkinId}。";
+        var paused = state.ApplyLastSelectedSkin && !state.ManagerStartsAtWindowsSignIn
+            ? "第二项已保留，开启管理器自启后才会生效。"
+            : null;
+        StartupPreferencesStatusText.Text = string.Join(" ", new[] { lastSkin, paused }.Where(text => !string.IsNullOrWhiteSpace(text)));
+        StartupPreferencesStatusText.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryText");
+    }
+
+    private void StartupPreferenceCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingStartupControls || !_startupPreferencesLoaded || _startupPreferencesService is null || _isBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            _startupPreferences = ReferenceEquals(sender, StartManagerAtLoginCheckBox)
+                ? _startupPreferencesService.SetManagerStartsAtWindowsSignIn(StartManagerAtLoginCheckBox.IsChecked == true)
+                : _startupPreferencesService.SetApplyLastSelectedSkin(ApplyLastSelectedSkinCheckBox.IsChecked == true);
+            _startupPreferencesLoaded = true;
+            RenderStartupPreferences();
+            WindowStatusText.Text = "开机启动设置已保存。";
+        }
+        catch (Exception exception)
+        {
+            RenderStartupPreferences($"开机启动设置未能保存：{exception.Message}");
+            WindowStatusText.Text = "开机启动设置未保存；原值仍保留。";
+        }
     }
 
     private async void ForceSimplifiedChineseCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -305,11 +398,27 @@ public partial class SettingsWindow : Window
     {
         if (!_hasInspectedMagpie)
         {
-            InspectMagpieCompatibility();
+            RefreshCompatibilityStatuses();
         }
     }
 
-    private void InspectButton_Click(object sender, RoutedEventArgs e) => InspectMagpieCompatibility();
+    private void InspectButton_Click(object sender, RoutedEventArgs e) => RefreshCompatibilityStatuses();
+
+    private void RefreshCompatibilityStatuses()
+    {
+        try
+        {
+            RenderCodexConfigStatus(_inspectCodexConfig());
+        }
+        catch (Exception exception)
+        {
+            CodexConfigStatusText.Text = $"检测失败：{exception.Message}";
+            CodexConfigStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
+            CodexConfigPathText.Text = string.Empty;
+        }
+
+        InspectMagpieCompatibility();
+    }
 
     private void InspectMagpieCompatibility()
     {
@@ -414,7 +523,7 @@ public partial class SettingsWindow : Window
         {
             await _launchMagpie(selectedPath, CancellationToken.None);
             MagpieActionStatusText.Text = "已启动 Magpie；未修改其配置。";
-            InspectMagpieCompatibility();
+            RefreshCompatibilityStatuses();
         }
         catch (Exception exception)
         {
@@ -465,6 +574,9 @@ public partial class SettingsWindow : Window
         _isBusy = busy;
         ForceSimplifiedChineseCheckBox.IsEnabled = _settingsLoaded && !_isBusy;
         RetrySettingsLoadButton.IsEnabled = !_isBusy;
+        StartManagerAtLoginCheckBox.IsEnabled = _startupPreferencesLoaded && !_isBusy;
+        ApplyLastSelectedSkinCheckBox.IsEnabled = _startupPreferencesLoaded &&
+            _startupPreferences?.ManagerStartsAtWindowsSignIn == true && !_isBusy;
         LaunchDebugCodexButton.IsEnabled = !_isBusy;
         if (!string.IsNullOrWhiteSpace(message))
         {

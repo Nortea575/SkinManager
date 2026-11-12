@@ -12,7 +12,11 @@ internal static partial class Program
     private const string TestCookie = "wordpress_logged_in_test=opaque-session-value";
     private const string TestNonce = "nonce-for-offline-test";
 
-    private static async Task CommunitySessionAndActionsAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task CommunitySessionAndActionsAsync(
+        SkinPackage package,
+        byte[] zipBytes,
+        string submittedMinimumVersion = "1.1.0",
+        string expectedMinimumVersion = "1.1.0")
     {
         var requests = new List<ObservedRequest>();
         string? temporaryZip = null;
@@ -105,7 +109,7 @@ internal static partial class Program
                 "离线投稿介绍",
                 "Ancimen",
                 "保留所有权利。",
-                "1.1.0",
+                submittedMinimumVersion,
                 ["轻量", "浅色"]));
             Check(submission is { PostId: 987, Status: "pending", SkinId: var id } && id == package.Id,
                 "上传后采用服务器返回的待审核状态");
@@ -118,6 +122,8 @@ internal static partial class Program
                   ContainsMultipartField(multipart, "minManagerVersion") &&
                   ContainsMultipartField(multipart, "tags"),
                 "投稿 multipart 使用服务端字段名");
+            Check(ContainsMultipartValue(multipart, "minManagerVersion", expectedMinimumVersion),
+                "投稿 multipart 发送按皮肤包内容调整后的最低管理器版本");
             Check(multipart.Contains(JsonSerializer.Serialize(new[] { "轻量", "浅色" }), StringComparison.Ordinal),
                 "投稿 multipart 标签为名称数组");
 
@@ -343,6 +349,10 @@ internal static partial class Program
         body.Contains($"name=\"{name}\"", StringComparison.Ordinal) ||
         body.Contains($"name={name};", StringComparison.Ordinal) ||
         body.Contains($"name={name}\r", StringComparison.Ordinal);
+
+    private static bool ContainsMultipartValue(string body, string name, string value) =>
+        body.Contains($"name=\"{name}\"\r\n\r\n{value}\r\n", StringComparison.Ordinal) ||
+        body.Contains($"name={name}\r\n\r\n{value}\r\n", StringComparison.Ordinal);
 
     private sealed record ObservedRequest(
         HttpMethod Method,

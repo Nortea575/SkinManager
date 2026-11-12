@@ -59,12 +59,7 @@ public static class SkinRuntimeCompiler
 
     public static string BuildRemoveScript() => "(() => { window.__SKIN_MANAGER_RUNTIME__?.remove?.(); })();";
 
-    private static string GetImageMediaType(string imagePath) => Path.GetExtension(imagePath).ToLowerInvariant() switch
-    {
-        ".png" => "image/png",
-        ".jpg" or ".jpeg" => "image/jpeg",
-        _ => "application/octet-stream"
-    };
+    private static string GetImageMediaType(string imagePath) => SkinPackageReader.GetImageMediaType(imagePath);
 
     private sealed record RuntimePackage(
         bool Enabled,
@@ -783,7 +778,8 @@ public static class SkinRuntimeCompiler
                 Object.assign(image.style, { position: "absolute", inset: "0", backgroundRepeat: "no-repeat" });
                 background.appendChild(image);
               }
-              image.style.backgroundImage = `url(${JSON.stringify(imageUrl)})`;
+              const imageBackground = `url(${JSON.stringify(imageUrl)})`;
+              if (image.style.backgroundImage !== imageBackground) image.style.backgroundImage = imageBackground;
               image.style.backgroundSize = config.fit || "";
               image.style.backgroundPosition = config.focusX !== null && config.focusY !== null
                 ? `${config.focusX * 100}% ${config.focusY * 100}%`

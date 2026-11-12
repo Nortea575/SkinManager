@@ -15,6 +15,8 @@ public static partial class SkinPackageReader
     public const long MaxArchiveBytes = 64L * 1024 * 1024;
     private const int MaxSkinJsonBytes = 1024 * 1024;
     private const int MaxZipEntries = MaxFiles * 2;
+    private const uint MaxImagePixels = 50_000_000;
+    private const uint MaxImageDimension = 16_000;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
     public static SkinPackage ReadZipFile(string path)
@@ -384,7 +386,7 @@ public static partial class SkinPackageReader
 
             if (!IsSupportedImage(pair.Key))
             {
-                throw Invalid($"$.files.{pair.Key}", "仅支持 skin.json 与 PNG、JPG、JPEG 图片资源；不支持 CSS 或脚本文件。");
+                throw Invalid($"$.files.{pair.Key}", "仅支持 skin.json 与 PNG、JPG、JPEG、GIF 图片资源；不支持 CSS 或脚本文件。");
             }
 
             ValidateImage(pair.Key, pair.Value, $"$.files.{pair.Key}");
@@ -559,7 +561,7 @@ public static partial class SkinPackageReader
                     text = NormalizeRelativePath(text, $"{path}.image");
                     if (!IsSupportedImage(text))
                     {
-                        throw Invalid($"{path}.image", "背景图片必须是 PNG、JPG 或 JPEG 文件。");
+                        throw Invalid($"{path}.image", "背景图片必须是 PNG、JPG、JPEG 或 GIF 文件。");
                     }
                 }
                 else if (text is not ("cover" or "contain"))
@@ -872,10 +874,247 @@ public static partial class SkinPackageReader
 
     private static bool IsSupportedImage(string path)
     {
+        return IsSupportedImagePath(path);
+    }
+
+    public static bool IsSupportedImagePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
         var extension = Path.GetExtension(path);
         return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
-               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".gif", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string GetImageMediaType(string imagePath) => Path.GetExtension(imagePath).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        _ => throw new ArgumentException("图片资源必须是 PNG、JPG、JPEG 或 GIF 文件。", nameof(imagePath))
+    };
+
+    public static GifImageInfo ReadGifInfo(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length < 14 ||
+            !(bytes[..6].SequenceEqual("GIF87a"u8) || bytes[..6].SequenceEqual("GIF89a"u8)))
+        {
+            throw new InvalidDataException("不是有效的 GIF87a 或 GIF89a 文件头。 ");
+        }
+
+        var width = BinaryPrimitives.ReadUInt16LittleEndian(bytes[6..8]);
+        var height = BinaryPrimitives.ReadUInt16LittleEndian(bytes[8..10]);
+        if (width == 0 || height == 0 || width > MaxImageDimension || height > MaxImageDimension ||
+            (uint)width * height > MaxImagePixels)
+        {
+            throw new InvalidDataException("GIF 逻辑画布尺寸无效或过大。 ");
+        }
+
+        var screenPacked = bytes[10];
+        var hasGlobalColorTable = (screenPacked & 0x80) != 0;
+        var backgroundColorIndex = bytes[11];
+        byte backgroundRed = 0;
+        byte backgroundGreen = 0;
+        byte backgroundBlue = 0;
+        var globalColorTableEntries = 0;
+        var offset = 13;
+        if (hasGlobalColorTable)
+        {
+            globalColorTableEntries = 1 << ((screenPacked & 0x07) + 1);
+            if (backgroundColorIndex >= globalColorTableEntries)
+            {
+                throw new InvalidDataException("GIF 逻辑画布背景颜色索引无效。 ");
+            }
+
+            var tableLength = 3 * globalColorTableEntries;
+            var tableStart = offset;
+            SkipGifBytes(bytes, ref offset, tableLength, "GIF 全局颜色表不完整。");
+            var backgroundOffset = tableStart + 3 * backgroundColorIndex;
+            backgroundRed = bytes[backgroundOffset];
+            backgroundGreen = bytes[backgroundOffset + 1];
+            backgroundBlue = bytes[backgroundOffset + 2];
+        }
+
+        var frameCount = 0;
+        var firstFrameHasTransparency = false;
+        byte firstFrameTransparentIndex = 0;
+        var currentFrameHasTransparency = false;
+        byte currentFrameTransparentIndex = 0;
+        GifImageInfo firstFrame = default;
+        while (offset < bytes.Length)
+        {
+            var introducer = bytes[offset++];
+            if (introducer == 0x3b)
+            {
+                if (offset != bytes.Length || frameCount == 0)
+                {
+                    throw new InvalidDataException("GIF 结束标记位置无效，或文件不包含图像帧。 ");
+                }
+
+                return firstFrame;
+            }
+
+            if (introducer == 0x21)
+            {
+                if (offset >= bytes.Length)
+                {
+                    throw new InvalidDataException("GIF 扩展块不完整。 ");
+                }
+
+                var label = bytes[offset++];
+                if (label == 0xf9)
+                {
+                    if (offset + 6 > bytes.Length || bytes[offset++] != 4)
+                    {
+                        throw new InvalidDataException("GIF 图形控制扩展块不完整。 ");
+                    }
+
+                    currentFrameHasTransparency = (bytes[offset] & 0x01) != 0;
+                    currentFrameTransparentIndex = bytes[offset + 3];
+                    offset += 4;
+                    if (bytes[offset++] != 0)
+                    {
+                        throw new InvalidDataException("GIF 图形控制扩展块缺少结束字节。 ");
+                    }
+
+                    continue;
+                }
+
+                var firstBlockLength = label switch
+                {
+                    0x01 => 12,
+                    0xff => 11,
+                    _ => 0
+                };
+                _ = SkipGifSubBlocks(bytes, ref offset, firstBlockLength, "GIF 扩展数据不完整。");
+                continue;
+            }
+
+            if (introducer != 0x2c)
+            {
+                throw new InvalidDataException("GIF 数据块标记无效。 ");
+            }
+
+            if (offset + 9 > bytes.Length)
+            {
+                throw new InvalidDataException("GIF 图像描述符不完整。 ");
+            }
+
+            var left = BinaryPrimitives.ReadUInt16LittleEndian(bytes[offset..(offset + 2)]);
+            var top = BinaryPrimitives.ReadUInt16LittleEndian(bytes[(offset + 2)..(offset + 4)]);
+            var frameWidth = BinaryPrimitives.ReadUInt16LittleEndian(bytes[(offset + 4)..(offset + 6)]);
+            var frameHeight = BinaryPrimitives.ReadUInt16LittleEndian(bytes[(offset + 6)..(offset + 8)]);
+            var framePacked = bytes[offset + 8];
+            offset += 9;
+            if (frameWidth == 0 || frameHeight == 0 || (uint)left + frameWidth > width || (uint)top + frameHeight > height)
+            {
+                throw new InvalidDataException("GIF 图像帧超出逻辑画布范围。 ");
+            }
+
+            var hasLocalColorTable = (framePacked & 0x80) != 0;
+            if (!hasGlobalColorTable && !hasLocalColorTable)
+            {
+                throw new InvalidDataException("GIF 图像帧缺少全局或局部颜色表。 ");
+            }
+
+            var localColorTableEntries = 0;
+            if (hasLocalColorTable)
+            {
+                localColorTableEntries = 1 << ((framePacked & 0x07) + 1);
+                var tableLength = 3 * localColorTableEntries;
+                SkipGifBytes(bytes, ref offset, tableLength, "GIF 局部颜色表不完整。");
+            }
+
+            var frameColorTableEntries = hasLocalColorTable ? localColorTableEntries : globalColorTableEntries;
+            if (currentFrameHasTransparency && currentFrameTransparentIndex >= frameColorTableEntries)
+            {
+                throw new InvalidDataException("GIF 图形控制扩展的透明颜色索引无效。 ");
+            }
+
+            if (offset >= bytes.Length || bytes[offset++] is < 2 or > 8)
+            {
+                throw new InvalidDataException("GIF LZW 数据码宽度无效。 ");
+            }
+
+            var dataBytes = SkipGifSubBlocks(bytes, ref offset, 0, "GIF 图像数据不完整。");
+            if (dataBytes == 0)
+            {
+                throw new InvalidDataException("GIF 图像帧缺少压缩数据。 ");
+            }
+
+            if (frameCount++ == 0)
+            {
+                firstFrameHasTransparency = currentFrameHasTransparency;
+                firstFrameTransparentIndex = currentFrameTransparentIndex;
+                firstFrame = new GifImageInfo(
+                    width,
+                    height,
+                    left,
+                    top,
+                    frameWidth,
+                    frameHeight,
+                    hasGlobalColorTable,
+                    backgroundColorIndex,
+                    backgroundRed,
+                    backgroundGreen,
+                    backgroundBlue,
+                    firstFrameHasTransparency,
+                    firstFrameTransparentIndex);
+            }
+
+            currentFrameHasTransparency = false;
+            currentFrameTransparentIndex = 0;
+        }
+
+        throw new InvalidDataException("GIF 文件缺少结束标记。 ");
+    }
+
+    private static void SkipGifBytes(ReadOnlySpan<byte> bytes, ref int offset, int count, string error)
+    {
+        if (count < 0 || offset > bytes.Length - count)
+        {
+            throw new InvalidDataException(error);
+        }
+
+        offset += count;
+    }
+
+    private static int SkipGifSubBlocks(ReadOnlySpan<byte> bytes, ref int offset, int firstBlockLength, string error)
+    {
+        var totalLength = 0;
+        var isFirstBlock = true;
+        while (true)
+        {
+            if (offset >= bytes.Length)
+            {
+                throw new InvalidDataException(error);
+            }
+
+            var length = bytes[offset++];
+            if (length == 0)
+            {
+                if (isFirstBlock && firstBlockLength > 0)
+                {
+                    throw new InvalidDataException(error);
+                }
+
+                return totalLength;
+            }
+
+            if (isFirstBlock && firstBlockLength > 0 && length != firstBlockLength)
+            {
+                throw new InvalidDataException(error);
+            }
+
+            SkipGifBytes(bytes, ref offset, length, error);
+            totalLength += length;
+            isFirstBlock = false;
+        }
     }
 
     internal static void ValidateImage(string path, byte[] bytes, string errorPath)
@@ -895,7 +1134,13 @@ public static partial class SkinPackageReader
                 return;
             }
 
-            throw Invalid(errorPath, "背景图片必须是 PNG、JPG 或 JPEG 文件。");
+            if (extension.Equals(".gif", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = ReadGifInfo(bytes);
+                return;
+            }
+
+            throw Invalid(errorPath, "背景图片必须是 PNG、JPG、JPEG 或 GIF 文件。");
         }
         catch (InvalidDataException exception) when (!exception.Message.StartsWith(errorPath, StringComparison.Ordinal))
         {

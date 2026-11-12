@@ -120,14 +120,14 @@ internal static class CreationWorkflowChecks
 
         Find<Button>(editor, "CreationAccentPickerButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var palettePopup = Find<Popup>(editor, "ColorPalettePopup");
-        Check(palettePopup.IsOpen, "主色按钮打开现有色板");
-        var paletteGrid = (UniformGrid)((StackPanel)((Border)palettePopup.Child!).Child).Children[1];
-        var paletteAccent = paletteGrid.Children.OfType<Button>().Single(button =>
-            string.Equals(button.Tag?.ToString(), "#14B8A6", StringComparison.Ordinal));
-        paletteAccent.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(palettePopup.IsOpen && Find<ColorPickerControl>(editor, "ColorPicker").IsVisible,
+            "主色按钮打开可自由调节的应用内色盘");
+        Find<ColorPickerControl>(editor, "ColorPicker").SetColor(new CssRgba(20, 184, 166, 255), notify: true);
         Check(Find<TextBox>(editor, "CreationAccentHexInput").Text == "#14B8A6" &&
               ReadString(editor.Draft.Manifest["tokens"] as System.Text.Json.Nodes.JsonObject, "color.accent") == "#14B8A6",
-            "色板选择同步回主色HEX与草稿");
+            "自由色盘即时同步主色HEX与草稿");
+        Find<Button>(editor, "PaletteConfirmButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!palettePopup.IsOpen, "色盘确认关闭弹层");
         Find<Button>(editor, "UndoButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
         var imagePackage = SkinPackageReader.ReadZipBytes(ayanamiBytes);

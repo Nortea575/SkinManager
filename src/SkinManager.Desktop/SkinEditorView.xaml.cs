@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -29,11 +30,18 @@ public partial class SkinEditorView : UserControl
     private SkinEditorField? _activeColorField;
     private SkinEditorField? _creationAccentField;
     private SkinEditorField? _creationBackgroundField;
+    private JsonObject? _colorPickerOriginalManifest;
+    private string? _colorPickerOriginalValue;
+    private CssRgba _colorPickerOriginalColor;
+    private CssRgba _colorPickerCurrentColor;
     private string _baseline = "{}";
     private bool _loading;
     private bool _isNew;
     private bool _historyGestureActive;
     private bool _gestureSnapshotPushed;
+    private bool _colorPickerSessionActive;
+    private bool _syncingColorPickerInputs;
+    private bool _colorPickerInputsValid = true;
 
     public SkinEditorView()
     {
@@ -72,6 +80,7 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
+        CancelColorPickerSession();
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => WindowMotion.AttachBehaviors(EditorTabs));
     }
 
@@ -81,6 +90,8 @@ public partial class SkinEditorView : UserControl
         {
             return;
         }
+
+        CancelColorPickerSession();
 
         if (EditorModeTabs.SelectedIndex != 0 && BackgroundFocusModeCheckBox.IsChecked == true)
         {
@@ -98,6 +109,7 @@ public partial class SkinEditorView : UserControl
     public event EventHandler? SaveAsRequested;
     public event EventHandler? BackgroundFocusModeChanged;
     public event EventHandler? EditorModeChanged;
+    public event EventHandler? PreviewFlushRequested;
 
     public SkinDraft Draft => _draft ?? throw new InvalidOperationException("皮肤草稿尚未初始化。");
     public string SelectedScope => (ScopeInput.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "base";
@@ -109,6 +121,7 @@ public partial class SkinEditorView : UserControl
     public void SetDraft(SkinDraft draft, bool isNew)
     {
         ArgumentNullException.ThrowIfNull(draft);
+        CancelColorPickerSession();
         _draft = draft;
         _isNew = isNew;
         _historyGestureActive = false;
@@ -147,6 +160,7 @@ public partial class SkinEditorView : UserControl
 
     public void MarkSaved()
     {
+        CancelColorPickerSession();
         _baseline = Draft.Manifest.ToJsonString();
         _undo.Clear();
         _redo.Clear();
@@ -289,10 +303,10 @@ public partial class SkinEditorView : UserControl
 
         var imagePath = ReadString(background, "image");
         var hasImage = !string.IsNullOrWhiteSpace(imagePath);
-        CreationBackgroundPathText.Text = hasImage ? "已选择背景图片" : "可拖入 PNG 或 JPG，也可使用纯色背景";
+            CreationBackgroundPathText.Text = hasImage ? "已选择背景图片" : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景";
         CreationBackgroundPathText.ToolTip = hasImage
             ? "背景图片已添加，可调整背景明暗与位置。"
-            : "可拖入 PNG 或 JPG，也可使用纯色背景";
+            : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景";
         CreationBackgroundHexInput.IsEnabled = !hasImage;
         CreationBackgroundPickerButton.IsEnabled = !hasImage;
         CreationBackgroundColorPanel.Visibility = hasImage ? Visibility.Collapsed : Visibility.Visible;
@@ -540,10 +554,33 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
+        OpenColorPicker(button, field);
+    }
+
+    private void OpenColorPicker(Button button, SkinEditorField field)
+    {
+        CancelColorPickerSession();
+        EndBackgroundFocusGesture();
         _activeColorField = field;
-        PaletteHexInput.Text = field.Value;
+        _colorPickerOriginalManifest = Draft.Manifest.DeepClone().AsObject();
+        _colorPickerOriginalValue = field.Value;
+        _colorPickerOriginalColor = ResolveColorForField(field);
+        _colorPickerCurrentColor = _colorPickerOriginalColor;
+        _colorPickerInputsValid = true;
+        _colorPickerSessionActive = true;
+
+        ColorPicker.SetColor(_colorPickerOriginalColor);
+        ColorPickerOriginalPreview.Background = new SolidColorBrush(ColorPickerMath.ToMediaColor(_colorPickerOriginalColor));
+        ColorPickerNewPreview.Background = new SolidColorBrush(ColorPickerMath.ToMediaColor(_colorPickerOriginalColor));
+        SyncColorPickerInputs(_colorPickerOriginalColor);
         ColorPalettePopup.PlacementTarget = button;
+        ColorPickerPopupSurface.MaxHeight = Math.Max(180, SystemParameters.WorkArea.Height - 24);
+        var pickerSize = Math.Clamp(SystemParameters.WorkArea.Height - 300, 132, 220);
+        ColorPicker.Width = pickerSize;
+        ColorPicker.Height = pickerSize;
+        ColorPalettePopup.Placement = PlacementMode.Bottom;
         ColorPalettePopup.IsOpen = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => ColorPicker.Focus()));
     }
 
     private void UpdateCreationColor(SkinEditorField? field, string value)
@@ -645,6 +682,7 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
+        CancelColorPickerSession();
         LoadTokenFields();
         LoadBackgroundFields();
         LoadComponentFields();
@@ -652,8 +690,25 @@ public partial class SkinEditorView : UserControl
         ScopeChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ComponentInput_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadComponentFields();
-    private void ComponentStateInput_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadComponentFields();
+    private void ComponentInput_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loading)
+        {
+            CancelColorPickerSession();
+        }
+
+        LoadComponentFields();
+    }
+
+    private void ComponentStateInput_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loading)
+        {
+            CancelColorPickerSession();
+        }
+
+        LoadComponentFields();
+    }
 
     private string SelectedState() => ComponentStateInput.SelectedValue as string ?? "default";
 
@@ -753,7 +808,11 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        if (_historyGestureActive)
+        if (_colorPickerSessionActive)
+        {
+            // Color picker drags update the draft for preview, then commit one snapshot on confirmation.
+        }
+        else if (_historyGestureActive)
         {
             if (!_gestureSnapshotPushed)
             {
@@ -773,7 +832,10 @@ public partial class SkinEditorView : UserControl
         {
             SetNode(Draft.Manifest, path, value.DeepClone());
         }
-        _redo.Clear();
+        if (!_colorPickerSessionActive)
+        {
+            _redo.Clear();
+        }
         PruneDraftResources();
         ClearValidationError();
         UpdateHistoryControls();
@@ -802,6 +864,7 @@ public partial class SkinEditorView : UserControl
 
     private void UndoButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelColorPickerSession();
         if (_draft is null || _undo.Count == 0)
         {
             return;
@@ -815,6 +878,7 @@ public partial class SkinEditorView : UserControl
 
     private void RedoButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelColorPickerSession();
         if (_draft is null || _redo.Count == 0)
         {
             return;
@@ -909,7 +973,7 @@ public partial class SkinEditorView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "选择背景图片",
-            Filter = "图片文件|*.png;*.jpg;*.jpeg|所有文件|*.*",
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.gif|所有文件|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -947,9 +1011,9 @@ public partial class SkinEditorView : UserControl
         try
         {
             var info = new FileInfo(path);
-            if (info.Length == 0 || info.Length > 50L * 1024 * 1024)
+            if (info.Length == 0 || info.Length > SkinPackageReader.MaxSingleFileBytes)
             {
-                throw new InvalidDataException("背景图片必须小于 50 MB 且不能为空。");
+                throw new InvalidDataException("背景图片不能为空或超过单文件大小上限（32 MB）。");
             }
 
             var bytes = File.ReadAllBytes(path);
@@ -1091,47 +1155,419 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        _activeColorField = field;
-        PaletteHexInput.Text = field.Value;
-        if (string.IsNullOrWhiteSpace(PaletteHexInput.Text) && field.IsColor &&
-            CssColorParser.TryParse(field.Placeholder, out _))
-        {
-            PaletteHexInput.Text = field.Placeholder;
-        }
-
-        ColorPalettePopup.PlacementTarget = button;
-        ColorPalettePopup.IsOpen = true;
+        OpenColorPicker(button, field);
     }
 
-    private void PaletteColor_Click(object sender, RoutedEventArgs e)
+    private void ColorPicker_ColorChanged(object? sender, EventArgs e)
     {
-        if (sender is Button { Tag: string color } && _activeColorField is { } field)
+        if (_colorPickerSessionActive)
         {
-            field.Value = color;
+            ApplyColorPickerColor(ColorPicker.SelectedColor);
+        }
+    }
+
+    private void PaletteHexInput_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_colorPickerSessionActive || _syncingColorPickerInputs)
+        {
+            return;
+        }
+
+        if (!CssColorParser.TryParse(PaletteHexInput.Text.Trim(), out var color))
+        {
+            SetColorPickerInputValidity(false, PaletteHexInput, "请输入有效的 HEX 或 RGB 颜色。");
+            return;
+        }
+
+        SetColorPickerInputValidity(true);
+        ApplyColorPickerColor(color, PaletteHexInput);
+    }
+
+    private void PaletteRgbInput_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_colorPickerSessionActive || _syncingColorPickerInputs)
+        {
+            return;
+        }
+
+        if (!byte.TryParse(PaletteRedInput.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var red) ||
+            !byte.TryParse(PaletteGreenInput.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var green) ||
+            !byte.TryParse(PaletteBlueInput.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var blue))
+        {
+            SetColorPickerInputValidity(false, sender as TextBox, "RGB 每个通道请输入 0 到 255 的整数。");
+            return;
+        }
+
+        var color = new CssRgba(red, green, blue, (byte)Math.Round(PaletteAlphaSlider.Value));
+        SetColorPickerInputValidity(true);
+        ApplyColorPickerColor(color, sender as TextBox);
+    }
+
+    private void PaletteAlphaSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!_colorPickerSessionActive || _syncingColorPickerInputs)
+        {
+            return;
+        }
+
+        ColorPicker.SetAlpha((byte)Math.Round(PaletteAlphaSlider.Value), notify: false);
+        ApplyColorPickerColor(ColorPicker.SelectedColor);
+    }
+
+    private void PaletteAlphaSlider_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) =>
+        ColorPicker_InteractionCompleted(sender, EventArgs.Empty);
+
+    private void PaletteAlphaSlider_KeyUp(object sender, KeyEventArgs e) =>
+        ColorPicker_InteractionCompleted(sender, EventArgs.Empty);
+
+    private void PaletteColorInput_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_colorPickerSessionActive && _colorPickerInputsValid)
+        {
+            SyncColorPickerInputs(_colorPickerCurrentColor);
+        }
+    }
+
+    private void ColorPicker_InteractionCompleted(object? sender, EventArgs e)
+    {
+        if (_colorPickerSessionActive)
+        {
+            PreviewFlushRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ConfirmPaletteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_colorPickerSessionActive || _activeColorField is null || _colorPickerOriginalManifest is null)
+        {
+            return;
+        }
+
+        if (!_colorPickerInputsValid)
+        {
+            SetValidationError("请先修正颜色输入，或还原有效值后再确定。");
+            return;
+        }
+
+        SyncColorPickerInputs(_colorPickerCurrentColor);
+        ClearValidationError();
+
+        if (_colorPickerCurrentColor == _colorPickerOriginalColor &&
+            !string.Equals(_activeColorField.Value, _colorPickerOriginalValue, StringComparison.Ordinal))
+        {
+            _activeColorField.Value = _colorPickerOriginalValue ?? string.Empty;
+        }
+
+        var originalManifest = _colorPickerOriginalManifest;
+        var changed = !JsonNode.DeepEquals(originalManifest, Draft.Manifest);
+        EndColorPickerSession();
+        if (changed)
+        {
+            PushUndoSnapshot(originalManifest);
+            _redo.Clear();
+            UpdateHistoryControls();
+            UpdateDirtyState();
+        }
+
+        ColorPalettePopup.IsOpen = false;
+        PreviewFlushRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void CancelPaletteButton_Click(object sender, RoutedEventArgs e) => CancelColorPickerSession();
+
+    private void ColorPalettePopup_Closed(object? sender, EventArgs e)
+    {
+        if (_colorPickerSessionActive)
+        {
+            CancelColorPickerSession(closePopup: false);
+        }
+    }
+
+    private void ColorPalettePopup_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && _colorPickerSessionActive)
+        {
+            CancelColorPickerSession();
+            e.Handled = true;
+        }
+    }
+
+    private void ApplyColorPickerColor(CssRgba color, TextBox? activeInput = null)
+    {
+        if (!_colorPickerSessionActive || _activeColorField is null)
+        {
+            return;
+        }
+
+        _colorPickerCurrentColor = color;
+        _syncingColorPickerInputs = true;
+        try
+        {
+            ColorPicker.SetColor(color);
+            PaletteAlphaSlider.Value = color.Alpha;
+            PaletteAlphaValue.Text = $"{Math.Round(color.Alpha / 255d * 100):0}%";
+            if (!ReferenceEquals(activeInput, PaletteHexInput))
+            {
+                PaletteHexInput.Text = ColorPickerMath.ToCssHex(color);
+            }
+
+            if (!ReferenceEquals(activeInput, PaletteRedInput))
+            {
+                PaletteRedInput.Text = color.Red.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (!ReferenceEquals(activeInput, PaletteGreenInput))
+            {
+                PaletteGreenInput.Text = color.Green.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (!ReferenceEquals(activeInput, PaletteBlueInput))
+            {
+                PaletteBlueInput.Text = color.Blue.ToString(CultureInfo.InvariantCulture);
+            }
+            ColorPickerNewPreview.Background = new SolidColorBrush(ColorPickerMath.ToMediaColor(color));
+        }
+        finally
+        {
+            _syncingColorPickerInputs = false;
+        }
+
+        SetColorPickerInputValidity(true);
+        _activeColorField.Value = ColorPickerMath.ToCssHex(color);
+    }
+
+    private void SyncColorPickerInputs(CssRgba color)
+    {
+        _syncingColorPickerInputs = true;
+        try
+        {
+            PaletteHexInput.Text = ColorPickerMath.ToCssHex(color);
+            PaletteRedInput.Text = color.Red.ToString(CultureInfo.InvariantCulture);
+            PaletteGreenInput.Text = color.Green.ToString(CultureInfo.InvariantCulture);
+            PaletteBlueInput.Text = color.Blue.ToString(CultureInfo.InvariantCulture);
+            PaletteAlphaSlider.Value = color.Alpha;
+            PaletteAlphaValue.Text = $"{Math.Round(color.Alpha / 255d * 100):0}%";
+        }
+        finally
+        {
+            _syncingColorPickerInputs = false;
+        }
+
+        SetColorPickerInputValidity(true);
+    }
+
+    private void SetColorPickerInputValidity(bool valid, TextBox? source = null, string? error = null)
+    {
+        _colorPickerInputsValid = valid;
+        if (valid)
+        {
+            foreach (var input in new[] { PaletteHexInput, PaletteRedInput, PaletteGreenInput, PaletteBlueInput })
+            {
+                input.SetResourceReference(Control.BorderBrushProperty, "ControlLine");
+                input.ToolTip = null;
+            }
+
+            return;
+        }
+
+        if (source is not null)
+        {
+            source.SetResourceReference(Control.BorderBrushProperty, "DangerBorder");
+            source.ToolTip = error;
+        }
+    }
+
+    private void CancelColorPickerSession(bool closePopup = true)
+    {
+        if (ColorPalettePopup is null)
+        {
+            return;
+        }
+
+        if (!_colorPickerSessionActive || _colorPickerOriginalManifest is null || _draft is null)
+        {
+            if (closePopup && ColorPalettePopup.IsOpen)
+            {
+                ColorPalettePopup.IsOpen = false;
+            }
+
+            return;
+        }
+
+        var field = _activeColorField;
+        Draft.Manifest.Clear();
+        Draft.RestoreManifest(_colorPickerOriginalManifest);
+        _loading = true;
+        try
+        {
+            if (field is not null)
+            {
+                field.Value = _colorPickerOriginalValue ?? string.Empty;
+                if (ReferenceEquals(field, _creationAccentField))
+                {
+                    CreationAccentHexInput.Text = field.Value;
+                    CreationAccentSwatch.Background = field.SwatchBrush;
+                }
+                else if (ReferenceEquals(field, _creationBackgroundField))
+                {
+                    CreationBackgroundHexInput.Text = field.Value;
+                    CreationBackgroundSwatch.Background = field.SwatchBrush;
+                }
+            }
+
+            ColorPickerNewPreview.Background = new SolidColorBrush(ColorPickerMath.ToMediaColor(_colorPickerOriginalColor));
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        EndColorPickerSession();
+        ClearValidationError();
+        UpdateDirtyState();
+        DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(resourcesChanged: false));
+        if (closePopup)
+        {
             ColorPalettePopup.IsOpen = false;
         }
+
+        PreviewFlushRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ApplyPaletteHexButton_Click(object sender, RoutedEventArgs e)
+    private void EndColorPickerSession()
     {
-        if (_activeColorField is null)
-        {
-            return;
-        }
-
-        if (!CssColorParser.TryParse(PaletteHexInput.Text.Trim(), out _))
-        {
-            SetValidationError("请输入有效的 HEX 或 RGB 颜色，例如 #3B82F6。");
-            return;
-        }
-
-        _activeColorField.Value = PaletteHexInput.Text.Trim();
-        ColorPalettePopup.IsOpen = false;
+        _colorPickerSessionActive = false;
+        _activeColorField = null;
+        _colorPickerOriginalManifest = null;
+        _colorPickerOriginalValue = null;
+        _colorPickerInputsValid = true;
     }
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e) => SaveRequested?.Invoke(this, EventArgs.Empty);
-    private void CancelButton_Click(object sender, RoutedEventArgs e) => CancelRequested?.Invoke(this, EventArgs.Empty);
-    private void SaveAsButton_Click(object sender, RoutedEventArgs e) => SaveAsRequested?.Invoke(this, EventArgs.Empty);
+    private void PushUndoSnapshot(JsonObject snapshot)
+    {
+        _undo.Push(snapshot.DeepClone().AsObject());
+        while (_undo.Count > 40)
+        {
+            var keepNewest = _undo.Take(39).Reverse().ToArray();
+            _undo.Clear();
+            foreach (var item in keepNewest)
+            {
+                _undo.Push(item);
+            }
+        }
+    }
+
+    private CssRgba ResolveColorForField(SkinEditorField field)
+    {
+        if (CssColorParser.TryParse(field.Value, out var direct))
+        {
+            return direct;
+        }
+
+        ResolvedSkin? resolved = null;
+        try
+        {
+            var appearance = SelectedScope switch
+            {
+                "light" => SkinAppearance.Light,
+                "dark" => SkinAppearance.Dark,
+                _ => ReadString(Draft.Manifest, "appearance") == "dark" ? SkinAppearance.Dark : SkinAppearance.Light
+            };
+            var scene = SelectedScope == "conversation" ? SkinScene.Conversation : SkinScene.Home;
+            resolved = SkinResolver.Resolve(Draft.BuildPackage(), appearance, scene);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or KeyNotFoundException)
+        {
+            // An unfinished text edit may make the draft temporarily unresolvable; the field fallback remains usable.
+        }
+
+        if (resolved is not null)
+        {
+            var effectiveValue = ReadResolvedColor(field.Path, resolved);
+            if (CssColorParser.TryParse(effectiveValue, out var effective))
+            {
+                return effective;
+            }
+
+            if (field.Value.StartsWith('{') && field.Value.EndsWith('}') &&
+                resolved.Colors.TryGetValue(field.Value[1..^1], out var referenced) &&
+                CssColorParser.TryParse(referenced, out var referenceColor))
+            {
+                return referenceColor;
+            }
+        }
+
+        if (CssColorParser.TryParse(field.Placeholder, out var placeholder))
+        {
+            return placeholder;
+        }
+
+        if (field.SwatchBrush is SolidColorBrush brush)
+        {
+            return new CssRgba(brush.Color.R, brush.Color.G, brush.Color.B, brush.Color.A);
+        }
+
+        return new CssRgba(37, 99, 235, byte.MaxValue);
+    }
+
+    private static string? ReadResolvedColor(IReadOnlyList<string> path, ResolvedSkin resolved)
+    {
+        var offset = path.Count >= 3 && (path[0] is "variants" or "scenes") ? 2 : 0;
+        var effective = path.Skip(offset).ToArray();
+        if (effective.Length == 2 && effective[0] == "tokens")
+        {
+            return resolved.Colors.GetValueOrDefault(effective[1]);
+        }
+
+        if (effective.Length == 2 && effective[0] == "background")
+        {
+            return effective[1] switch
+            {
+                "color" => resolved.Background?.Color,
+                "overlayColor" => resolved.Background?.OverlayColor,
+                _ => null
+            };
+        }
+
+        if (effective.Length >= 3 && effective[0] == "components" &&
+            resolved.Components.TryGetValue(effective[1], out var component))
+        {
+            IReadOnlyDictionary<string, SkinValue>? properties = component.Properties;
+            if (effective.Length == 5 && effective[2] == "states")
+            {
+                component.States.TryGetValue(effective[3], out properties);
+                if (properties is not null)
+                {
+                    properties.TryGetValue(effective[4], out var stateValue);
+                    return stateValue?.Text;
+                }
+            }
+            else if (effective.Length == 3 && properties.TryGetValue(effective[2], out var value))
+            {
+                return value.Text;
+            }
+        }
+
+        return null;
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        CancelColorPickerSession();
+        SaveRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        CancelColorPickerSession();
+        CancelRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SaveAsButton_Click(object sender, RoutedEventArgs e)
+    {
+        CancelColorPickerSession();
+        SaveAsRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     private void ClearValidationError()
     {

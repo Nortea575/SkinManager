@@ -79,9 +79,9 @@ public sealed class SkinDraft
         }
 
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        if (extension is not (".png" or ".jpg" or ".jpeg"))
+        if (!SkinPackageReader.IsSupportedImagePath(fileName))
         {
-            throw new InvalidDataException("背景图片只支持 PNG、JPG 或 JPEG。");
+            throw new InvalidDataException("背景图片只支持 PNG、JPG、JPEG 或 GIF。");
         }
 
         if (Manifest["background"] is JsonObject currentBackground &&

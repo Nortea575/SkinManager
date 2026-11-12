@@ -155,6 +155,9 @@ internal static class Program
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
         var marketCommunityOnly = args.Contains("--market-community-only", StringComparer.OrdinalIgnoreCase);
         var beta2UiOnly = args.Contains("--beta2-ui-only", StringComparer.OrdinalIgnoreCase);
+        var beta114Only = args.Contains("--beta114-only", StringComparer.OrdinalIgnoreCase);
+        var colorPickerOnly = args.Contains("--color-picker-only", StringComparer.OrdinalIgnoreCase);
+        var gifBackgroundOnly = args.Contains("--gif-background-only", StringComparer.OrdinalIgnoreCase);
         var managerInstanceOnly = args.Contains("--manager-instance-only", StringComparer.OrdinalIgnoreCase);
         var managerInstancePostedOpen = args.Contains("--manager-instance-posted-open", StringComparer.OrdinalIgnoreCase);
         var instanceReviewUi = args.Contains("--instance-review-ui", StringComparer.OrdinalIgnoreCase);
@@ -174,7 +177,19 @@ internal static class Program
         {
             try
             {
-                if (beta2UiOnly)
+                if (beta114Only || colorPickerOnly || gifBackgroundOnly)
+                {
+                    if (beta114Only || colorPickerOnly)
+                    {
+                        await ColorPickerChecks.RunAsync();
+                    }
+
+                    if (beta114Only || gifBackgroundOnly)
+                    {
+                        await GifBackgroundChecks.RunAsync();
+                    }
+                }
+                else if (beta2UiOnly)
                 {
                     await Beta2UiChecks.RunAsync();
                 }
@@ -230,6 +245,11 @@ internal static class Program
                 else
                 {
                     await RunAsync(chatReplyOnly);
+                    if (!chatReplyOnly)
+                    {
+                        await ColorPickerChecks.RunAsync();
+                        await GifBackgroundChecks.RunAsync();
+                    }
                 }
                 _exitCode = 0;
             }

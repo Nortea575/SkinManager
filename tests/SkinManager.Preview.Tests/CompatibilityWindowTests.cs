@@ -187,6 +187,7 @@ internal static class CompatibilityWindowTests
         var optionWrites = 0;
         var configureCalls = 0;
         var inspectCalls = 0;
+        var configInspection = new CountingCodexConfigReadabilityService();
         var magpieLaunchCalls = 0;
         var debugLaunchCalls = 0;
         var fakeResult = new MagpieCompatibilityResult(
@@ -225,7 +226,8 @@ internal static class CompatibilityWindowTests
             {
                 magpieLaunchCalls++;
                 return Task.CompletedTask;
-            });
+            },
+            codexConfigReadabilityService: configInspection);
         window.Show();
         try
         {
@@ -233,18 +235,24 @@ internal static class CompatibilityWindowTests
             var toggle = Find<CheckBox>(window, "ForceSimplifiedChineseCheckBox");
             Toggle(toggle);
             await WaitUntilAsync(() => optionWrites == 1 && toggle.IsEnabled, "保存语言偏好");
-            Require(inspectCalls == 0 && magpieLaunchCalls == 0 && options.ForceSimplifiedChinese &&
+            Require(inspectCalls == 0 && configInspection.InspectCalls == 1 && magpieLaunchCalls == 0 && options.ForceSimplifiedChinese &&
                     configureCalls == 1 && Find<TextBlock>(window, "LanguageRuntimeStatusText").Text.StartsWith("已生效", StringComparison.Ordinal),
                 "语言开关只保存并配置语言，不触发 Magpie 检测或启动");
 
             var expander = Find<Expander>(window, "MagpieSettingsExpander");
             expander.IsExpanded = true;
-            await WaitUntilAsync(() => inspectCalls == 1, "展开 Magpie 后执行一次检测");
+            await WaitUntilAsync(() => inspectCalls == 1 && configInspection.InspectCalls == 2, "展开兼容区域后同步检测配置与 Magpie");
             Require(Find<TextBlock>(window, "SupportTitle").Text.Contains("启动", StringComparison.Ordinal),
                 "Magpie 区域只显示启动参数状态");
 
+            Find<Button>(window, "InspectButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => inspectCalls == 2 && configInspection.InspectCalls == 3,
+                "共用重新检测入口同时刷新 config.toml 与 Magpie");
+            Require(Find<TextBlock>(window, "CodexConfigStatusText").Text == "config.toml 可读取",
+                "统一刷新后显示只读 config.toml 状态，不展示配置内容");
+
             Find<Button>(window, "LaunchMagpieButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => magpieLaunchCalls == 1 && inspectCalls >= 2,
+            await WaitUntilAsync(() => magpieLaunchCalls == 1 && inspectCalls >= 3 && configInspection.InspectCalls == 4,
                 "用户点击后启动 Magpie 并刷新只读检测");
             Require(optionWrites == 1 && configureCalls == 1 && options.ForceSimplifiedChinese,
                 "Magpie 启动与语言偏好相互独立");
@@ -411,7 +419,9 @@ internal static class CompatibilityWindowTests
         Func<RuntimeCompatibilityOptions>? reloadSettings = null,
         Func<Task<RuntimeStatus>>? launchDebugCodex = null,
         Func<string?, MagpieCompatibilityResult>? inspectMagpie = null,
-        Func<string?, CancellationToken, Task>? launchMagpie = null) =>
+        Func<string?, CancellationToken, Task>? launchMagpie = null,
+        ICodexConfigReadabilityService? codexConfigReadabilityService = null,
+        IStartupPreferencesService? startupPreferencesService = null) =>
         new(
             options ?? new RuntimeCompatibilityOptions(),
             settingsLoaded,
@@ -423,7 +433,8 @@ internal static class CompatibilityWindowTests
             inspectMagpie ?? (_ => new MagpieCompatibilityResult(
                 false, false, null, null, MagpieCompatibilitySupport.NotInstalled, false, "fake evidence", "未检测到")),
             launchMagpie ?? ((_, _) => Task.CompletedTask),
-            new FixtureCodexConfigReadabilityService())
+            codexConfigReadabilityService ?? new FixtureCodexConfigReadabilityService(),
+            startupPreferencesService)
         {
             Width = 620,
             Height = 440,
@@ -443,6 +454,19 @@ internal static class CompatibilityWindowTests
         public CodexConfigReadabilityResult Inspect() => new(
             Path.Combine(Path.GetTempPath(), "SkinManager-fixture", "codex", "config.toml"),
             CodexConfigReadabilityState.Readable);
+    }
+
+    private sealed class CountingCodexConfigReadabilityService : ICodexConfigReadabilityService
+    {
+        public int InspectCalls { get; private set; }
+
+        public CodexConfigReadabilityResult Inspect()
+        {
+            InspectCalls++;
+            return new CodexConfigReadabilityResult(
+                Path.Combine(Path.GetTempPath(), "SkinManager-fixture", "codex", "config.toml"),
+                CodexConfigReadabilityState.Readable);
+        }
     }
 
     private static void Toggle(CheckBox checkBox)

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.IO.Compression;
 using SkinManager.Core;
 using SkinManager.Market;
 
@@ -13,6 +14,7 @@ namespace SkinManager.Market.Tests;
 internal static partial class Program
 {
     private const string PackageResource = "SkinManager.Market.Tests.Resources.Ayanami.zip";
+    private const string GifResource = "SkinManager.Market.Tests.Resources.transparent-animation.gif";
 
     private static async Task<int> Main()
     {
@@ -40,10 +42,16 @@ internal static partial class Program
             await RejectUnsupportedSkinFormatAsync(package, zipBytes);
             await RejectManifestVersionMismatchAsync(package, zipBytes);
             await RejectIncompatibleManagerAsync(package, zipBytes);
+            await GifPackageMarketFlowAsync();
             await CancelStreamingDownloadAsync(package, zipBytes);
             await RejectRedirectAsync(package, zipBytes);
             await RejectCrossOriginUrlAsync(package, zipBytes);
             await CommunitySessionAndActionsAsync(package, zipBytes);
+            var gifBytes = ReadEmbeddedGif();
+            var gifZipBytes = CreateGifPackage(gifBytes);
+            var gifPackage = SkinPackageReader.ReadZipBytes(gifZipBytes);
+            await CommunitySessionAndActionsAsync(gifPackage, gifZipBytes, "1.0.0", "1.1.4");
+            await CommunitySessionAndActionsAsync(gifPackage, gifZipBytes, "2.6.0", "2.6.0");
             await AnonymousCommunityReadAndUnauthenticatedWritesAsync();
             await RejectInvalidNonceWithoutRetryAsync();
             await DirectoryNonceExpiryClearsAccountAsync();
@@ -402,6 +410,43 @@ internal static partial class Program
         Check(requestCount == 0, "不兼容时不启动下载");
     }
 
+    private static async Task GifPackageMarketFlowAsync()
+    {
+        var gifBytes = ReadEmbeddedGif();
+        var zipBytes = CreateGifPackage(gifBytes);
+        var package = SkinPackageReader.ReadZipBytes(zipBytes);
+        Check(package.ImagePath == "assets/transparent-animation.gif" &&
+              package.Files.TryGetValue(package.ImagePath, out var storedGif) && storedGif.SequenceEqual(gifBytes),
+            "Core 保留市场下载包内的原始多帧 GIF 字节");
+        Check(SkinMarketClient.MinimumManagerVersionForPackage("1.0.0", package.Files.Keys) == "1.1.4",
+            "投稿中的任意 GIF 资源自动将最低版本提升到 1.1.4");
+        Check(SkinMarketClient.MinimumManagerVersionForPackage("2.6.0", package.Files.Keys) == "2.6.0" &&
+              SkinMarketClient.MinimumManagerVersionForPackage("1.0.0", new[] { "assets/background.png" }) == "1.0.0" &&
+              SkinMarketClient.MinimumManagerVersionForPackage("1.0.0", new[] { "assets/background.jpg" }) == "1.0.0" &&
+              SkinMarketClient.MinimumManagerVersionForPackage("1.0.0", new[] { "assets/background.jpeg" }) == "1.0.0",
+            "自动最低版本保留用户的更高要求且不改变 PNG、JPG、JPEG 包");
+
+        var item = CreateItem(package, zipBytes) with { MinimumManagerVersion = SkinMarketClient.GifMinimumManagerVersion };
+        var requestCount = 0;
+        using var client = new SkinMarketClient(new StubHandler(_ =>
+        {
+            requestCount++;
+            return ZipResponse(zipBytes);
+        }));
+        Check(!SkinMarketClient.IsManagerCompatible(item.MinimumManagerVersion, new Version(1, 1, 3), out _) &&
+              SkinMarketClient.IsManagerCompatible(item.MinimumManagerVersion, new Version(1, 1, 4, 0), out _),
+            "市场兼容性阻挡 1.1.3 并允许 Beta 1 程序版本 1.1.4.0");
+        await ThrowsAsync<InvalidDataException>(
+            () => client.DownloadPackageAsync(item, new Version(1, 1, 3)), "GIF 皮肤在下载前阻挡 1.1.3");
+        Check(requestCount == 0, "版本不兼容时未请求 GIF ZIP");
+
+        var downloaded = await client.DownloadPackageAsync(item, new Version(1, 1, 4, 0));
+        Check(requestCount == 1 && downloaded.Files.TryGetValue("assets/transparent-animation.gif", out var downloadedGif) &&
+              downloadedGif.SequenceEqual(gifBytes), "1.1.4.0 下载 GIF 包并保留原始资源字节");
+        Check(item.Sha256 == Convert.ToHexString(SHA256.HashData(zipBytes)).ToLowerInvariant() && item.Size == zipBytes.LongLength,
+            "GIF ZIP 目录 SHA-256 和文件长度覆盖原始包字节");
+    }
+
     private static async Task CancelStreamingDownloadAsync(SkinPackage package, byte[] zipBytes)
     {
         var item = CreateItem(package, zipBytes);
@@ -532,6 +577,54 @@ internal static partial class Program
             ?? throw new FileNotFoundException($"缺少离线验收包资源：{PackageResource}");
         using var output = new MemoryStream();
         stream.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static byte[] ReadEmbeddedGif()
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(GifResource)
+            ?? throw new FileNotFoundException($"缺少共享 GIF 验收资源：{GifResource}");
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static byte[] CreateGifPackage(byte[] gifBytes)
+    {
+        using var source = new MemoryStream(ReadEmbeddedPackage(), writable: false);
+        using var sourceArchive = new ZipArchive(source, ZipArchiveMode.Read);
+        using var output = new MemoryStream();
+        using (var targetArchive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var entry in sourceArchive.Entries)
+            {
+                if (entry.FullName.Equals("assets/ayanami-background.png", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var targetEntry = targetArchive.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                using var sourceStream = entry.Open();
+                using var targetStream = targetEntry.Open();
+                if (entry.FullName.Equals("skin.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var reader = new StreamReader(sourceStream, Encoding.UTF8);
+                    var manifest = JsonNode.Parse(reader.ReadToEnd())!.AsObject();
+                    manifest["background"]!["image"] = "assets/transparent-animation.gif";
+                    var manifestBytes = Encoding.UTF8.GetBytes(manifest.ToJsonString());
+                    targetStream.Write(manifestBytes);
+                }
+                else
+                {
+                    sourceStream.CopyTo(targetStream);
+                }
+            }
+
+            var gifEntry = targetArchive.CreateEntry("assets/transparent-animation.gif", CompressionLevel.NoCompression);
+            using var gifStream = gifEntry.Open();
+            gifStream.Write(gifBytes);
+        }
+
         return output.ToArray();
     }
 

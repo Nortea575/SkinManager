@@ -9,6 +9,9 @@
     <RootNamespace>SkinManager.Preview.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="..\fixtures\images\transparent-animation.gif"
+             Link="fixtures\images\transparent-animation.gif"
+             CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\..\src\SkinManager.Core\SkinManager.Core.csproj" />
     <ProjectReference Include="..\..\src\SkinManager.Market\SkinManager.Market.csproj" />
     <ProjectReference Include="..\..\src\SkinManager.Desktop\SkinManager.Desktop.csproj" />

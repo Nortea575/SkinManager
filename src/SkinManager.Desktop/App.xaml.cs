@@ -38,7 +38,9 @@ public partial class App : Application
                 basePackage,
                 updateCoordinator: updateCoordinator,
                 installerLauncher: new ProcessInstallerLauncher(),
-                codexInstanceService: new WindowsCodexInstanceService());
+                codexInstanceService: new WindowsCodexInstanceService(),
+                startupPreferencesService: StartupPreferencesService.CreateForCurrentUser(),
+                launchedByAutostart: IsAutostartInvocation(e.Args));
             window.Icon = ReadApplicationIcon();
             MainWindow = window;
             window.Show();
@@ -54,6 +56,9 @@ public partial class App : Application
             Shutdown(1);
         }
     }
+
+    internal static bool IsAutostartInvocation(IEnumerable<string> arguments) =>
+        arguments.Any(argument => string.Equals(argument, "--autostart", StringComparison.OrdinalIgnoreCase));
 
     internal static BasePackage ReadEmbeddedBasePackage()
     {

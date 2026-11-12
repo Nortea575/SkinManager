@@ -42,10 +42,13 @@ public partial class MainWindow : Window
     private readonly bool _closeAfterSuccessfulInstall;
     private readonly string _previewProfileDirectory;
     private readonly RuntimeController _runtimeController = new();
-    private readonly RuntimeApplyWorkflow _runtimeApplyWorkflow;
+    private RuntimeApplyWorkflow _runtimeApplyWorkflow;
     private readonly CompatibilitySettingsStore _compatibilitySettingsStore;
+    private readonly IStartupPreferencesService _startupPreferencesService;
+    private readonly bool _launchedByAutostart;
     private readonly SemaphoreSlim _compatibilityConfigureGate = new(1, 1);
     private readonly bool _readRuntimeStatusOnLoad;
+    private readonly SemaphoreSlim _previewDisplayGate = new(1, 1);
     private readonly ObservableCollection<SkinCard> _skins = [];
     private readonly ICollectionView _skinsView;
     private readonly Dictionary<UIElement, long> _visibilityTransitions = [];
@@ -63,7 +66,12 @@ public partial class MainWindow : Window
     private bool _hasBeenActivated;
     private bool _previewWasActive;
     private bool _previewNeedsRefresh;
+    private Task? _previewReadyTask;
     private bool _runtimeOperationInProgress;
+    private bool _editorPreviewPending;
+    private bool _editorPreviewFlushRequested;
+    private bool _editorPreviewUpdateInProgress;
+    private bool _showingOriginalGif;
     private bool _runtimeActionCancellable;
     private bool _isEditing;
     private bool _previewClosed;
@@ -97,6 +105,14 @@ public partial class MainWindow : Window
     private RuntimeCompatibilityResult? _lastCompatibilityResult;
     private Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> _configureCompatibility = null!;
     private bool _startupCompatibilityReconciled;
+    private bool _suppressLastSelectedSkinPersistence;
+    private bool _startupAutostartPending;
+    private bool _isMissingStartupSkin;
+    private bool _recordInitialSkinSelection;
+    private string? _startupStatusMessage;
+    private string? _startupRestoreSkinId;
+    private string? _startupAutostartSkinId;
+    private readonly CancellationTokenSource _startupLifetimeCancellation = new();
     private long _visibilitySequence;
 
     private const double SkinThumbnailWidth = 76;
@@ -119,7 +135,9 @@ public partial class MainWindow : Window
         Func<SkinMarketClient>? skinMarketClientFactory = null,
         ICodexConfigReadabilityService? codexConfigReadabilityService = null,
         Func<CodexInstance, CancellationToken, Task<bool>>? confirmDebugModeSwitch = null,
-        Func<IMarketAccountAuthProvider>? marketAccountAuthProviderFactory = null)
+        Func<IMarketAccountAuthProvider>? marketAccountAuthProviderFactory = null,
+        IStartupPreferencesService? startupPreferencesService = null,
+        bool launchedByAutostart = false)
     {
         _store = store;
         _skinOrderStore = new SkinOrderStore(Path.Combine(store.DataDirectory, ".skin-order.json"));
@@ -135,6 +153,7 @@ public partial class MainWindow : Window
             codexInstanceService,
             progress: QueueRuntimeProgress,
             confirmDebugModeSwitch: confirmDebugModeSwitch ?? ConfirmDebugModeSwitchAsync);
+        _launchedByAutostart = launchedByAutostart;
         _configureCompatibility = _runtimeController.ConfigureCompatibilityAsync;
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
@@ -153,13 +172,15 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ChatGPTSkinManager",
             "PreviewBrowser"));
+        _startupPreferencesService = startupPreferencesService ?? StartupPreferencesService.CreatePreview(
+            previewProfileDirectory ?? Path.Combine(Path.GetTempPath(), "SkinManager-preview", Guid.NewGuid().ToString("N")));
         var compatibilitySettingsPath = previewProfileDirectory is null
             ? null
             : Path.Combine(_previewProfileDirectory, "compatibility-settings.json");
         _compatibilitySettingsStore = new CompatibilitySettingsStore(compatibilitySettingsPath);
         TryLoadCompatibilitySettings();
         _previewRenderer = new ThemePreviewRenderer(PreviewBrowser, _previewProfileDirectory, basePackage);
-        _editorPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
+        _editorPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _editorPreviewTimer.Tick += EditorPreviewTimer_Tick;
         _runtimeStatusRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _runtimeStatusRefreshTimer.Tick += RuntimeStatusRefreshTimer_Tick;
@@ -173,6 +194,8 @@ public partial class MainWindow : Window
             _updateCoordinator.PropertyChanged += UpdateCoordinator_PropertyChanged;
         }
         Loaded += MainWindow_Loaded;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
         Activated += MainWindow_Activated;
         StateChanged += MainWindow_StateChanged;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
@@ -182,6 +205,7 @@ public partial class MainWindow : Window
         _previewRenderer.BackgroundFocusChanged += PreviewRenderer_BackgroundFocusChanged;
         _runtimeController.StatusChanged += RuntimeController_StatusChanged;
         SkinEditor.DraftChanged += SkinEditor_DraftChanged;
+        SkinEditor.PreviewFlushRequested += SkinEditor_PreviewFlushRequested;
         SkinEditor.ScopeChanged += SkinEditor_ScopeChanged;
         SkinEditor.SaveRequested += SkinEditor_SaveRequested;
         SkinEditor.CancelRequested += SkinEditor_CancelRequested;
@@ -192,6 +216,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _windowClosed = true;
+            _startupLifetimeCancellation.Cancel();
             AppThemeService.ThemeChanged -= MainWindow_ThemeChanged;
             _runtimeActionCancellation?.Cancel();
             if (_updateCoordinator is not null)
@@ -225,16 +250,34 @@ public partial class MainWindow : Window
         UpdateRuntimeControls();
     }
 
-    private async void ApplyRuntimeButton_Click(object sender, RoutedEventArgs e)
+    private async void ApplyRuntimeButton_Click(object sender, RoutedEventArgs e) =>
+        await ApplySelectedSkinAsync(fromAutostart: false);
+
+    private async Task ApplySelectedSkinAsync(bool fromAutostart)
     {
         if (_runtimeOperationInProgress || _selectedPackage is not { } package)
         {
+            if (fromAutostart)
+            {
+                SetStartupStatus("开机应用未执行：当前没有可用的上次皮肤。请在管理器中选择皮肤后重试。");
+            }
+
             return;
         }
 
         if (!TryReadRuntimePort(out var port))
         {
+            if (fromAutostart)
+            {
+                SetStartupStatus("开机应用未执行：调试端口无效，请在设置中修正后重试。");
+            }
+
             return;
+        }
+
+        if (!fromAutostart)
+        {
+            RememberLastSelectedSkin(package.Id);
         }
 
         var cancellation = new CancellationTokenSource();
@@ -257,10 +300,14 @@ public partial class MainWindow : Window
             DisplayRuntimeStatus(
                 status,
                 status.State == RuntimeStatusState.Error
-                    ? "本次操作未完成。请查看原因后重试。"
+                    ? fromAutostart ? "开机应用未完成。请查看原因后重试。" : "本次操作未完成。请查看原因后重试。"
                     : status.AppliedTargetCount > 0
-                        ? $"当前皮肤：{package.Name}，已应用到 {status.AppliedTargetCount} 个页面。"
-                        : $"Codex 已连接，当前页面尚未就绪；皮肤“{package.Name}”尚未应用。",
+                        ? fromAutostart
+                            ? $"开机已应用上次选择的皮肤：{package.Name}。"
+                            : $"当前皮肤：{package.Name}，已应用到 {status.AppliedTargetCount} 个页面。"
+                        : fromAutostart
+                            ? $"Codex 已连接，但页面尚未就绪；上次选择的皮肤“{package.Name}”尚未应用。"
+                            : $"Codex 已连接，当前页面尚未就绪；皮肤“{package.Name}”尚未应用。",
                 protectRuntimeResult: status.State == RuntimeStatusState.Error);
             if (status.State == RuntimeStatusState.Connected && _compatibilitySettingsLoaded)
             {
@@ -304,7 +351,9 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "本次操作未完成。请查看原因后重试。");
+            SetRuntimeError(exception.Message, fromAutostart
+                ? "开机应用未完成。请查看原因后重试。"
+                : "本次操作未完成。请查看原因后重试。");
         }
         finally
         {
@@ -570,6 +619,9 @@ public partial class MainWindow : Window
     internal void SetCompatibilityConfiguratorForTesting(
         Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> configure) =>
         _configureCompatibility = configure;
+
+    internal void SetRuntimeApplyWorkflowForTesting(RuntimeApplyWorkflow workflow) =>
+        _runtimeApplyWorkflow = workflow;
 
     private async Task<RuntimeStatus> StartOrConnectAndConfigureCompatibilityAsync(int port, CancellationToken cancellationToken)
     {
@@ -948,7 +1000,8 @@ public partial class MainWindow : Window
             SaveAndConfigureCompatibilityAsync,
             ReloadCompatibilitySettings,
             StartDebugClientFromCompatibilityAsync,
-            codexConfigReadabilityService: _codexConfigReadabilityService)
+            codexConfigReadabilityService: _codexConfigReadabilityService,
+            startupPreferencesService: _startupPreferencesService)
         {
             Owner = this
         };
@@ -1263,6 +1316,7 @@ public partial class MainWindow : Window
         _originalTransitionSequence++;
         OriginalImageLayer.BeginAnimation(OpacityProperty, null);
         _showingOriginal = false;
+        _showingOriginalGif = false;
         OriginalImageLayer.Visibility = Visibility.Collapsed;
         OriginalImageLayer.Opacity = 1;
         OriginalImageSource.Source = null;
@@ -1310,6 +1364,8 @@ public partial class MainWindow : Window
 
         _isEditing = false;
         _editorPreviewTimer.Stop();
+        _editorPreviewPending = false;
+        _editorPreviewFlushRequested = false;
         Interlocked.Increment(ref _editorPreviewSequence);
         _editorResourcesChanged = false;
         _ = _previewRenderer?.SetComponentSelectionModeAsync(false);
@@ -1346,6 +1402,9 @@ public partial class MainWindow : Window
     {
         QueueEditorPreviewUpdate(e.ResourcesChanged);
     }
+
+    private void SkinEditor_PreviewFlushRequested(object? sender, EventArgs e) =>
+        QueueEditorPreviewUpdate(resourcesChanged: false, flushImmediately: true);
 
     private void SkinEditor_ScopeChanged(object? sender, EventArgs e)
     {
@@ -1427,7 +1486,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void QueueEditorPreviewUpdate(bool resourcesChanged)
+    private void QueueEditorPreviewUpdate(bool resourcesChanged, bool flushImmediately = false)
     {
         if (!_isEditing)
         {
@@ -1435,23 +1494,61 @@ public partial class MainWindow : Window
         }
 
         _editorResourcesChanged |= resourcesChanged;
-        _editorPreviewTimer.Stop();
-        _editorPreviewTimer.Start();
+        _editorPreviewPending = true;
+        _editorPreviewFlushRequested |= flushImmediately;
+        Interlocked.Increment(ref _editorPreviewSequence);
+
+        if (flushImmediately)
+        {
+            _editorPreviewTimer.Stop();
+            if (!_editorPreviewUpdateInProgress)
+            {
+                _ = UpdateEditorPreviewAsync(force: true);
+            }
+        }
+        else if (!_previewClosed && _previewInitialized && !_editorPreviewTimer.IsEnabled)
+        {
+            _editorPreviewTimer.Start();
+        }
     }
 
     private async void EditorPreviewTimer_Tick(object? sender, EventArgs e)
     {
+        if (!_editorPreviewPending || !_isEditing || _previewClosed || !_previewInitialized || _previewRenderer is null)
+        {
+            _editorPreviewTimer.Stop();
+            return;
+        }
+
         _editorPreviewTimer.Stop();
-        await UpdateEditorPreviewAsync();
+        if (!_editorPreviewUpdateInProgress)
+        {
+            await UpdateEditorPreviewAsync();
+        }
     }
 
-    private async Task UpdateEditorPreviewAsync()
+    private async Task UpdateEditorPreviewAsync(bool force = false)
     {
         if (!_isEditing || _previewClosed || !_previewInitialized || _previewRenderer is not { } renderer)
         {
             return;
         }
 
+        if (_editorPreviewUpdateInProgress)
+        {
+            _editorPreviewPending = true;
+            _editorPreviewFlushRequested |= force;
+            return;
+        }
+
+        if (!_editorPreviewPending && !force)
+        {
+            return;
+        }
+
+        _editorPreviewUpdateInProgress = true;
+        _editorPreviewPending = false;
+        _editorPreviewFlushRequested = false;
         var sequence = Interlocked.Increment(ref _editorPreviewSequence);
         try
         {
@@ -1493,8 +1590,31 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or InvalidOperationException)
         {
-            SkinEditor.SetValidationError(exception.Message);
-            SetPreviewStatus("草稿有需要修正的字段", persistent: true);
+            if (sequence == Volatile.Read(ref _editorPreviewSequence) && _isEditing)
+            {
+                SkinEditor.SetValidationError(exception.Message);
+                SetPreviewStatus("草稿有需要修正的字段", persistent: true);
+            }
+        }
+        finally
+        {
+            _editorPreviewUpdateInProgress = false;
+            if (_isEditing && !_previewClosed && _previewInitialized && _editorPreviewPending)
+            {
+                if (_editorPreviewFlushRequested)
+                {
+                    _editorPreviewTimer.Stop();
+                    _ = Dispatcher.BeginInvoke(new Action(() => _ = UpdateEditorPreviewAsync(force: true)), DispatcherPriority.Background);
+                }
+                else if (!_editorPreviewTimer.IsEnabled)
+                {
+                    _editorPreviewTimer.Start();
+                }
+            }
+            else
+            {
+                _editorPreviewTimer.Stop();
+            }
         }
     }
 
@@ -1600,6 +1720,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        CancelPendingAutostartForUserInput("开机应用已取消：管理器正在关闭。");
         _runtimeActionCancellation?.Cancel();
         e.Cancel = true;
         if (_closePreparationInProgress)
@@ -1780,11 +1901,13 @@ public partial class MainWindow : Window
         }
 
         _previewClosed = true;
+        _editorPreviewTimer.Stop();
         _previewWasActive = false;
         _previewNeedsRefresh = true;
         _previewInitialized = false;
         _previewInitializationFailed = false;
         _showingOriginal = false;
+        _showingOriginalGif = false;
         OriginalImageSource.Source = null;
         OriginalImageLayer.Visibility = Visibility.Collapsed;
         OriginalButton.Content = "查看原图";
@@ -1810,14 +1933,20 @@ public partial class MainWindow : Window
         SetPreviewStatus("本地预览已关闭");
     }
 
-    private async Task OpenPreviewAsync()
+    private Task OpenPreviewAsync()
     {
         if (!_previewClosed)
         {
-            return;
+            return _previewReadyTask ?? Task.CompletedTask;
         }
 
         _previewClosed = false;
+        _previewReadyTask = OpenPreviewCoreAsync();
+        return _previewReadyTask;
+    }
+
+    private async Task OpenPreviewCoreAsync()
+    {
         PreviewClosedHeader.Visibility = Visibility.Collapsed;
         PreviewActiveHeader.Visibility = Visibility.Visible;
         PreviewContainer.Visibility = Visibility.Visible;
@@ -1850,7 +1979,7 @@ public partial class MainWindow : Window
             if (_isEditing)
             {
                 _editorResourcesChanged = true;
-                await UpdateEditorPreviewAsync();
+                await UpdateEditorPreviewAsync(force: true);
                 await renderer.SetComponentSelectionModeAsync(true);
                 await renderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
             }
@@ -2120,14 +2249,73 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OriginalButton_Click(object sender, RoutedEventArgs e)
+    private async void OriginalButton_Click(object sender, RoutedEventArgs e)
     {
         var transition = ++_originalTransitionSequence;
         if (!_showingOriginal)
         {
-            if (_selectedPackage?.ImageBytes is not { Length: > 0 } bytes)
+            if (_selectedPackage is not { ImageBytes: { Length: > 0 } bytes } package)
             {
                 return;
+            }
+
+            var isGif = package.ImagePath is { } imagePath &&
+                        Path.GetExtension(imagePath).Equals(".gif", StringComparison.OrdinalIgnoreCase);
+            if (isGif)
+            {
+                var previewReadyTask = _previewClosed ? OpenPreviewAsync() : _previewReadyTask;
+                if (previewReadyTask is { IsCompleted: false })
+                {
+                    await previewReadyTask;
+                }
+
+                if (transition != _originalTransitionSequence || !ReferenceEquals(_selectedPackage, package))
+                {
+                    return;
+                }
+
+                if (_previewInitialized && _previewRenderer is { } renderer && package.ImagePath is { } gifPath)
+                {
+                    _showingOriginal = true;
+                    _showingOriginalGif = true;
+                    OriginalButton.Content = "返回聊天预览";
+                    await _previewDisplayGate.WaitAsync();
+                    try
+                    {
+                        var packageReady = renderer.IsCurrentPackageReady(package) ||
+                                           await renderer.DisplayPackageAsync(package, GetPreviewOptions(package));
+                        if (packageReady && await renderer.DisplayOriginalImageAsync(gifPath) &&
+                            transition == _originalTransitionSequence && ReferenceEquals(_selectedPackage, package))
+                        {
+                            OriginalImageSource.Source = null;
+                            OriginalImageLayer.Visibility = Visibility.Collapsed;
+                            PreviewBrowser.Visibility = Visibility.Visible;
+                            SetPreviewStatus(null);
+                            QueuePreviewActivityUpdate();
+                            return;
+                        }
+                    }
+                    catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or ArgumentException)
+                    {
+                        if (transition == _originalTransitionSequence)
+                        {
+                            SetPreviewStatus($"GIF 原图预览失败：{exception.Message}", persistent: true);
+                        }
+                    }
+                    finally
+                    {
+                        _previewDisplayGate.Release();
+                    }
+
+                    if (transition != _originalTransitionSequence || !ReferenceEquals(_selectedPackage, package))
+                    {
+                        return;
+                    }
+
+                    _showingOriginal = false;
+                    _showingOriginalGif = false;
+                    OriginalButton.Content = "查看原图";
+                }
             }
 
             try
@@ -2141,6 +2329,7 @@ public partial class MainWindow : Window
             }
 
             _showingOriginal = true;
+            _showingOriginalGif = false;
             OriginalButton.Content = "返回聊天预览";
             if (!_previewClosed)
             {
@@ -2157,6 +2346,53 @@ public partial class MainWindow : Window
 
         _showingOriginal = false;
         OriginalButton.Content = "查看原图";
+        if (_showingOriginalGif)
+        {
+            _showingOriginalGif = false;
+            OriginalImageLayer.Visibility = Visibility.Collapsed;
+            OriginalImageSource.Source = null;
+            if (_previewClosed)
+            {
+                SetPreviewStatus("本地预览已关闭");
+                return;
+            }
+
+            if (_previewRenderer is { } renderer && _selectedPackage is { } package)
+            {
+                PreviewBrowser.Visibility = Visibility.Visible;
+                SetPreviewStatus("正在恢复聊天预览…");
+                await _previewDisplayGate.WaitAsync();
+                try
+                {
+                    var displayed = await renderer.DisplayPackageAsync(package, GetPreviewOptions(package));
+                    if (transition != _originalTransitionSequence || !ReferenceEquals(_selectedPackage, package))
+                    {
+                        return;
+                    }
+
+                    if (displayed)
+                    {
+                        SetPreviewStatus(null);
+                        QueuePreviewActivityUpdate();
+                    }
+                    else
+                    {
+                        SetPreviewStatus("预览仍在更新…");
+                    }
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or ArgumentException)
+                {
+                    SetPreviewStatus($"恢复聊天预览失败：{exception.Message}", persistent: true);
+                }
+                finally
+                {
+                    _previewDisplayGate.Release();
+                }
+
+                return;
+            }
+        }
+
         if (_previewClosed)
         {
             OriginalImageLayer.Visibility = Visibility.Collapsed;
@@ -2371,17 +2607,43 @@ public partial class MainWindow : Window
 
         _hasLoaded = true;
         InitializeInteractionFeedback();
-        RefreshList();
+        ReadStartupSkinPreference();
+        RefreshListInternal(
+            preferredId: _startupRestoreSkinId,
+            selectFirstIfMissing: !_isMissingStartupSkin,
+            persistSelectedSkin: false);
+        if (_recordInitialSkinSelection && SkinList.SelectedItem is SkinCard initialSelection)
+        {
+            RememberLastSelectedSkin(initialSelection.Entry.Id);
+        }
+        Task runtimeRefresh = Task.CompletedTask;
         if (_readRuntimeStatusOnLoad)
         {
             _runtimeStatusRefreshTimer.Start();
-            _ = RefreshRuntimeStatusAsync();
+            runtimeRefresh = RefreshRuntimeStatusAsync();
         }
         if (_previewClosed)
         {
             return;
         }
 
+        _previewReadyTask = InitializeLoadedPreviewAsync();
+        await _previewReadyTask;
+
+        if (_startupAutostartPending)
+        {
+            await runtimeRefresh;
+            await ApplyRestoredSkinOnAutostartAsync();
+        }
+        else if (!string.IsNullOrWhiteSpace(_startupStatusMessage))
+        {
+            await runtimeRefresh;
+            SetStartupStatus(_startupStatusMessage);
+        }
+    }
+
+    private async Task InitializeLoadedPreviewAsync()
+    {
         try
         {
             await _previewRenderer!.InitializeAsync();
@@ -2390,7 +2652,7 @@ public partial class MainWindow : Window
             if (_isEditing)
             {
                 _editorResourcesChanged = true;
-                await UpdateEditorPreviewAsync();
+                await UpdateEditorPreviewAsync(force: true);
                 await _previewRenderer!.SetComponentSelectionModeAsync(true);
                 await _previewRenderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
             }
@@ -2410,6 +2672,110 @@ public partial class MainWindow : Window
             ShowPreviewError(exception);
         }
     }
+
+    private void ReadStartupSkinPreference()
+    {
+        try
+        {
+            var preferences = _startupPreferencesService.Read();
+            _startupAutostartSkinId = preferences.ShouldApplyLastSelectedSkinOnAutostart
+                ? preferences.LastSelectedSkinId
+                : null;
+            var savedSkinId = preferences.LastSelectedSkinId;
+            var catalog = _store.GetCatalog();
+            var hasSavedSkin = !string.IsNullOrWhiteSpace(savedSkinId);
+            var selectedSkinExists = hasSavedSkin &&
+                catalog.Any(entry => string.Equals(entry.Id, savedSkinId, StringComparison.OrdinalIgnoreCase));
+            if (selectedSkinExists)
+            {
+                _startupRestoreSkinId = savedSkinId;
+                _startupAutostartPending = _launchedByAutostart && preferences.ShouldApplyLastSelectedSkinOnAutostart;
+                return;
+            }
+
+            if (hasSavedSkin)
+            {
+                _isMissingStartupSkin = true;
+                _startupStatusMessage = $"上次选择的皮肤“{savedSkinId}”已删除或不可用。请在管理器中选择其他皮肤。";
+                return;
+            }
+
+            if (_launchedByAutostart && preferences.ShouldApplyLastSelectedSkinOnAutostart)
+            {
+                _isMissingStartupSkin = true;
+                _startupStatusMessage = "开机应用未执行：尚无已记录的上次皮肤。请手动打开管理器并选择一款已保存皮肤。";
+                return;
+            }
+
+            _recordInitialSkinSelection = !_launchedByAutostart;
+        }
+        catch (Exception exception)
+        {
+            _startupStatusMessage = $"开机应用未执行：无法读取启动设置。{exception.Message}";
+        }
+    }
+
+    private async Task ApplyRestoredSkinOnAutostartAsync()
+    {
+        if (!_startupAutostartPending || _windowClosed || _startupLifetimeCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
+        if (!string.Equals(_selectedPackage?.Id, _startupAutostartSkinId, StringComparison.OrdinalIgnoreCase))
+        {
+            _startupAutostartPending = false;
+            SetStartupStatus("开机应用已取消：上次选择的皮肤未能恢复，请手动选择并应用。");
+            return;
+        }
+
+        if (_runtimeOperationInProgress || _isBusy || _isEditing)
+        {
+            _startupAutostartPending = false;
+            SetStartupStatus("开机应用未执行：管理器当前有其他操作，请稍后手动应用。");
+            return;
+        }
+
+        _startupAutostartPending = false;
+        await ApplySelectedSkinAsync(fromAutostart: true);
+    }
+
+    private void RememberLastSelectedSkin(string skinId)
+    {
+        try
+        {
+            _startupPreferencesService.RecordLastSelectedSkin(skinId);
+        }
+        catch (Exception exception)
+        {
+            SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+        }
+    }
+
+    private void SetStartupStatus(string message)
+    {
+        _protectedRuntimeResultMessage = message;
+        RuntimeStatusMessage.Text = message;
+        RuntimeStatusMessage.ToolTip = message;
+    }
+
+    private void CancelPendingAutostartForUserInput(string message)
+    {
+        if (!_startupAutostartPending)
+        {
+            return;
+        }
+
+        _startupAutostartPending = false;
+        _startupLifetimeCancellation.Cancel();
+        SetStartupStatus(message);
+    }
+
+    private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e) =>
+        CancelPendingAutostartForUserInput("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。");
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e) =>
+        CancelPendingAutostartForUserInput("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。");
 
     private void MainWindow_Activated(object? sender, EventArgs e)
     {
@@ -2523,20 +2889,21 @@ public partial class MainWindow : Window
 
     private async Task RenderPreviewAsync(SkinPackage package)
     {
-        if (!_previewInitialized || _showingOriginal)
-        {
-            return;
-        }
-
-        if (!IsPreviewActive)
-        {
-            _previewNeedsRefresh = true;
-            return;
-        }
-
-        SetPreviewStatus("正在更新预览…");
+        await _previewDisplayGate.WaitAsync();
         try
         {
+            if (!_previewInitialized || _showingOriginal)
+            {
+                return;
+            }
+
+            if (!IsPreviewActive)
+            {
+                _previewNeedsRefresh = true;
+                return;
+            }
+
+            SetPreviewStatus("正在更新预览…");
             var renderer = _previewRenderer;
             if (renderer is null || _previewClosed)
             {
@@ -2568,6 +2935,10 @@ public partial class MainWindow : Window
                 ShowPreviewError(exception);
             }
         }
+        finally
+        {
+            _previewDisplayGate.Release();
+        }
     }
 
     private void ShowPreviewError(Exception exception)
@@ -2597,7 +2968,7 @@ public partial class MainWindow : Window
 
     private bool IsPreviewActive =>
         !_previewClosed && _previewRenderer is not null && _previewInitialized && IsVisible && WindowState != WindowState.Minimized &&
-        DetailsScroll.Visibility == Visibility.Visible && !_showingOriginal &&
+        DetailsScroll.Visibility == Visibility.Visible && (!_showingOriginal || _showingOriginalGif) &&
         OriginalImageLayer.Visibility != Visibility.Visible && !_previewInitializationFailed &&
         IsPreviewWithinVisibleArea();
 
@@ -2662,7 +3033,7 @@ public partial class MainWindow : Window
 
         if (active && !wasActive && _previewNeedsRefresh && _isEditing)
         {
-            await UpdateEditorPreviewAsync();
+            await UpdateEditorPreviewAsync(force: true);
         }
         else if (active && !wasActive && _previewNeedsRefresh && _selectedPackage is { } package)
         {
@@ -2724,12 +3095,12 @@ public partial class MainWindow : Window
         view.Refresh();
         if (list.SelectedItem is SkinCard selected && !view.Contains(selected))
         {
-            list.SelectedItem = null;
+            SetSkinSelectionSilently(null);
         }
 
         if (list.SelectedItem is null && view.Cast<object>().FirstOrDefault() is SkinCard firstVisible)
         {
-            list.SelectedItem = firstVisible;
+            SetSkinSelectionSilently(firstVisible);
         }
 
         if (list.SelectedItem is null)
@@ -2760,6 +3131,31 @@ public partial class MainWindow : Window
             try
             {
                 ShowPackage(_store.LoadSkin(card.Entry.Id));
+                if (!_suppressLastSelectedSkinPersistence)
+                {
+                    CancelPendingAutostartForUserInput("开机应用已取消：检测到手动选择，可使用“应用皮肤”继续。");
+                    var resolvedMissingSkin = _isMissingStartupSkin;
+                    _isMissingStartupSkin = false;
+                    _startupStatusMessage = null;
+                    if (resolvedMissingSkin)
+                    {
+                        _protectedRuntimeResultMessage = null;
+                    }
+
+                    try
+                    {
+                        _startupPreferencesService.RecordLastSelectedSkin(card.Entry.Id);
+                        if (resolvedMissingSkin)
+                        {
+                            RuntimeStatusMessage.Text = $"已选择皮肤“{card.Entry.Name}”；上次选择已更新。";
+                            RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+                    }
+                }
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
             {
@@ -2779,7 +3175,10 @@ public partial class MainWindow : Window
         UpdateListEmptyState();
     }
 
-    private void RefreshList(string? preferredId = null)
+    private void RefreshList(string? preferredId = null) =>
+        RefreshListInternal(preferredId, selectFirstIfMissing: true, persistSelectedSkin: true);
+
+    private void RefreshListInternal(string? preferredId, bool selectFirstIfMissing, bool persistSelectedSkin)
     {
         var previousId = preferredId ?? _selectedPackage?.Id;
         _imageReadWarning = false;
@@ -2836,16 +3235,29 @@ public partial class MainWindow : Window
         UpdateSortStatus();
         var selection = _skins.FirstOrDefault(item =>
             previousId is not null && string.Equals(item.Entry.Id, previousId, StringComparison.OrdinalIgnoreCase));
-        if ((selection is null || !_skinsView.Contains(selection)) && _skinsView.Cast<object>().FirstOrDefault() is SkinCard firstVisible)
-        {
-            selection = firstVisible;
-        }
-        else if (selection is not null && !_skinsView.Contains(selection))
+        if (selection is not null && !_skinsView.Contains(selection))
         {
             selection = null;
         }
+        if (selection is null && selectFirstIfMissing && _skinsView.Cast<object>().FirstOrDefault() is SkinCard firstVisible)
+        {
+            selection = firstVisible;
+        }
 
-        SkinList.SelectedItem = selection;
+        SetSkinSelectionSilently(selection);
+        if (persistSelectedSkin && previousId is not null && selection is not null &&
+            string.Equals(previousId, selection.Entry.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                _startupPreferencesService.RecordLastSelectedSkin(selection.Entry.Id);
+            }
+            catch (Exception exception)
+            {
+                SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+            }
+        }
+
         UpdateListEmptyState();
         UpdateLibraryWarning();
         if (selection is null)
@@ -2854,6 +3266,20 @@ public partial class MainWindow : Window
                 _skins.Count == 0
                     ? "导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。"
                     : "试试其他名称或 ID，或者清空搜索内容。");
+        }
+    }
+
+    private void SetSkinSelectionSilently(object? selection)
+    {
+        var wasSuppressing = _suppressLastSelectedSkinPersistence;
+        _suppressLastSelectedSkinPersistence = true;
+        try
+        {
+            SkinList.SelectedItem = selection;
+        }
+        finally
+        {
+            _suppressLastSelectedSkinPersistence = wasSuppressing;
         }
     }
 
@@ -2895,6 +3321,7 @@ public partial class MainWindow : Window
         _selectedPackage = package;
         _previewNeedsRefresh = true;
         _showingOriginal = false;
+        _showingOriginalGif = false;
         OriginalButton.Content = "查看原图";
         if (!preserveOriginalUntilPreviewReady)
         {

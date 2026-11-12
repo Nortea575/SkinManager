@@ -1,5 +1,8 @@
 using System.IO;
+using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using SkinManager.Core;
 
 namespace SkinManager.Desktop;
 
@@ -32,15 +35,9 @@ internal static class PreviewImageCropper
 
         var scale = Math.Min(1d, Math.Max(targetWidth / (double)sourceWidth, targetHeight / (double)sourceHeight));
         var decodeWidth = Math.Clamp((int)Math.Ceiling(sourceWidth * scale), 1, sourceWidth);
-        using var stream = new MemoryStream(bytes, writable: false);
-        var bitmap = new BitmapImage();
-        bitmap.BeginInit();
-        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-        bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-        bitmap.DecodePixelWidth = decodeWidth;
-        bitmap.StreamSource = stream;
-        bitmap.EndInit();
-        bitmap.Freeze();
+        var bitmap = IsGif(bytes)
+            ? DecodeGifFirstFrame(bytes, SkinPackageReader.ReadGifInfo(bytes), decodeWidth)
+            : DecodeBitmap(bytes, decodeWidth);
 
         return CropToRatio(bitmap, targetWidth / (double)targetHeight, focusX, focusY);
     }
@@ -48,11 +45,26 @@ internal static class PreviewImageCropper
     public static BitmapSource Decode(byte[] bytes)
     {
         ArgumentNullException.ThrowIfNull(bytes);
+        if (IsGif(bytes))
+        {
+            var info = SkinPackageReader.ReadGifInfo(bytes);
+            return DecodeGifFirstFrame(bytes, info, info.Width);
+        }
+
+        return DecodeBitmap(bytes, decodePixelWidth: 0);
+    }
+
+    private static BitmapSource DecodeBitmap(byte[] bytes, int decodePixelWidth)
+    {
         using var stream = new MemoryStream(bytes, writable: false);
         var bitmap = new BitmapImage();
         bitmap.BeginInit();
         bitmap.CacheOption = BitmapCacheOption.OnLoad;
         bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
+        if (decodePixelWidth > 0)
+        {
+            bitmap.DecodePixelWidth = decodePixelWidth;
+        }
         bitmap.StreamSource = stream;
         bitmap.EndInit();
         bitmap.Freeze();
@@ -65,6 +77,12 @@ internal static class PreviewImageCropper
         if (bytes.Length == 0)
         {
             throw new InvalidDataException("背景图片数据不能为空。 ");
+        }
+
+        if (IsGif(bytes))
+        {
+            var gif = SkinPackageReader.ReadGifInfo(bytes);
+            return (gif.Width, gif.Height);
         }
 
         using var stream = new MemoryStream(bytes, writable: false);
@@ -86,6 +104,56 @@ internal static class PreviewImageCropper
 
         return (width, height);
     }
+
+    private static BitmapSource DecodeGifFirstFrame(byte[] bytes, GifImageInfo info, int decodeWidth)
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        var decoder = new GifBitmapDecoder(
+            stream,
+            BitmapCreateOptions.PreservePixelFormat,
+            BitmapCacheOption.None);
+        if (decoder.Frames.Count == 0)
+        {
+            throw new InvalidDataException("GIF 背景图片不包含可解码的图像帧。 ");
+        }
+
+        var frame = decoder.Frames[0];
+        var scale = Math.Clamp(decodeWidth / (double)info.Width, 0.0001, 1d);
+        var targetWidth = Math.Max(1, (int)Math.Ceiling(info.Width * scale));
+        var targetHeight = Math.Max(1, (int)Math.Ceiling(info.Height * scale));
+        var alreadyLogicalScreen = frame.PixelWidth == info.Width && frame.PixelHeight == info.Height;
+
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen())
+        {
+            context.PushTransform(new ScaleTransform(scale, scale));
+            var backgroundAlpha = info.HasGlobalColorTable &&
+                                  !(info.FirstFrameHasTransparency &&
+                                    info.FirstFrameTransparentIndex == info.BackgroundColorIndex)
+                ? byte.MaxValue
+                : (byte)0;
+            var background = new SolidColorBrush(Color.FromArgb(
+                backgroundAlpha,
+                info.BackgroundRed,
+                info.BackgroundGreen,
+                info.BackgroundBlue));
+            background.Freeze();
+            context.DrawRectangle(background, null, new Rect(0, 0, info.Width, info.Height));
+            var destination = alreadyLogicalScreen
+                ? new Rect(0, 0, info.Width, info.Height)
+                : new Rect(info.FirstFrameLeft, info.FirstFrameTop, frame.PixelWidth, frame.PixelHeight);
+            context.DrawImage(frame, destination);
+            context.Pop();
+        }
+
+        var canvas = new RenderTargetBitmap(targetWidth, targetHeight, 96, 96, PixelFormats.Pbgra32);
+        canvas.Render(visual);
+        canvas.Freeze();
+        return canvas;
+    }
+
+    private static bool IsGif(ReadOnlySpan<byte> bytes) =>
+        bytes.Length >= 6 && (bytes[..6].SequenceEqual("GIF87a"u8) || bytes[..6].SequenceEqual("GIF89a"u8));
 
     public static BitmapSource CropToRatio(BitmapSource source, double ratio, double focusX, double focusY)
     {

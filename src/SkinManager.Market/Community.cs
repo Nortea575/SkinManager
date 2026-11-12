@@ -226,6 +226,7 @@ public sealed partial class SkinMarketClient
 
         using var operationCancellation = CreateOperationCancellation(cancellationToken, DownloadTimeout);
         byte[] packageBytes;
+        string minimumManagerVersion;
         try
         {
             packageBytes = await File.ReadAllBytesAsync(packagePath, operationCancellation.Token).ConfigureAwait(false);
@@ -234,7 +235,8 @@ public sealed partial class SkinMarketClient
                 throw new InvalidDataException("ZIP 文件必须存在且大小在 1 字节到 64 MB 之间。");
             }
 
-            _ = SkinPackageReader.ReadZipBytes(packageBytes);
+            var package = SkinPackageReader.ReadZipBytes(packageBytes);
+            minimumManagerVersion = MinimumManagerVersionForPackage(draft.MinimumManagerVersion, package.Files.Keys);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -248,7 +250,7 @@ public sealed partial class SkinMarketClient
         multipart.Add(new StringContent(draft.Description, Encoding.UTF8), "description");
         multipart.Add(new StringContent(draft.Author, Encoding.UTF8), "author");
         multipart.Add(new StringContent(draft.LicenseNotes, Encoding.UTF8), "licenseNotes");
-        multipart.Add(new StringContent(draft.MinimumManagerVersion, Encoding.UTF8), "minManagerVersion");
+        multipart.Add(new StringContent(minimumManagerVersion, Encoding.UTF8), "minManagerVersion");
         multipart.Add(new StringContent(JsonSerializer.Serialize(draft.Tags), Encoding.UTF8), "tags");
 
         using var document = await SendCommunityJsonAsync(

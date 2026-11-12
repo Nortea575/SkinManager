@@ -1,4 +1,4 @@
-#define ProductVersion "1.1.3"
+#define ProductVersion "1.1.4-beta.1"
 
 [Setup]
 AppId={{6FBD8E7A-8A61-4DB8-BD4A-4F2E43110B67}
@@ -6,8 +6,8 @@ AppName=SkinManager
 AppVersion={#ProductVersion}
 AppVerName=SkinManager {#ProductVersion}
 AppPublisher=SkinManager
-VersionInfoVersion=1.1.3.0
-VersionInfoProductVersion=1.1.3.0
+VersionInfoVersion=1.1.4.0
+VersionInfoProductVersion=1.1.4.0
 VersionInfoProductTextVersion={#ProductVersion}
 VersionInfoDescription=SkinManager Setup
 VersionInfoProductName=SkinManager
@@ -48,6 +48,9 @@ Filename: "{app}\SkinManager.exe"; Flags: nowait; Check: IsSkinManagerUpdate
 [Icons]
 Name: "{autoprograms}\SkinManager"; Filename: "{app}\SkinManager.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SkinManager.exe"
 Name: "{autodesktop}\SkinManager"; Filename: "{app}\SkinManager.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SkinManager.exe"; Tasks: desktopicon
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "SkinManager"; Flags: uninsdeletevalue
 
 [Code]
 var

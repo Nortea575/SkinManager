@@ -13,6 +13,7 @@ public sealed partial class SkinMarketClient : IDisposable
 {
     public const long MaxDownloadBytes = 64L * 1024 * 1024;
     public const int MaxThumbnailBytes = 4 * 1024 * 1024;
+    public const string GifMinimumManagerVersion = "1.1.4";
     private const int MaxCatalogBytes = 1024 * 1024;
     private static readonly Uri SiteRoot = new("https://blog.ancimen.top/");
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
@@ -334,6 +335,22 @@ public sealed partial class SkinMarketClient : IDisposable
 
         message = $"兼容管理器 {managerVersion.ToString(3)}。";
         return true;
+    }
+
+    internal static string MinimumManagerVersionForPackage(string minimumVersionText, IEnumerable<string> packagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(packagePaths);
+        if (!packagePaths.Any(path => Path.GetExtension(path).Equals(".gif", StringComparison.OrdinalIgnoreCase)))
+        {
+            return minimumVersionText;
+        }
+
+        if (Version.TryParse(minimumVersionText, out var minimumVersion) && minimumVersion >= new Version(1, 1, 4))
+        {
+            return minimumVersionText;
+        }
+
+        return GifMinimumManagerVersion;
     }
 
     public void Dispose()

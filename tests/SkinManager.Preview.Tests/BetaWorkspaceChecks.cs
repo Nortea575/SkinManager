@@ -148,8 +148,8 @@ internal static class BetaWorkspaceChecks
                 "导入后仍选中刚导入的 Ayanami");
 
             var version = Find<TextBlock>(window, "AppVersionLabel");
-            Require(version.Text == "1.1.3",
-                "主窗口显示正式公开版本标签");
+            Require(version.Text == "1.1.4-beta.1",
+                "主窗口显示本轮公开测试版本标签");
             var updateLabel = Find<TextBlock>(window, "UpdateEntryLabel");
             Require(updateLabel.Text == "版本与更新" &&
                     updateLabel.ToolTip?.ToString()?.Contains(version.Text, StringComparison.OrdinalIgnoreCase) == true,
@@ -308,12 +308,30 @@ internal static class BetaWorkspaceChecks
 
             var compatibilityGroup = Find<Expander>(settings, "CompatibilityGroupExpander");
             Require(compatibilityGroup.IsExpanded, "设置截图展示展开的兼容性分组");
+            var magpieConfigExpander = Find<Expander>(settings, "MagpieSettingsExpander");
+            magpieConfigExpander.IsExpanded = true;
+            var magpieConfigContent = magpieConfigExpander.Content as FrameworkElement
+                ?? throw new InvalidOperationException("兼容设置没有 Magpie/config.toml 展开内容。");
+            await WaitUntilAsync(() => magpieConfigContent.Opacity >= 0.999,
+                "Magpie 与 Codex 配置区域展开动画完成");
+            var configPanel = Find<Border>(settings, "CodexMagpieConfigPanel");
+            var settingsScrollViewer = Find<ScrollViewer>(settings, "SettingsScrollViewer");
+            var refreshCompatibility = Find<Button>(settings, "InspectButton");
             var screenshotDirectory = Program.FindTestOutputDirectory();
             settings.Width = 760;
             settings.Height = 570;
             settings.UpdateLayout();
             await WaitUntilAsync(() => settings.ActualWidth >= 759 && settings.ActualHeight >= 569,
                 "设置窗口常规尺寸完成布局");
+            configPanel.BringIntoView();
+            await WaitUntilAsync(() => refreshCompatibility.IsVisible &&
+                IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
+                "统一检测入口滚动到760×570设置视口");
+            await settings.Dispatcher.InvokeAsync(() => settings.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
+            Require(Find<TextBlock>(settings, "CodexConfigStatusText").Text.Length > 0 &&
+                    refreshCompatibility.IsVisible &&
+                    IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
+                "760×570设置截图显示统一配置状态与配置/Magpie重新检测入口");
             await Program.SaveWindowScreenshotAsync(
                 settings,
                 Path.Combine(screenshotDirectory, "beta2-settings-compatibility-760x570.png"));
@@ -323,6 +341,14 @@ internal static class BetaWorkspaceChecks
             settings.UpdateLayout();
             await WaitUntilAsync(() => settings.ActualWidth >= 619 && settings.ActualHeight >= 439,
                 "设置窗口最小尺寸完成布局");
+            configPanel.BringIntoView();
+            await WaitUntilAsync(() => refreshCompatibility.IsVisible &&
+                IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
+                "统一检测入口滚动到620×440设置视口");
+            await settings.Dispatcher.InvokeAsync(() => settings.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
+            Require(refreshCompatibility.IsVisible &&
+                    IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
+                "620×440设置截图仍能显示统一配置检测入口");
             await Program.SaveWindowScreenshotAsync(
                 settings,
                 Path.Combine(screenshotDirectory, "beta2-settings-compatibility-620x440.png"));

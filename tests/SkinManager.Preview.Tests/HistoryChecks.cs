@@ -14,16 +14,21 @@ internal static class HistoryChecks
     {
         var releases = ChangelogReader.ReadEmbedded();
         var currentVersionTag = UpdateCoordinator.ReadCurrentVersionTag();
-        Check(releases.Count >= 3, "内嵌更新日志包含多个公开版本");
+        Check(releases.Count >= 4, "内嵌更新日志包含多个公开版本");
         Check(releases[0].Version == currentVersionTag &&
-              releases[1].Version == "1.1.3-beta.1" &&
-              releases[2].Version == "1.1.2",
-            "历史版本按 CHANGELOG 顺序显示当前测试版及既有 beta.1、正式版");
-        Check(releases[0].DateLabel == "2026-11-10" &&
-              releases[0].Body.Contains("保持活动连接", StringComparison.Ordinal) &&
-              releases[0].Body.Contains("直接拖动皮肤排序", StringComparison.Ordinal) &&
+              releases[1].Version == "1.1.3" &&
+              releases[2].Version == "1.1.3-beta.1" &&
+              releases[3].Version == "1.1.2",
+            "历史版本按 CHANGELOG 顺序显示当前测试版及既有正式版、测试版");
+        Check(releases[0].DateLabel == "2026-11-12" &&
+              releases[0].Body.Contains("GIF", StringComparison.Ordinal) &&
+              releases[0].Body.Contains("自由调色", StringComparison.Ordinal) &&
               !releases[0].Body.Contains("**", StringComparison.Ordinal),
-            "beta.2 条目保留发布日期与新功能正文并转成原生纯文本");
+            "当前测试版保留发布日期与新功能正文并转成原生纯文本");
+        Check(releases[1].DateLabel == "2026-11-10" &&
+              releases[1].Body.Contains("保持活动连接", StringComparison.Ordinal) &&
+              releases[1].Body.Contains("直接拖动皮肤排序", StringComparison.Ordinal),
+            "1.1.3 正式版历史仍保留连接与排序功能条目");
         var betaOneRelease = releases.Single(release => release.Version == "1.1.3-beta.1");
         Check(betaOneRelease.DateLabel == "2026-11-10" &&
               betaOneRelease.Body.Contains("离线查看历史更新日志", StringComparison.Ordinal) &&

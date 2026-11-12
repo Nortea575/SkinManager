@@ -12,5 +12,7 @@
     <ProjectReference Include="..\..\src\SkinManager.Market\SkinManager.Market.csproj" />
     <EmbeddedResource Include="..\fixtures\skins\Ayanami.zip"
                        LogicalName="SkinManager.Market.Tests.Resources.Ayanami.zip" />
+    <EmbeddedResource Include="..\fixtures\images\transparent-animation.gif"
+                       LogicalName="SkinManager.Market.Tests.Resources.transparent-animation.gif" />
   </ItemGroup>
 </Project>

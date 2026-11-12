@@ -195,7 +195,7 @@ public partial class MainWindow
 
         if (!ReferenceEquals(SkinList.SelectedItem, selected))
         {
-            SkinList.SelectedItem = selected;
+            SetSkinSelectionSilently(selected);
         }
 
         if (WindowMotion.AnimationsEnabled)

@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="..\fixtures\images\transparent-animation.gif"
+             Link="fixtures\images\transparent-animation.gif"
+             CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\..\src\SkinManager.Core\SkinManager.Core.csproj" />
     <ProjectReference Include="..\..\src\SkinManager.Rendering\SkinManager.Rendering.csproj" />
     <Content Include="..\fixtures\skins\Ayanami\**\*"

@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -34,7 +35,11 @@ internal static class Beta2UiChecks
         AppThemeService.SetMode(AppThemeMode.Night);
         try
         {
+            StartupPreferencesChecks.RunServiceChecks(testRoot);
             VerifyPackagedFontGlyphs();
+            await VerifyInitialSkinAndSearchApplyPersistenceAsync(testRoot);
+            await VerifyMissingAutostartSkinAsync(testRoot);
+            await VerifyAutostartAppliesSavedSkinAsync(testRoot);
             await VerifyDirectCardReorderingAsync(testRoot);
             await VerifyThemeAndEntrySurfacesAsync(testRoot);
             await VerifyWeakConnectionSurvivesRefreshAsync(testRoot);
@@ -88,6 +93,291 @@ internal static class Beta2UiChecks
                                 glyphTypeface.FontUri?.ToString().Contains(";component/Fonts/", StringComparison.OrdinalIgnoreCase) == true)
         .Cast<GlyphTypeface>()
         .ToArray();
+
+    private static async Task VerifyInitialSkinAndSearchApplyPersistenceAsync(string testRoot)
+    {
+        var ayanami = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami"));
+        var saya = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya"));
+        var basePackage = App.ReadEmbeddedBasePackage();
+        var oneSkinRoot = Path.Combine(testRoot, "first-skin-selection");
+        var oneSkinStore = CreateStore(Path.Combine(oneSkinRoot, "skins"), ayanami);
+        var oneSkinRun = new FakeStartupRunRegistration();
+        var oneSkinStartup = new StartupPreferencesService(
+            Path.Combine(oneSkinRoot, "preferences", "startup-preferences.json"), oneSkinRun);
+        var oneSkinWindow = CreateMainWindow(
+            oneSkinStore,
+            basePackage,
+            Path.Combine(oneSkinRoot, "preview-profile"),
+            readRuntimeStatusOnLoad: false,
+            startupPreferencesService: oneSkinStartup);
+        oneSkinWindow.Show();
+        try
+        {
+            await WaitForMainWindowAsync(oneSkinWindow, "首次手动启动单皮肤库预览");
+            Require(oneSkinStartup.Read().LastSelectedSkinId == ayanami.Id,
+                "首次手动启动时默认选中的单款已保存皮肤会记录为上次选择");
+        }
+        finally
+        {
+            if (oneSkinWindow.IsVisible)
+            {
+                oneSkinWindow.Close();
+            }
+        }
+
+        var searchRoot = Path.Combine(testRoot, "search-apply-selection");
+        var searchStore = CreateStore(Path.Combine(searchRoot, "skins"), ayanami, saya);
+        var searchRun = new FakeStartupRunRegistration();
+        var searchStartup = new StartupPreferencesService(
+            Path.Combine(searchRoot, "preferences", "startup-preferences.json"), searchRun);
+        var debugIdentity = new CodexProcessIdentity(
+            45_923,
+            new DateTimeOffset(2026, 11, 12, 0, 0, 0, TimeSpan.Zero),
+            @"C:\Fixtures\SkinManagerFakeCodex.exe");
+        var debugInstance = new CodexInstance(debugIdentity, "Fake debug Codex", 0, 9335, @"C:\Fixtures\Profile")
+        {
+            Kind = CodexInstanceKind.Debug,
+            CanConnect = true,
+            DebugConnectionState = CodexDebugConnectionState.Ready,
+            DebugEndpoint = "http://127.0.0.1:9335/"
+        };
+        var instances = new FixtureCodexInstanceService([debugInstance]);
+        var searchWindow = CreateMainWindow(
+            searchStore,
+            basePackage,
+            Path.Combine(searchRoot, "preview-profile"),
+            readRuntimeStatusOnLoad: false,
+            codexInstanceService: instances,
+            startupPreferencesService: searchStartup);
+        var launchCalls = 0;
+        var applyCalls = 0;
+        string? appliedSkinId = null;
+        searchWindow.SetRuntimeApplyWorkflowForTesting(new RuntimeApplyWorkflow(
+            (_, _) =>
+            {
+                Interlocked.Increment(ref launchCalls);
+                return Task.FromResult(new RuntimeStatus(
+                    RuntimeStatusState.Connecting,
+                    null,
+                    "http://127.0.0.1:9335",
+                    "Fake launch only.",
+                    true));
+            },
+            (request, _) =>
+            {
+                Interlocked.Increment(ref applyCalls);
+                appliedSkinId = request.SkinId;
+                return Task.FromResult(new RuntimeStatus(
+                    RuntimeStatusState.Connected,
+                    request.SkinId,
+                    request.Endpoint,
+                    "Fake skin applied.",
+                    true,
+                    appliedTargetCount: 1,
+                    connectedInstance: debugIdentity));
+            },
+            instances,
+            readinessTimeout: TimeSpan.FromMilliseconds(100),
+            pollInterval: TimeSpan.FromMilliseconds(5)));
+        searchWindow.SetCompatibilityConfiguratorForTesting((request, _) => Task.FromResult(
+            new RuntimeCompatibilityResult(
+                RuntimeCompatibilityState.Disabled,
+                request.Endpoint,
+                "Fake compatibility result.",
+                true,
+                request.ExpectedInstance)));
+
+        searchWindow.Show();
+        try
+        {
+            await WaitForMainWindowAsync(searchWindow, "搜索选择测试预览");
+            var search = Find<TextBox>(searchWindow, "SearchBox");
+            search.Text = "saya";
+            await WaitUntilAsync(
+                () => Find<ListBox>(searchWindow, "SkinList").SelectedItem is { } item && ReadSkinId(item) == saya.Id,
+                "搜索筛选自动选择 Saya");
+            Require(searchStartup.Read().LastSelectedSkinId == ayanami.Id,
+                "搜索结果的自动选中不会覆盖此前记录的上次皮肤");
+
+            Find<Button>(searchWindow, "ApplyRuntimeButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => applyCalls == 1 && !ReadRuntimeOperationInProgress(searchWindow),
+                "通过假调试实例完成 Saya 应用工作流");
+            Require(appliedSkinId == saya.Id && launchCalls == 0 &&
+                    searchStartup.Read().LastSelectedSkinId == saya.Id,
+                "直接应用搜索自动选中的皮肤会持久化 Saya ID，且测试没有启动真实 Codex");
+        }
+        finally
+        {
+            if (searchWindow.IsVisible)
+            {
+                searchWindow.Close();
+            }
+        }
+    }
+
+    private static async Task VerifyMissingAutostartSkinAsync(string testRoot)
+    {
+        var ayanami = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami"));
+        var root = Path.Combine(testRoot, "missing-autostart-skin");
+        var store = CreateStore(Path.Combine(root, "skins"), ayanami);
+        var runRegistration = new FakeStartupRunRegistration();
+        runRegistration.SetEnabled(true);
+        var startupPreferences = new StartupPreferencesService(
+            Path.Combine(root, "preferences", "startup-preferences.json"), runRegistration);
+        startupPreferences.SetApplyLastSelectedSkin(true);
+        startupPreferences.RecordLastSelectedSkin("deleted-skin-id");
+        var window = CreateMainWindow(
+            store,
+            App.ReadEmbeddedBasePackage(),
+            Path.Combine(root, "preview-profile"),
+            readRuntimeStatusOnLoad: true,
+            codexInstanceService: new FixtureCodexInstanceService([]),
+            runtimeStatusReader: _ => Task.FromResult(new RuntimeStatus(
+                RuntimeStatusState.Stopped, null, null, "Fake status refresh.", false)),
+            startupPreferencesService: startupPreferences,
+            launchedByAutostart: true);
+        var launchCalls = 0;
+        var applyCalls = 0;
+        window.SetRuntimeApplyWorkflowForTesting(new RuntimeApplyWorkflow(
+            (_, _) =>
+            {
+                Interlocked.Increment(ref launchCalls);
+                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null, null, "Fake.", true));
+            },
+            (_, _) =>
+            {
+                Interlocked.Increment(ref applyCalls);
+                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connected, null, null, "Fake.", true));
+            },
+            new FixtureCodexInstanceService([]),
+            readinessTimeout: TimeSpan.FromMilliseconds(20),
+            pollInterval: TimeSpan.FromMilliseconds(5)));
+        window.Show();
+        try
+        {
+            await WaitUntilAsync(
+                () => window.IsLoaded &&
+                      Find<TextBlock>(window, "RuntimeStatusMessage").Text.Contains("deleted-skin-id", StringComparison.Ordinal),
+                "缺失皮肤提示完成首轮连接状态刷新");
+            Require(Find<ListBox>(window, "SkinList").SelectedItem is null &&
+                    startupPreferences.Read().LastSelectedSkinId == "deleted-skin-id" &&
+                    launchCalls == 0 && applyCalls == 0,
+                "缺失的上次皮肤保持未选中，不回退到首项、不启动或应用 Codex");
+
+            var refresh = typeof(MainWindow).GetMethod("RefreshRuntimeStatusAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("找不到运行状态刷新方法。");
+            await (Task)(refresh.Invoke(window, null)
+                ?? throw new InvalidOperationException("运行状态刷新没有返回 Task。"));
+            Require(Find<TextBlock>(window, "RuntimeStatusMessage").Text.Contains("deleted-skin-id", StringComparison.Ordinal),
+                "后续运行状态刷新保留缺失皮肤原因提示");
+        }
+        finally
+        {
+            if (window.IsVisible)
+            {
+                window.Close();
+            }
+        }
+    }
+
+    private static async Task VerifyAutostartAppliesSavedSkinAsync(string testRoot)
+    {
+        var ayanami = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami"));
+        var saya = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya"));
+        var root = Path.Combine(testRoot, "autostart-valid-skin");
+        var store = CreateStore(Path.Combine(root, "skins"), ayanami, saya);
+        var runRegistration = new FakeStartupRunRegistration();
+        runRegistration.SetEnabled(true);
+        var startupPreferences = new StartupPreferencesService(
+            Path.Combine(root, "preferences", "startup-preferences.json"), runRegistration);
+        startupPreferences.SetApplyLastSelectedSkin(true);
+        startupPreferences.RecordLastSelectedSkin(saya.Id);
+        var identity = new CodexProcessIdentity(
+            46_021,
+            new DateTimeOffset(2026, 11, 12, 1, 0, 0, TimeSpan.Zero),
+            @"C:\Fixtures\AutostartFakeCodex.exe");
+        var debugInstance = new CodexInstance(identity, "Fake debug Codex", 0, 9335, @"C:\Fixtures\AutostartProfile")
+        {
+            Kind = CodexInstanceKind.Debug,
+            CanConnect = true,
+            DebugConnectionState = CodexDebugConnectionState.Ready,
+            DebugEndpoint = "http://127.0.0.1:9335/"
+        };
+        var instances = new FixtureCodexInstanceService([debugInstance]);
+        var statusReads = 0;
+        var window = CreateMainWindow(
+            store,
+            App.ReadEmbeddedBasePackage(),
+            Path.Combine(root, "preview-profile"),
+            readRuntimeStatusOnLoad: true,
+            codexInstanceService: instances,
+            runtimeStatusReader: _ =>
+            {
+                Interlocked.Increment(ref statusReads);
+                return Task.FromResult(new RuntimeStatus(
+                    RuntimeStatusState.Stopped, null, null, "Fake initial status.", false));
+            },
+            startupPreferencesService: startupPreferences,
+            launchedByAutostart: true);
+        var launchCalls = 0;
+        var applyCalls = 0;
+        string? appliedSkinId = null;
+        window.SetRuntimeApplyWorkflowForTesting(new RuntimeApplyWorkflow(
+            (_, _) =>
+            {
+                Interlocked.Increment(ref launchCalls);
+                return Task.FromResult(new RuntimeStatus(
+                    RuntimeStatusState.Connecting, null, null, "Fake debug launch.", true));
+            },
+            (request, _) =>
+            {
+                Interlocked.Increment(ref applyCalls);
+                appliedSkinId = request.SkinId;
+                return Task.FromResult(new RuntimeStatus(
+                    RuntimeStatusState.Connected,
+                    request.SkinId,
+                    request.Endpoint,
+                    "Fake skin applied.",
+                    true,
+                    appliedTargetCount: 1,
+                    connectedInstance: identity));
+            },
+            instances,
+            readinessTimeout: TimeSpan.FromMilliseconds(100),
+            pollInterval: TimeSpan.FromMilliseconds(5)));
+        window.SetCompatibilityConfiguratorForTesting((request, _) => Task.FromResult(
+            new RuntimeCompatibilityResult(
+                RuntimeCompatibilityState.Disabled,
+                request.Endpoint,
+                "Fake compatibility result.",
+                true,
+                request.ExpectedInstance)));
+        window.Show();
+        try
+        {
+            await WaitForMainWindowAsync(window, "开机恢复有效皮肤预览");
+            await WaitUntilAsync(() => applyCalls == 1 && !ReadRuntimeOperationInProgress(window),
+                "初始连接状态刷新后执行一次开机应用");
+            var refresh = typeof(MainWindow).GetMethod("RefreshRuntimeStatusAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("找不到运行状态刷新方法。");
+            await (Task)(refresh.Invoke(window, null)
+                ?? throw new InvalidOperationException("运行状态刷新没有返回 Task。"));
+            Require(statusReads >= 2 && applyCalls == 1 && appliedSkinId == saya.Id && launchCalls == 0 &&
+                    Find<ListBox>(window, "SkinList").SelectedItem is { } selected && ReadSkinId(selected) == saya.Id,
+                "显式 --autostart 恢复并只应用已保存的 Saya ID，后续状态刷新不会重复应用或启动真实 Codex");
+        }
+        finally
+        {
+            if (window.IsVisible)
+            {
+                window.Close();
+            }
+        }
+    }
+
+    private static bool ReadRuntimeOperationInProgress(MainWindow window) =>
+        typeof(MainWindow).GetField("_runtimeOperationInProgress", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(window) is true;
 
     private static async Task VerifyDirectCardReorderingAsync(string testRoot)
     {
@@ -180,13 +470,36 @@ internal static class Beta2UiChecks
         var managerRoot = Path.Combine(testRoot, "theme-screenshots");
         var store = CreateStore(Path.Combine(managerRoot, "skins"), ayanami, saya);
         var fakeInstances = new FixtureCodexInstanceService([]);
+        var startupRun = new FakeStartupRunRegistration();
+        var startupPreferences = new StartupPreferencesService(
+            Path.Combine(managerRoot, "preferences", "startup-preferences.json"), startupRun);
+        startupPreferences.SetManagerStartsAtWindowsSignIn(true);
+        startupPreferences.SetApplyLastSelectedSkin(true);
+        startupPreferences.RecordLastSelectedSkin(saya.Id);
         var window = CreateMainWindow(
             store,
             basePackage,
             Path.Combine(managerRoot, "preview-profile"),
             readRuntimeStatusOnLoad: false,
             codexInstanceService: fakeInstances,
-            skinMarketClientFactory: MarketUiChecks.CreateReviewClientFactory(ayanamiBytes));
+            skinMarketClientFactory: MarketUiChecks.CreateReviewClientFactory(ayanamiBytes),
+            startupPreferencesService: startupPreferences);
+        var manualLaunchCalls = 0;
+        var manualApplyCalls = 0;
+        window.SetRuntimeApplyWorkflowForTesting(new RuntimeApplyWorkflow(
+            (_, _) =>
+            {
+                Interlocked.Increment(ref manualLaunchCalls);
+                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null, null, "Fake only.", true));
+            },
+            (_, _) =>
+            {
+                Interlocked.Increment(ref manualApplyCalls);
+                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connected, null, null, "Fake only.", true));
+            },
+            fakeInstances,
+            readinessTimeout: TimeSpan.FromMilliseconds(20),
+            pollInterval: TimeSpan.FromMilliseconds(5)));
 
         SettingsWindow? settings = null;
         SkinMarketWindow? market = null;
@@ -199,6 +512,9 @@ internal static class Beta2UiChecks
         {
             window.Show();
             await WaitForMainWindowAsync(window, "主题检查主窗口预览加载");
+            Require(ReadSkinId(Find<ListBox>(window, "SkinList").SelectedItem!) == saya.Id &&
+                    manualLaunchCalls == 0 && manualApplyCalls == 0,
+                "即使两项开机设置都开启，手动启动也只恢复上次选择，不启动或应用 Codex");
             var browser = Find<WebView2>(window, "PreviewBrowser");
             await SaveManagerScreenshotAsync(window, browser,
                 Path.Combine(screenshotDirectory, "主窗口-夜间-1240x840.png"));
@@ -207,8 +523,22 @@ internal static class Beta2UiChecks
             settings = await WaitForWindowAsync<SettingsWindow>("打开设置窗口");
             settings.Width = 760;
             settings.Height = 570;
+            Require(Find<CheckBox>(settings, "StartManagerAtLoginCheckBox").IsChecked == true &&
+                    Find<CheckBox>(settings, "ApplyLastSelectedSkinCheckBox").IsChecked == true &&
+                    Find<CheckBox>(settings, "ApplyLastSelectedSkinCheckBox").IsEnabled,
+                "开机组显示已启用状态，第二项仅在管理器自启开启时可选");
             await SaveWindowScreenshotAsync(settings,
                 Path.Combine(screenshotDirectory, "设置-夜间-760x570.png"));
+
+            var managerStartupCheckBox = Find<CheckBox>(settings, "StartManagerAtLoginCheckBox");
+            var applyStartupCheckBox = Find<CheckBox>(settings, "ApplyLastSelectedSkinCheckBox");
+            managerStartupCheckBox.IsChecked = false;
+            Require(!startupRun.IsEnabled() && applyStartupCheckBox.IsChecked == true &&
+                    !applyStartupCheckBox.IsEnabled && !startupPreferences.Read().ShouldApplyLastSelectedSkinOnAutostart,
+                "关闭管理器自启后第二项保留原偏好但禁用且不生效");
+            managerStartupCheckBox.IsChecked = true;
+            Require(startupRun.IsEnabled() && applyStartupCheckBox.IsChecked == true && applyStartupCheckBox.IsEnabled,
+                "重新开启管理器自启后恢复第二项生效条件");
 
             Find<Button>(window, "MarketEntryButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             market = await WaitForWindowAsync<SkinMarketWindow>("打开本地 fixture 市场窗口");
@@ -225,26 +555,37 @@ internal static class Beta2UiChecks
             support = await WaitForWindowAsync<SupportAuthorWindow>("打开支持作者面板");
             support.UpdateLayout();
             var supportText = FindVisualChildren<TextBlock>(support).Select(block => block.Text).ToArray();
+            var githubStarText = Find<TextBlock>(support, "GithubStarText");
             var freeDistributionText = Find<TextBlock>(support, "FreeDistributionText");
             var supportDirectionText = Find<TextBlock>(support, "SupportDirectionText");
             Require(supportText.Contains("作者：Ancimen") &&
+                    supportText.Contains("感谢您使用SkinManager！若您愿意，希望您为Github仓库Star~💖") &&
                     supportText.Contains("本软件为免费无偿分发软件，若您为付费购买请举报售卖方并联系作者") &&
                     supportText.Contains("若您愿意支持作者，您可以点击“支持作者”前往赞助页") &&
+                    githubStarText.TextWrapping == TextWrapping.Wrap &&
                     freeDistributionText.TextWrapping == TextWrapping.Wrap &&
                     supportDirectionText.TextWrapping == TextWrapping.Wrap &&
+                    githubStarText.ActualWidth > 0 && githubStarText.ActualHeight > 0 &&
                     freeDistributionText.ActualWidth > 0 && freeDistributionText.ActualHeight > 0 &&
                     supportDirectionText.ActualWidth > 0 && supportDirectionText.ActualHeight > 0,
-                "支持作者面板保留标题与作者，并显示两段可换行的完整说明");
+                "支持作者面板保留原两段说明，并显示新增 GitHub 邀请与完整换行文案");
             var supportActions = Find<StackPanel>(support, "ActionButtons").Children.OfType<Button>().ToArray();
             Require(supportActions.Select(button => button.Name)
-                        .SequenceEqual(["SupportAuthorLinkButton", "CloseButton"], StringComparer.Ordinal) &&
-                    supportActions[1].IsDefault,
-                "支持作者按钮位于关闭按钮左侧，关闭按钮仍为默认操作");
+                        .SequenceEqual(["SupportAuthorLinkButton", "GitHubLinkButton"], StringComparer.Ordinal) &&
+                    !supportActions[1].IsDefault && support.WindowStyle != WindowStyle.None &&
+                    AutomationProperties.GetName(supportActions[1]) == "打开 GitHub 仓库" &&
+                    FindVisualChildren<System.Windows.Shapes.Path>(supportActions[1]).Any(),
+                "支持作者按钮保留且 GitHub 入口使用五角星矢量图标，不设默认打开动作并保留标题栏关闭按钮");
             Uri? requestedSponsorUri = null;
             support.ExternalUriLauncher = uri => requestedSponsorUri = uri;
             supportActions[0].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(requestedSponsorUri?.AbsoluteUri == "https://blog.ancimen.top/?page_id=170",
                 "点击支持作者只向系统启动器请求打开指定赞助页");
+            Uri? requestedGitHubUri = null;
+            support.ExternalUriLauncher = uri => requestedGitHubUri = uri;
+            supportActions[1].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(requestedGitHubUri?.AbsoluteUri == "https://github.com/Nortea575/SkinManager",
+                "点击 GitHub 按钮只向可替换的外部启动器请求仓库地址");
             await SaveWindowScreenshotAsync(support,
                 Path.Combine(screenshotDirectory, "支持作者-夜间.png"));
 
@@ -488,7 +829,9 @@ internal static class Beta2UiChecks
         bool readRuntimeStatusOnLoad,
         ICodexInstanceService? codexInstanceService = null,
         Func<CancellationToken, Task<RuntimeStatus>>? runtimeStatusReader = null,
-        Func<SkinMarketClient>? skinMarketClientFactory = null) =>
+        Func<SkinMarketClient>? skinMarketClientFactory = null,
+        IStartupPreferencesService? startupPreferencesService = null,
+        bool launchedByAutostart = false) =>
         new(
             store,
             basePackage,
@@ -498,7 +841,9 @@ internal static class Beta2UiChecks
             runtimeStatusReader: runtimeStatusReader,
             skinMarketClientFactory: skinMarketClientFactory,
             codexConfigReadabilityService: new FixtureCodexConfigReadabilityService(
-                Path.Combine(profile, "codex-fixture", "config.toml")))
+                Path.Combine(profile, "codex-fixture", "config.toml")),
+            startupPreferencesService: startupPreferencesService,
+            launchedByAutostart: launchedByAutostart)
         {
             Width = 1240,
             Height = 840,

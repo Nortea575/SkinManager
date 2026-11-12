@@ -8,6 +8,7 @@ using SkinManager.Rendering;
 var ayanamiDirectory = Path.Combine(AppContext.BaseDirectory, "skin", "ayanami");
 var package = SkinPackageReader.ReadFolder(ayanamiDirectory);
 var runtimeScript = SkinRuntimeCompiler.BuildRuntimeScript(package);
+GifRuntimeChecks.Run();
 var sayaPackage = SkinPackageReader.ReadFolder(Path.Combine(AppContext.BaseDirectory, "skin", "saya"));
 var sayaRuntimeScript = SkinRuntimeCompiler.BuildRuntimeScript(sayaPackage);
 var nativeCaptionLog = new List<string>
