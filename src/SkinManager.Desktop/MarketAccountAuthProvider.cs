@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using SkinManager.Core;
 using SkinManager.Market;
 
 namespace SkinManager.Desktop;
@@ -52,7 +53,7 @@ internal sealed class WebView2MarketAccountAuthProvider : IMarketAccountAuthProv
         ThrowIfDisposed();
         if (!_cookieBridge.Dispatcher.CheckAccess())
         {
-            throw new InvalidOperationException("账号 WebView2 只能在窗口 UI 线程初始化。");
+            throw new InvalidOperationException(AppLocalization.Get("账号 WebView2 只能在窗口 UI 线程初始化。"));
         }
 
         _initializeTask ??= InitializeCoreAsync();
@@ -64,7 +65,7 @@ internal sealed class WebView2MarketAccountAuthProvider : IMarketAccountAuthProv
         await InitializeAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var core = _cookieBridge.CoreWebView2
-            ?? throw new InvalidOperationException("账号 Cookie 桥接尚未初始化。");
+            ?? throw new InvalidOperationException(AppLocalization.Get("账号 Cookie 桥接尚未初始化。"));
         var cookies = await core.CookieManager.GetCookiesAsync(SiteOrigin.AbsoluteUri);
         cancellationToken.ThrowIfCancellationRequested();
         return BuildCookieHeader(cookies.Select(cookie => (cookie.Name, cookie.Value)));
@@ -77,16 +78,16 @@ internal sealed class WebView2MarketAccountAuthProvider : IMarketAccountAuthProv
         await InitializeAsync(cancellationToken);
         if (!MarketAccountNavigationPolicy.IsAllowed(startUri, SiteOrigin))
         {
-            throw new InvalidOperationException("账号窗口只允许打开本站登录或注册页面。");
+            throw new InvalidOperationException(AppLocalization.Get("账号窗口只允许打开本站登录或注册页面。"));
         }
 
         if (!owner.Dispatcher.CheckAccess())
         {
-            throw new InvalidOperationException("账号窗口只能在窗口 UI 线程打开。");
+            throw new InvalidOperationException(AppLocalization.Get("账号窗口只能在窗口 UI 线程打开。"));
         }
 
         var window = new MarketAccountWindow(
-            _environment ?? throw new InvalidOperationException("账号 WebView2 环境尚未初始化。"),
+            _environment ?? throw new InvalidOperationException(AppLocalization.Get("账号 WebView2 环境尚未初始化。")),
             startUri)
         {
             Owner = owner
@@ -189,7 +190,7 @@ internal sealed class WebView2MarketAccountAuthProvider : IMarketAccountAuthProv
             userDataFolder: _userDataFolder);
         await _cookieBridge.EnsureCoreWebView2Async(_environment);
         var core = _cookieBridge.CoreWebView2
-            ?? throw new InvalidOperationException("账号 Cookie 桥接 WebView2 初始化失败。");
+            ?? throw new InvalidOperationException(AppLocalization.Get("账号 Cookie 桥接 WebView2 初始化失败。"));
         core.Settings.AreDefaultContextMenusEnabled = false;
         core.Settings.AreDevToolsEnabled = false;
         if (string.IsNullOrWhiteSpace(core.Source) || core.Source == "about:blank")

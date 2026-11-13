@@ -1,11 +1,14 @@
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using SkinManager.Core;
 using SkinManager.Desktop;
 using SkinManager.Runtime;
 
@@ -15,254 +18,85 @@ internal static class CompatibilityWindowTests
 {
     public static async Task RunAsync()
     {
-        await VerifiesSavedPreferenceAndPendingTargetAsync();
-        await VerifiesStorageFailuresDoNotClaimEnabledAsync();
-        await VerifiesMagpieActionsAreIndependentAsync();
-        await VerifiesCompactLayoutAndFailureFeedbackAsync();
-        await VerifiesCloseAndEscapeAsync();
-    }
-
-    private static async Task VerifiesSavedPreferenceAndPendingTargetAsync()
-    {
-        var writes = 0;
-        var configureCalls = 0;
-        var current = new RuntimeCompatibilityOptions(true);
-        var window = CreateWindow(
-            options: current,
-            lastRuntimeResult: new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Applied,
-                "http://127.0.0.1:9335",
-                "Applied",
-                true),
-            saveAndConfigure: (options, _) =>
-            {
-                writes++;
-                current = options;
-                configureCalls++;
-                return Task.FromResult<RuntimeCompatibilityResult?>(new RuntimeCompatibilityResult(
-                    RuntimeCompatibilityState.Disabled,
-                    "http://127.0.0.1:9335",
-                    "宿主确认固定语言已关闭。",
-                    true));
-            });
-        window.Width = 760;
-        window.Height = 570;
-        window.Show();
+        var previousLanguagePreference = AppLocalization.Preference;
+        var settingsPath = Path.Combine(Program.FindTestOutputDirectory(), "settings-language", "language.json");
         try
         {
-            await WaitUntilAsync(() => window.IsLoaded, "兼容设置页完成加载");
-            await WaitUntilAsync(() => window.Opacity >= 0.999, "默认兼容设置页淡入完成");
-            var toggle = Find<CheckBox>(window, "ForceSimplifiedChineseCheckBox");
-            var saved = Find<TextBlock>(window, "LanguageSavedStatusText");
-            var runtime = Find<TextBlock>(window, "LanguageRuntimeStatusText");
-            Require(!Find<Expander>(window, "MagpieSettingsExpander").IsExpanded &&
-                    Find<Button>(window, "LaunchDebugCodexButton").IsVisible &&
-                    Find<Button>(window, "CloseButton").IsVisible,
-                "不展开Magpie条目也能找到调试版启动入口与固定关闭按钮");
-            Require(Find<TextBlock>(window, "CodexConfigStatusText").Text == "config.toml 可读取" &&
-                    Find<TextBlock>(window, "CodexConfigPathText").Text.Contains("SkinManager-fixture", StringComparison.Ordinal),
-                "Codex 配置可读状态单独展示，测试使用隔离的 fixture 路径");
-            Require(toggle.IsChecked == true && saved.Text.Contains("已保存", StringComparison.Ordinal) &&
-                    runtime.Text.StartsWith("已生效", StringComparison.Ordinal) && writes == 0 && configureCalls == 0,
-                "重新打开时读取保存值与最近结果，初始化不保存、不连接");
-            await SaveScreenshotAsync(window, Path.Combine(Program.FindTestOutputDirectory(), "兼容设置-默认条目.png"));
+            AppLocalization.Initialize(settingsPath);
+            AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
 
-            Toggle(toggle);
-            await WaitUntilAsync(() => writes == 1 && toggle.IsEnabled, "关闭语言开关后保存");
-            Require(current == new RuntimeCompatibilityOptions(false) &&
-                    saved.Text.Contains("已保存：关闭", StringComparison.Ordinal) &&
-                    runtime.Text.StartsWith("已关闭：宿主确认", StringComparison.Ordinal) &&
-                    !runtime.Text.Contains("原始语言", StringComparison.Ordinal) && configureCalls == 1,
-                "关闭开关后显示后端真实状态，不推断用户原始语言");
+            await VerifiesTabsAndImmediateLanguageSwitchAsync(settingsPath);
+            await VerifiesMagpieActionsAreIndependentAsync();
+            await VerifiesMinimumEnglishLayoutAsync();
+            await VerifiesCloseAndEscapeAsync();
         }
         finally
         {
-            window.Close();
-        }
-
-        var reopenedWindow = CreateWindow(options: current);
-        reopenedWindow.Show();
-        try
-        {
-            await WaitUntilAsync(() => reopenedWindow.IsLoaded, "重新打开兼容设置页");
-            Require(Find<CheckBox>(reopenedWindow, "ForceSimplifiedChineseCheckBox").IsChecked == false &&
-                    Find<TextBlock>(reopenedWindow, "LanguageSavedStatusText").Text.Contains("已保存：关闭", StringComparison.Ordinal),
-                "重新打开后保留上一次保存的开关值");
-        }
-        finally
-        {
-            reopenedWindow.Close();
-        }
-
-        var pendingWindow = CreateWindow(
-            saveAndConfigure: (options, _) => Task.FromResult<RuntimeCompatibilityResult?>(null));
-        pendingWindow.Show();
-        try
-        {
-            await WaitUntilAsync(() => pendingWindow.IsLoaded, "未连接兼容页完成加载");
-            var toggle = Find<CheckBox>(pendingWindow, "ForceSimplifiedChineseCheckBox");
-            Toggle(toggle);
-            await WaitUntilAsync(() =>
-                Find<TextBlock>(pendingWindow, "LanguageSavedStatusText").Text.Contains("已保存", StringComparison.Ordinal) &&
-                Find<TextBlock>(pendingWindow, "LanguageRuntimeStatusText").Text.StartsWith("待连接", StringComparison.Ordinal),
-                "无目标时显示待连接");
-            Require(toggle.IsChecked == true, "无连接目标时仍可保存语言偏好，且不显示已生效");
-            Toggle(toggle);
-            await WaitUntilAsync(() =>
-                Find<TextBlock>(pendingWindow, "LanguageSavedStatusText").Text.Contains("已保存：关闭", StringComparison.Ordinal),
-                "关闭二态开关");
-            Require(!toggle.IsThreeState && toggle.IsChecked == false,
-                "用户切换开关只在保存的开与关之间切换");
-        }
-        finally
-        {
-            pendingWindow.Close();
+            AppLocalization.SetLanguage(previousLanguagePreference);
         }
     }
 
-    private static async Task VerifiesStorageFailuresDoNotClaimEnabledAsync()
+    private static async Task VerifiesTabsAndImmediateLanguageSwitchAsync(string settingsPath)
     {
-        var saves = 0;
-        var window = CreateWindow(
-            saveAndConfigure: (_, _) =>
-            {
-                saves++;
-                return Task.FromException<RuntimeCompatibilityResult?>(new IOException("模拟设置存储失败"));
-            });
-        window.Show();
-        try
-        {
-            await WaitUntilAsync(() => window.IsLoaded, "设置失败用例完成加载");
-            var toggle = Find<CheckBox>(window, "ForceSimplifiedChineseCheckBox");
-            var saved = Find<TextBlock>(window, "LanguageSavedStatusText");
-            Toggle(toggle);
-            await WaitUntilAsync(() => saves == 1 && toggle.IsEnabled, "设置写入错误反馈");
-            Require(toggle.IsChecked == false && saved.Text.Contains("未能保存", StringComparison.Ordinal) &&
-                    !Find<TextBlock>(window, "LanguageRuntimeStatusText").Text.StartsWith("已生效", StringComparison.Ordinal),
-                "存储失败会恢复上次开关值，不显示已保存或已生效");
-        }
-        finally
-        {
-            window.Close();
-        }
-
-        var loadAttempts = 0;
-        var reloadedWindow = CreateWindow(
-            settingsLoaded: false,
-            settingsLoadError: "模拟首次读取失败",
-            reloadSettings: () =>
-            {
-                loadAttempts++;
-                if (loadAttempts == 1)
-                {
-                    throw new IOException("模拟重试读取失败");
-                }
-
-                return new RuntimeCompatibilityOptions(true);
-            });
-        reloadedWindow.Show();
-        try
-        {
-            await WaitUntilAsync(() => reloadedWindow.IsLoaded, "设置读取失败用例完成加载");
-            var toggle = Find<CheckBox>(reloadedWindow, "ForceSimplifiedChineseCheckBox");
-            var retry = Find<Button>(reloadedWindow, "RetrySettingsLoadButton");
-            Require(toggle.IsChecked is null && !toggle.IsEnabled && retry.IsVisible,
-                "读取失败时开关显示未知并禁用，不暗示已关闭");
-            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Require(!toggle.IsEnabled && loadAttempts == 1,
-                "读取重试失败仍保留未知状态");
-            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Require(toggle.IsChecked == true && toggle.IsEnabled && loadAttempts == 2,
-                "重新读取成功后恢复真实保存值");
-        }
-        finally
-        {
-            reloadedWindow.Close();
-        }
-    }
-
-    private static async Task VerifiesMagpieActionsAreIndependentAsync()
-    {
-        var options = new RuntimeCompatibilityOptions(false);
-        var optionWrites = 0;
-        var configureCalls = 0;
-        var inspectCalls = 0;
         var configInspection = new CountingCodexConfigReadabilityService();
-        var magpieLaunchCalls = 0;
-        var debugLaunchCalls = 0;
-        var fakeResult = new MagpieCompatibilityResult(
-            true,
-            false,
-            @"C:\Example\Magpie.exe",
-            "0.1.3237",
-            MagpieCompatibilitySupport.Unsupported,
-            true,
-            "Magpie 自身重开 Codex 不附带调试参数。",
-            "网关模型配置独立于皮肤启动参数。");
+        var magpieInspections = 0;
         var window = CreateWindow(
-            saveAndConfigure: (value, _) =>
-            {
-                optionWrites++;
-                options = value;
-                configureCalls++;
-                return Task.FromResult<RuntimeCompatibilityResult?>(new RuntimeCompatibilityResult(
-                    RuntimeCompatibilityState.Applied,
-                    "http://127.0.0.1:9335",
-                    "已写入",
-                    true));
-            },
-            launchDebugCodex: () =>
-            {
-                debugLaunchCalls++;
-                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null,
-                    "http://127.0.0.1:9335", "fake", true));
-            },
             inspectMagpie: _ =>
             {
-                inspectCalls++;
-                return fakeResult;
-            },
-            launchMagpie: (_, _) =>
-            {
-                magpieLaunchCalls++;
-                return Task.CompletedTask;
+                magpieInspections++;
+                return MakeMagpieResult();
             },
             codexConfigReadabilityService: configInspection);
         window.Show();
         try
         {
-            await WaitUntilAsync(() => window.IsLoaded, "独立设置页完成加载");
-            var toggle = Find<CheckBox>(window, "ForceSimplifiedChineseCheckBox");
-            Toggle(toggle);
-            await WaitUntilAsync(() => optionWrites == 1 && toggle.IsEnabled, "保存语言偏好");
-            Require(inspectCalls == 0 && configInspection.InspectCalls == 1 && magpieLaunchCalls == 0 && options.ForceSimplifiedChinese &&
-                    configureCalls == 1 && Find<TextBlock>(window, "LanguageRuntimeStatusText").Text.StartsWith("已生效", StringComparison.Ordinal),
-                "语言开关只保存并配置语言，不触发 Magpie 检测或启动");
+            await WaitUntilAsync(() => window.IsLoaded, "设置窗口加载");
+            await WaitUntilAsync(() => window.Opacity >= 0.999, "设置窗口淡入完成");
+            var tabs = Find<TabControl>(window, "SettingsTabs");
+            var general = Find<TabItem>(window, "GeneralTab");
+            var appearance = Find<TabItem>(window, "AppearanceTab");
+            var compatibility = Find<TabItem>(window, "CompatibilityTab");
+            Require(general.Header?.ToString() == "常规" && appearance.Header?.ToString() == "外观" &&
+                    compatibility.Header?.ToString() == "兼容性" &&
+                    configInspection.InspectCalls == 1 && magpieInspections == 0,
+                "设置按常规、外观、兼容性横向分类，初始化不展开检测 Magpie");
+            Require(window.FindName("ForceSimplifiedChineseCheckBox") is null &&
+                    window.FindName("LanguageSavedStatusText") is null &&
+                    window.FindName("LanguageRuntimeStatusText") is null &&
+                    window.FindName("LaunchDebugCodexButton") is null,
+                "旧固定中文开关、运行状态与调试版设置入口已移除");
 
-            var expander = Find<Expander>(window, "MagpieSettingsExpander");
-            expander.IsExpanded = true;
-            await WaitUntilAsync(() => inspectCalls == 1 && configInspection.InspectCalls == 2, "展开兼容区域后同步检测配置与 Magpie");
-            Require(Find<TextBlock>(window, "SupportTitle").Text.Contains("启动", StringComparison.Ordinal),
-                "Magpie 区域只显示启动参数状态");
+            var language = Find<ComboBox>(window, "LanguageBox");
+            SelectLanguage(language, AppLanguage.English);
+            await WaitUntilAsync(() => general.Header?.ToString() == "General", "标签即时翻译");
+            Require(appearance.Header?.ToString() == "Appearance" && compatibility.Header?.ToString() == "Compatibility" &&
+                    window.Title == "Settings" && AppLocalization.Preference == AppLanguage.English,
+                "语言切换即时更新标题和全部标签，并写入当前应用偏好");
 
-            Find<Button>(window, "InspectButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => inspectCalls == 2 && configInspection.InspectCalls == 3,
-                "共用重新检测入口同时刷新 config.toml 与 Magpie");
-            Require(Find<TextBlock>(window, "CodexConfigStatusText").Text == "config.toml 可读取",
-                "统一刷新后显示只读 config.toml 状态，不展示配置内容");
+            var preference = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(settingsPath));
+            Require(preference is not null && preference.GetValueOrDefault("Language") == "English",
+                "设置语言写入隔离的测试偏好文件");
 
-            Find<Button>(window, "LaunchMagpieButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => magpieLaunchCalls == 1 && inspectCalls >= 3 && configInspection.InspectCalls == 4,
-                "用户点击后启动 Magpie 并刷新只读检测");
-            Require(optionWrites == 1 && configureCalls == 1 && options.ForceSimplifiedChinese,
-                "Magpie 启动与语言偏好相互独立");
-
-            Find<Button>(window, "LaunchDebugCodexButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => debugLaunchCalls == 1 &&
-                Find<TextBlock>(window, "WindowStatusText").Text.Contains("已请求启动", StringComparison.Ordinal),
-                "调试目标尚未就绪时显示等待状态");
-            Require(optionWrites == 1 && configureCalls == 1,
-                "启动调试版 Codex 不虚称应用语言或皮肤");
+            tabs.SelectedItem = compatibility;
+            await WaitUntilAsync(() => magpieInspections == 1, "首次打开兼容性页后检测 Magpie");
+            var configStatus = Find<TextBlock>(window, "CodexConfigStatusText").Text;
+            var magpieTitle = Find<TextBlock>(window, "SupportTitle").Text;
+            Require(configStatus == "config.toml is readable" &&
+                    magpieTitle == "Verified: startup does not include debug arguments",
+                "兼容页中的 config.toml 与 Magpie 状态按当前语言呈现");
+            var compatibilityBorder = compatibility.Template.FindName("TabBorder", compatibility) as Border;
+            var compatibilityHeader = compatibility.Template.FindName("HeaderPresenter", compatibility) as ContentPresenter;
+            var compatibilityBorderBounds = compatibilityBorder is null
+                ? Rect.Empty
+                : GetBounds(compatibility, compatibilityBorder);
+            Require(compatibilityBorder is not null && compatibilityBorder.CornerRadius.TopRight >= 10 &&
+                    compatibilityBorder.BorderThickness.Right > 0 &&
+                    compatibilityBorderBounds.Right <= compatibility.ActualWidth + 1 &&
+                    compatibilityHeader is not null &&
+                    TextElement.GetFontWeight(compatibilityHeader) == FontWeights.SemiBold &&
+                    Find<TextBlock>(window, "SupportSubtitle").FontWeight == FontWeights.Normal,
+                "选中标签保留完整圆角描边与强调字重，兼容性页副文案保持常规字重");
+            await SaveScreenshotAsync(window, Path.Combine(Program.FindTestOutputDirectory(), "settings-english-tabs.png"));
         }
         finally
         {
@@ -270,115 +104,109 @@ internal static class CompatibilityWindowTests
         }
     }
 
-    private static async Task VerifiesCompactLayoutAndFailureFeedbackAsync()
+    private static async Task VerifiesMagpieActionsAreIndependentAsync()
     {
-        var executablePath = @"C:\Example\" +
-            string.Join(@"\", Enumerable.Repeat("MagpieFolder_" + new string('x', 34), 12)) +
-            @"\Magpie.exe";
-        var longEvidence = string.Join(" ", Enumerable.Repeat(
-            "示例检测信息用于检查窄窗口中的换行、滚动和按钮可用性。", 32));
-        var result = new MagpieCompatibilityResult(
-            IsInstalled: true,
-            IsRunning: false,
-            ExecutablePath: executablePath,
-            ProductVersion: "0.1.3237",
-            Support: MagpieCompatibilitySupport.Unsupported,
-            CanLaunch: true,
-            Evidence: longEvidence,
-            Message: "已核实 Magpie 自行重新打开 Codex 时不附带远程调试参数。网关模型配置与皮肤启动参数相互独立。");
         var inspectCalls = 0;
-        var magpieLaunchCalls = 0;
-        var debugLaunchCalls = 0;
-        var launchError = "模拟调试版启动失败：" + string.Join(" ", Enumerable.Repeat("请检查实例状态与端口。", 20));
+        var launchCalls = 0;
+        var configService = new CountingCodexConfigReadabilityService();
         var window = CreateWindow(
-            launchDebugCodex: () =>
-            {
-                debugLaunchCalls++;
-                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Error, null, null, launchError, false));
-            },
             inspectMagpie: _ =>
             {
                 inspectCalls++;
-                return result;
+                return MakeMagpieResult();
             },
             launchMagpie: (_, _) =>
             {
-                magpieLaunchCalls++;
+                launchCalls++;
                 return Task.CompletedTask;
-            });
-
-        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        window.Closed += (_, _) => closed.TrySetResult();
+            },
+            codexConfigReadabilityService: configService);
         window.Show();
         try
         {
-            await WaitUntilAsync(() => window.IsLoaded, "窄窗口兼容设置页加载");
-            await WaitUntilAsync(() => window.Opacity >= 0.999, "兼容设置页淡入完成");
-            window.Width = 620;
-            window.Height = 440;
-            window.UpdateLayout();
-            var expander = Find<Expander>(window, "MagpieSettingsExpander");
-            expander.IsExpanded = true;
-            await WaitUntilAsync(() => inspectCalls == 1, "窄窗口展开 Magpie 检测内容");
-            await Task.Delay(250);
-            window.UpdateLayout();
-
-            var pathInput = Find<TextBox>(window, "ExecutablePathInput");
-            var pathText = Find<TextBlock>(window, "ExecutablePathText");
-            var evidenceText = Find<TextBlock>(window, "EvidenceText");
-            var launchDebug = Find<Button>(window, "LaunchDebugCodexButton");
-            var closeButton = Find<Button>(window, "CloseButton");
-            var scrollViewer = Find<ScrollViewer>(window, "SettingsScrollViewer");
-            Require(window.Width == 620 && window.Height == 440 && inspectCalls == 1,
-                "兼容设置页在620×440逻辑尺寸工作，检测由fake服务完成");
-            Require(launchDebug.Content?.ToString() == "启动 / 连接 Codex",
-                "兼容设置页明确支持连接已有调试目标或启动新的调试版");
-            Require(Find<TextBlock>(window, "SupportTitle").Text == "已核实：启动不附带调试参数" &&
-                    Find<TextBlock>(window, "CompatibilityMessageText").Text.Contains("网关模型", StringComparison.Ordinal) &&
-                    pathInput.Text == executablePath && pathText.Text.Contains(executablePath, StringComparison.Ordinal) &&
-                    evidenceText.Text == longEvidence && scrollViewer.ScrollableHeight > 0,
-                "Magpie 长路径与检测信息可滚动查看，文案限定为启动参数事实");
-
-            Find<Button>(window, "LaunchDebugCodexButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => debugLaunchCalls == 1 &&
-                Find<TextBlock>(window, "WindowStatusText").Text.StartsWith("启动未完成：", StringComparison.Ordinal),
-                "兼容设置页显示fake启动失败");
-            var status = Find<TextBlock>(window, "WindowStatusText");
-            Require(status.Text.Contains("模拟调试版启动失败", StringComparison.Ordinal) &&
-                    !status.Text.Contains("已请求启动", StringComparison.Ordinal) && magpieLaunchCalls == 0,
-                "启动失败显示真实原因，且没有调用Magpie启动");
-
-            window.UpdateLayout();
-            var bounds = GetBounds(window, closeButton);
-            var launchBounds = GetBounds(window, launchDebug);
-            Require(closeButton.IsVisible && closeButton.IsEnabled &&
-                    launchDebug.IsVisible && launchDebug.IsEnabled &&
-                    IsWithinBounds(bounds, new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
-                    IsWithinBounds(launchBounds, new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
-                    !bounds.IntersectsWith(launchBounds),
-                "长说明与错误下底部启动、关闭操作保持完整可见且互不遮挡");
-            var detailsScrollViewer = Find<ScrollViewer>(window, "MagpieDetailsScrollViewer");
-            detailsScrollViewer.BringIntoView();
-            await Task.Delay(50);
-            detailsScrollViewer.ScrollToVerticalOffset(detailsScrollViewer.ScrollableHeight);
-            await window.Dispatcher.InvokeAsync(() => window.UpdateLayout());
-            var detailsBounds = GetBounds(window, detailsScrollViewer);
-            var settingsBounds = GetBounds(window, scrollViewer);
-            Require(detailsBounds.IntersectsWith(settingsBounds) &&
-                    IsWithinBounds(GetBounds(window, closeButton), new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
-                    IsWithinBounds(GetBounds(window, launchDebug), new Rect(0, 0, window.ActualWidth, window.ActualHeight)),
-                "滚动长检测详情时底栏启动与关闭按钮仍固定可见");
-            await SaveScreenshotAsync(window, Path.Combine(Program.FindTestOutputDirectory(), "兼容设置-最小窗口-620x440.png"));
-            closeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await WaitUntilAsync(() => !window.IsVisible, "兼容设置页关闭按钮关闭窗口");
-            await closed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(() => window.IsLoaded, "兼容性页加载");
+            Find<TabControl>(window, "SettingsTabs").SelectedItem = Find<TabItem>(window, "CompatibilityTab");
+            await WaitUntilAsync(() => inspectCalls == 1, "兼容页首次打开检测 Magpie");
+            Find<Button>(window, "InspectButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => inspectCalls == 2 && configService.InspectCalls == 3, "手动重检刷新配置与 Magpie");
+            Find<Button>(window, "LaunchMagpieButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitUntilAsync(() => launchCalls == 1 && inspectCalls == 3 && configService.InspectCalls == 4,
+                "启动 Magpie 后重新读取兼容信息");
+            var actionStatus = Find<TextBlock>(window, "MagpieActionStatusText").Text;
+            var configStatus = Find<TextBlock>(window, "CodexConfigStatusText").Text;
+            Require(actionStatus == "Magpie started. Its configuration was not changed." &&
+                    configStatus == "config.toml is readable",
+                "Magpie 启动反馈保持只读配置边界，config.toml 状态正常刷新");
         }
         finally
         {
-            if (window.IsVisible)
-            {
-                window.Close();
-            }
+            window.Close();
+        }
+    }
+
+    private static async Task VerifiesMinimumEnglishLayoutAsync()
+    {
+        AppLocalization.SetLanguage(AppLanguage.English);
+        var evidence = string.Join(" ", Enumerable.Repeat(
+            "Compatibility details wrap and remain available through the page scroll area.", 24));
+        var executablePath = @"C:\Example\" + string.Join(@"\", Enumerable.Repeat("MagpieFolder_" + new string('x', 30), 8)) + @"\Magpie.exe";
+        var configService = new FixtureCodexConfigReadabilityService();
+        var window = CreateWindow(
+            inspectMagpie: _ => new MagpieCompatibilityResult(
+                true, false, executablePath, "0.1.3237", MagpieCompatibilitySupport.Unsupported,
+                true, evidence, "Magpie launches Codex without debugging parameters."),
+            codexConfigReadabilityService: configService);
+        window.Show();
+        try
+        {
+            await WaitUntilAsync(() => window.IsLoaded, "英文最小尺寸设置窗口加载");
+            window.Width = 620;
+            window.Height = 440;
+            window.UpdateLayout();
+            var startManager = Find<CheckBox>(window, "StartManagerAtLoginCheckBox");
+            var startSkin = Find<CheckBox>(window, "ApplyLastSelectedSkinCheckBox");
+            var startSkinText = startSkin.Content as TextBlock ??
+                throw new InvalidOperationException("启动皮肤复选框应使用可换行 TextBlock 内容。");
+            var tabs = Find<TabControl>(window, "SettingsTabs");
+            var general = Find<TabItem>(window, "GeneralTab");
+            var generalBorder = general.Template.FindName("TabBorder", general) as Border;
+            var generalHeader = general.Template.FindName("HeaderPresenter", general) as ContentPresenter;
+            var generalBorderBounds = generalBorder is null ? Rect.Empty : GetBounds(general, generalBorder);
+            Console.WriteLine(
+                $"Settings long-checkbox layout: window={window.ActualWidth:0.##}x{window.ActualHeight:0.##}, " +
+                $"tab={tabs.ActualWidth:0.##}, " +
+                $"checkbox={startSkin.ActualWidth:0.##}x{startSkin.ActualHeight:0.##}, " +
+                $"text={startSkinText.ActualWidth:0.##}x{startSkinText.ActualHeight:0.##}, " +
+                $"maxWidth={startSkinText.MaxWidth:0.##}, wrapping={startSkinText.TextWrapping}");
+            var startupTextBounds = GetBounds(window, startSkinText);
+            Require(window.Width == 620 && window.Height == 440 &&
+                    startManager.IsVisible && startSkin.IsVisible && startSkinText.TextWrapping == TextWrapping.Wrap &&
+                    startSkinText.Text == AppLocalization.Get("开机时启动并应用上次选择的皮肤（调试版）") &&
+                    startSkinText.ActualHeight > startSkinText.FontSize * 1.4 &&
+                    startSkin.FontWeight == FontWeights.Normal && startSkinText.FontWeight == FontWeights.Normal &&
+                    GetBounds(window, startSkin).Left > GetBounds(window, startManager).Left &&
+                    IsWithinBounds(startupTextBounds, new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
+                    IsWithinBounds(GetBounds(window, startSkin), new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
+                    generalBorder is not null && generalBorder.CornerRadius.TopRight >= 10 && generalBorder.BorderThickness.Right > 0 &&
+                    generalBorderBounds.Right <= general.ActualWidth + 1 &&
+                    generalHeader is not null && TextElement.GetFontWeight(generalHeader) == FontWeights.SemiBold,
+                "620×440英文常规页长开机选项实际换行且保持缩进，内容字重正常，标签页圆角描边完整");
+            await SaveScreenshotAsync(window, Path.Combine(Program.FindTestOutputDirectory(), "settings-english-minimum-620x440.png"));
+
+            Find<TabControl>(window, "SettingsTabs").SelectedItem = Find<TabItem>(window, "CompatibilityTab");
+            await WaitUntilAsync(() => Find<TextBlock>(window, "SupportTitle").Text == "Verified: startup does not include debug arguments",
+                "英文兼容页渲染");
+            window.UpdateLayout();
+            var close = Find<Button>(window, "CloseButton");
+            var scroll = Find<ScrollViewer>(window, "SettingsScrollViewer");
+            Require(close.IsVisible && IsWithinBounds(GetBounds(window, close), new Rect(0, 0, window.ActualWidth, window.ActualHeight)) &&
+                    scroll.ScrollableHeight > 0 && Find<TextBlock>(window, "EvidenceText").Text == evidence,
+                "长英文兼容信息可滚动查看，底部关闭按钮固定在可视范围");
+            await SaveScreenshotAsync(window, Path.Combine(Program.FindTestOutputDirectory(), "settings-english-compatibility-620x440.png"));
+        }
+        finally
+        {
+            window.Close();
         }
     }
 
@@ -392,62 +220,59 @@ internal static class CompatibilityWindowTests
         window.Show();
         try
         {
-            await WaitUntilAsync(() => window.IsLoaded, "兼容设置页响应Escape");
+            await WaitUntilAsync(() => window.IsLoaded, "设置页响应 Escape");
             var source = PresentationSource.FromVisual(window) ??
-                throw new InvalidOperationException("兼容设置页尚未连接到WPF窗口消息源。");
+                throw new InvalidOperationException("设置页尚未连接到 WPF 窗口消息源。");
             window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Escape)
             {
                 RoutedEvent = Keyboard.PreviewKeyDownEvent
             });
-            await WaitUntilAsync(() => !window.IsVisible, "按Escape关闭兼容设置页");
+            await WaitUntilAsync(() => !window.IsVisible, "按 Escape 关闭设置页");
         }
         finally
         {
             if (window.IsVisible)
-            {
                 window.Close();
-            }
         }
     }
 
     private static SettingsWindow CreateWindow(
-        RuntimeCompatibilityOptions? options = null,
-        bool settingsLoaded = true,
-        string? settingsLoadError = null,
-        RuntimeCompatibilityResult? lastRuntimeResult = null,
-        Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>>? saveAndConfigure = null,
-        Func<RuntimeCompatibilityOptions>? reloadSettings = null,
-        Func<Task<RuntimeStatus>>? launchDebugCodex = null,
         Func<string?, MagpieCompatibilityResult>? inspectMagpie = null,
         Func<string?, CancellationToken, Task>? launchMagpie = null,
-        ICodexConfigReadabilityService? codexConfigReadabilityService = null,
-        IStartupPreferencesService? startupPreferencesService = null) =>
+        ICodexConfigReadabilityService? codexConfigReadabilityService = null) =>
         new(
-            options ?? new RuntimeCompatibilityOptions(),
-            settingsLoaded,
-            settingsLoadError,
-            lastRuntimeResult,
-            saveAndConfigure ?? ((value, _) => Task.FromResult<RuntimeCompatibilityResult?>(null)),
-            reloadSettings ?? (() => new RuntimeCompatibilityOptions()),
-            launchDebugCodex ?? (() => Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null, null, "fake", true))),
-            inspectMagpie ?? (_ => new MagpieCompatibilityResult(
-                false, false, null, null, MagpieCompatibilitySupport.NotInstalled, false, "fake evidence", "未检测到")),
+            inspectMagpie ?? (_ => MakeMagpieResult()),
             launchMagpie ?? ((_, _) => Task.CompletedTask),
-            codexConfigReadabilityService ?? new FixtureCodexConfigReadabilityService(),
-            startupPreferencesService)
+            codexConfigReadabilityService ?? new FixtureCodexConfigReadabilityService())
         {
-            Width = 620,
-            Height = 440,
+            Width = 760,
+            Height = 570,
             Left = -2_000,
             Top = -2_000,
             ShowActivated = false,
             ShowInTaskbar = false
         };
 
+    private static MagpieCompatibilityResult MakeMagpieResult() => new(
+        true,
+        false,
+        @"C:\Example\Magpie.exe",
+        "0.1.3237",
+        MagpieCompatibilitySupport.Unsupported,
+        true,
+        "已核对官方 Magpie v0.1.3237 源码：Windows 重开 Codex 时通过应用标识启动，未传递远程调试参数。",
+        "网关模型配置独立于皮肤启动参数。");
+
+    private static void SelectLanguage(ComboBox comboBox, AppLanguage language)
+    {
+        comboBox.SelectedItem = comboBox.Items.OfType<ComboBoxItem>()
+            .First(item => string.Equals(item.Tag?.ToString(), language.ToString(), StringComparison.Ordinal));
+    }
+
     private static T Find<T>(Window window, string name) where T : FrameworkElement =>
         window.FindName(name) is T element
             ? element
-            : throw new InvalidOperationException($"兼容设置页缺少控件 {name}。");
+            : throw new InvalidOperationException($"设置页缺少控件 {name}。");
 
     private sealed class FixtureCodexConfigReadabilityService : ICodexConfigReadabilityService
     {
@@ -469,18 +294,8 @@ internal static class CompatibilityWindowTests
         }
     }
 
-    private static void Toggle(CheckBox checkBox)
-    {
-        checkBox.Focus();
-        var peer = new CheckBoxAutomationPeer(checkBox);
-        var toggle = peer.GetPattern(PatternInterface.Toggle) as IToggleProvider ??
-            throw new InvalidOperationException("简体中文开关没有Toggle自动化操作。");
-        toggle.Toggle();
-    }
-
     private static Rect GetBounds(FrameworkElement ancestor, FrameworkElement element) =>
-        element.TransformToAncestor(ancestor)
-            .TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
+        element.TransformToAncestor(ancestor).TransformBounds(new Rect(new Point(0, 0), element.RenderSize));
 
     private static bool IsWithinBounds(Rect bounds, Rect viewport) =>
         bounds.Left >= viewport.Left - 1 && bounds.Top >= viewport.Top - 1 &&
@@ -512,10 +327,7 @@ internal static class CompatibilityWindowTests
         while (!condition())
         {
             if (DateTime.UtcNow >= deadline)
-            {
-                throw new InvalidOperationException($"兼容设置回归失败：{label}超时。");
-            }
-
+                throw new InvalidOperationException($"设置页回归失败：{label}超时。");
             await Task.Delay(25);
         }
     }
@@ -523,10 +335,7 @@ internal static class CompatibilityWindowTests
     private static void Require(bool condition, string label)
     {
         if (!condition)
-        {
-            throw new InvalidOperationException($"兼容设置回归失败：{label}");
-        }
-
+            throw new InvalidOperationException($"设置页回归失败：{label}");
         Console.WriteLine($"通过：{label}");
     }
 }

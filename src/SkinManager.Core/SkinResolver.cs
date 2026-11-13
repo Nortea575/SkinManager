@@ -156,14 +156,14 @@ public static class SkinResolver
 
         if (!source.TryGetValue(token, out var raw))
         {
-            throw Invalid(stack.Count > 0 ? "$.tokens." + stack[^1] : "$.tokens", $"引用了未定义令牌“{token}”。");
+            throw InvalidFormat(stack.Count > 0 ? "$.tokens." + stack[^1] : "$.tokens", "引用了未定义令牌“{0}”。", token);
         }
 
         var cycleStart = stack.IndexOf(token);
         if (cycleStart >= 0)
         {
             var chain = string.Join(" → ", stack.Skip(cycleStart).Append(token));
-            throw Invalid(raw.Path, $"令牌引用形成循环：{chain}。");
+            throw InvalidFormat(raw.Path, "令牌引用形成循环：{0}。", chain);
         }
 
         stack.Add(token);
@@ -189,18 +189,19 @@ public static class SkinResolver
             var reference = value.Text!;
             if (!SkinDefinitionCatalog.TryGetToken(reference, out var referencedToken))
             {
-                throw Invalid(path, $"引用了不存在或未知的令牌“{reference}”。");
+                throw InvalidFormat(path, "引用了不存在或未知的令牌“{0}”。", reference);
             }
             var referencedKind = referencedToken.Kind;
 
             if (referencedKind != expectedKind)
             {
-                throw Invalid(path, $"令牌“{reference}”类型为 {Describe(referencedKind)}，此处需要 {Describe(expectedKind)}。");
+                throw InvalidFormat(path, "令牌“{0}”类型为 {1}，此处需要 {2}。",
+                    reference, Describe(referencedKind), Describe(expectedKind));
             }
 
             if (!tokens.ContainsKey(reference))
             {
-                throw Invalid(path, $"引用了未定义令牌“{reference}”。");
+                throw InvalidFormat(path, "引用了未定义令牌“{0}”。", reference);
             }
 
             return ResolveToken(reference, tokens, stack);
@@ -208,7 +209,7 @@ public static class SkinResolver
 
         if (value.Kind != expectedKind)
         {
-            throw Invalid(path, $"值类型为 {Describe(value.Kind)}，此处需要 {Describe(expectedKind)}。");
+            throw InvalidFormat(path, "值类型为 {0}，此处需要 {1}。", Describe(value.Kind), Describe(expectedKind));
         }
 
         if (value.Text == "none")
@@ -304,7 +305,7 @@ public static class SkinResolver
         {
             if (!package.Files.TryGetValue(imagePath, out var bytes))
             {
-                throw Invalid(source["image"].Path, $"皮肤包缺少背景图片“{imagePath}”。");
+                throw InvalidFormat(source["image"].Path, "皮肤包缺少背景图片“{0}”。", imagePath);
             }
 
             imageBytes = bytes;
@@ -315,15 +316,19 @@ public static class SkinResolver
 
     private static string Describe(SkinValueKind kind) => kind switch
     {
-        SkinValueKind.Color => "颜色",
-        SkinValueKind.Length => "px 长度",
-        SkinValueKind.Number => "数字",
-        SkinValueKind.Ratio => "比例",
-        SkinValueKind.FontFamily => "字体名称",
+        SkinValueKind.Color => AppLocalization.Get("颜色"),
+        SkinValueKind.Length => AppLocalization.Get("px 长度"),
+        SkinValueKind.Number => AppLocalization.Get("数字"),
+        SkinValueKind.Ratio => AppLocalization.Get("比例"),
+        SkinValueKind.FontFamily => AppLocalization.Get("字体名称"),
         SkinValueKind.Shadow => "shadow",
-        SkinValueKind.String => "字符串",
-        _ => "令牌引用"
+        SkinValueKind.String => AppLocalization.Get("字符串"),
+        _ => AppLocalization.Get("令牌引用")
     };
 
-    private static InvalidDataException Invalid(string path, string message) => new($"{path}: {message}");
+    private static InvalidDataException Invalid(string path, string message) =>
+        new($"{path}: {AppLocalization.Get(message)}");
+
+    private static InvalidDataException InvalidFormat(string path, string source, params object?[] arguments) =>
+        new($"{path}: {AppLocalization.Format(source, arguments)}");
 }

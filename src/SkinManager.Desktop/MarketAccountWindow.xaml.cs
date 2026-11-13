@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
+using SkinManager.Core;
 
 namespace SkinManager.Desktop;
 
@@ -21,7 +22,7 @@ internal partial class MarketAccountWindow : Window
         _siteOrigin = new Uri(startUri.GetLeftPart(UriPartial.Authority) + "/", UriKind.Absolute);
         if (!MarketAccountNavigationPolicy.IsAllowed(_startUri, _siteOrigin))
         {
-            throw new InvalidOperationException("账号窗口只允许打开本站登录、注册与账号返回页。");
+            throw new InvalidOperationException(AppLocalization.Get("账号窗口只允许打开本站登录、注册与账号返回页。"));
         }
 
         InitializeComponent();
@@ -51,7 +52,7 @@ internal partial class MarketAccountWindow : Window
             }
 
             var core = AccountBrowser.CoreWebView2
-                ?? throw new InvalidOperationException("账号页面没有完成初始化。");
+                ?? throw new InvalidOperationException(AppLocalization.Get("账号页面没有完成初始化。"));
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsPasswordAutosaveEnabled = false;
@@ -59,14 +60,14 @@ internal partial class MarketAccountWindow : Window
             core.NavigationStarting += AccountBrowser_NavigationStarting;
             core.NewWindowRequested += AccountBrowser_NewWindowRequested;
             core.ProcessFailed += AccountBrowser_ProcessFailed;
-            AccountStatusText.Text = "请在本站完成登录或注册；登录后会自动返回皮肤市场。";
+            LocalizedUiText.SetText(AccountStatusText, "请在本站完成登录或注册；登录后会自动返回皮肤市场。");
             core.Navigate(_startUri.AbsoluteUri);
         }
         catch (Exception exception)
         {
             if (!_isClosed)
             {
-                AccountStatusText.Text = $"账号页面无法打开：{exception.Message}";
+                LocalizedUiText.SetText(AccountStatusText, "账号页面无法打开：{0}", exception.Message);
                 AccountStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
             }
         }
@@ -85,7 +86,7 @@ internal partial class MarketAccountWindow : Window
         {
             e.Cancel = true;
             _returnedToMarket = true;
-            AccountStatusText.Text = "已返回皮肤市场，正在验证账号…";
+            LocalizedUiText.SetText(AccountStatusText, "已返回皮肤市场，正在验证账号…");
             _ = Dispatcher.BeginInvoke(new Action(Close), System.Windows.Threading.DispatcherPriority.Background);
             return;
         }
@@ -109,7 +110,7 @@ internal partial class MarketAccountWindow : Window
         if (MarketAccountNavigationPolicy.IsReturnToMarket(uri, _siteOrigin))
         {
             _returnedToMarket = true;
-            AccountStatusText.Text = "已返回皮肤市场，正在验证账号…";
+            LocalizedUiText.SetText(AccountStatusText, "已返回皮肤市场，正在验证账号…");
             _ = Dispatcher.BeginInvoke(new Action(Close), System.Windows.Threading.DispatcherPriority.Background);
             return;
         }
@@ -149,7 +150,7 @@ internal partial class MarketAccountWindow : Window
             return;
         }
 
-        AccountStatusText.Text = message;
+        LocalizedUiText.SetText(AccountStatusText, message);
         AccountStatusText.SetResourceReference(TextBlock.ForegroundProperty,
             isError ? "ErrorText" : "SecondaryText");
     }

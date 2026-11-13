@@ -51,11 +51,11 @@ public sealed class SkinDraft
         ArgumentNullException.ThrowIfNull(package);
         if (!package.Files.TryGetValue("skin.json", out var manifestBytes))
         {
-            throw new InvalidDataException("皮肤包缺少 skin.json。");
+            throw new InvalidDataException(AppLocalization.Get("皮肤包缺少 skin.json。"));
         }
 
         var manifest = JsonNode.Parse(manifestBytes)?.AsObject()
-            ?? throw new InvalidDataException("skin.json 根值必须是 JSON 对象。");
+            ?? throw new InvalidDataException(AppLocalization.Get("skin.json 根值必须是 JSON 对象。"));
         var files = package.Files
             .Where(pair => !pair.Key.Equals("skin.json", StringComparison.OrdinalIgnoreCase))
             .ToDictionary(pair => pair.Key, pair => pair.Value, PathComparer);
@@ -68,20 +68,20 @@ public sealed class SkinDraft
         ArgumentException.ThrowIfNullOrWhiteSpace(originalName);
         if (bytes.Length == 0 || bytes.Length > SkinPackageReader.MaxSingleFileBytes)
         {
-            throw new InvalidDataException("背景图片为空或超过单文件大小上限。");
+            throw new InvalidDataException(AppLocalization.Get("背景图片为空或超过单文件大小上限。"));
         }
 
         var fileName = Path.GetFileName(originalName.Trim());
         if (fileName.Length == 0 || fileName.Any(char.IsControl) ||
             fileName.Contains('/') || fileName.Contains('\\') || fileName.Contains(':'))
         {
-            throw new InvalidDataException("背景图片名称必须是单个包内文件名。");
+            throw new InvalidDataException(AppLocalization.Get("背景图片名称必须是单个包内文件名。"));
         }
 
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
         if (!SkinPackageReader.IsSupportedImagePath(fileName))
         {
-            throw new InvalidDataException("背景图片只支持 PNG、JPG、JPEG 或 GIF。");
+            throw new InvalidDataException(AppLocalization.Get("背景图片只支持 PNG、JPG、JPEG 或 GIF。"));
         }
 
         if (Manifest["background"] is JsonObject currentBackground &&

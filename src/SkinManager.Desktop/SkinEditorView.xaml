@@ -43,7 +43,7 @@
                                 </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
                                     <Thumb x:Name="PART_Thumb" Width="16" Height="16" Focusable="False"
-                                           AutomationProperties.Name="透明度滑块">
+                                           AutomationProperties.Name="{local:Loc '透明度滑块'}">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Ellipse x:Name="ThumbOutline" Fill="{DynamicResource PanelSurface}"
@@ -98,15 +98,15 @@
 
         <Grid Grid.Row="0">
             <StackPanel>
-                <TextBlock x:Name="EditorTitle" Text="新建皮肤" FontSize="20" Style="{StaticResource PageTitle}" />
-                <TextBlock x:Name="DirtyStateText" Text="草稿已保存" FontSize="11"
+                <TextBlock x:Name="EditorTitle" Text="{local:Loc '新建皮肤'}" FontSize="20" Style="{StaticResource PageTitle}" />
+                <TextBlock x:Name="DirtyStateText" Text="{local:Loc '草稿已保存'}" FontSize="11"
                            Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <Button x:Name="UndoButton" Content="撤销" Padding="8,5" MinHeight="30"
-                        Click="UndoButton_Click" ToolTip="撤销上一步修改" />
-                <Button x:Name="RedoButton" Content="重做" Padding="8,5" MinHeight="30"
-                        Margin="5,0,0,0" Click="RedoButton_Click" ToolTip="重做已撤销的修改" />
+                <Button x:Name="UndoButton" Content="{local:Loc '撤销'}" Padding="8,5" MinHeight="30"
+                        Click="UndoButton_Click" ToolTip="{local:Loc '撤销上一步修改'}" />
+                <Button x:Name="RedoButton" Content="{local:Loc '重做'}" Padding="8,5" MinHeight="30"
+                        Margin="5,0,0,0" Click="RedoButton_Click" ToolTip="{local:Loc '重做已撤销的修改'}" />
             </StackPanel>
         </Grid>
 
@@ -144,70 +144,70 @@
                     </Setter>
                 </Style>
             </TabControl.Resources>
-            <TabItem Header="创作">
+            <TabItem Header="{local:Loc '创作'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
-                        <TextBlock Text="从素材开始" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="选择背景图片，或用纯色开始。"
+                        <TextBlock Text="{local:Loc '从素材开始'}" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="{local:Loc '选择背景图片，或用纯色开始。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,3,0,8" />
-                        <TextBlock x:Name="CreationBackgroundPathText" Text="可拖入 PNG、JPG 或 GIF，也可使用纯色背景"
+                        <TextBlock x:Name="CreationBackgroundPathText" Text="{local:Loc '可拖入 PNG、JPG 或 GIF，也可使用纯色背景'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
-                                   TextTrimming="CharacterEllipsis" ToolTip="可拖入 PNG、JPG 或 GIF，也可使用纯色背景"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{local:Loc '可拖入 PNG、JPG 或 GIF，也可使用纯色背景'}"
                                    Margin="0,0,0,6" />
                         <Border x:Name="BackgroundDropZone" Padding="8" Margin="0,0,0,7"
                                 Background="{DynamicResource PanelSurface}" BorderBrush="{DynamicResource ControlLine}"
                                 BorderThickness="1" CornerRadius="8" AllowDrop="True"
                                 DragOver="BackgroundDropZone_DragOver" Drop="BackgroundDropZone_Drop">
-                            <TextBlock Text="拖放背景图片到这里" FontSize="11" Foreground="{DynamicResource SecondaryText}"
+                            <TextBlock Text="{local:Loc '拖放背景图片到这里'}" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                        HorizontalAlignment="Center" TextAlignment="Center" />
                         </Border>
                         <WrapPanel Margin="0,0,0,8">
-                            <Button x:Name="CreationChooseBackgroundButton" Content="选择图片" Padding="9,5"
+                            <Button x:Name="CreationChooseBackgroundButton" Content="{local:Loc '选择图片'}" Padding="9,5"
                                     Click="ChooseBackgroundButton_Click" />
-                        <Button x:Name="CreationUseColorButton" Content="使用纯色" Padding="9,5" Margin="5,0,0,0"
+                        <Button x:Name="CreationUseColorButton" Content="{local:Loc '使用纯色'}" Padding="9,5" Margin="5,0,0,0"
                                     Click="CreationUseColorButton_Click" />
                         </WrapPanel>
                         <Grid x:Name="CreationBackgroundColorPanel" Margin="0,0,0,8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="34" /></Grid.RowDefinitions>
-                            <TextBlock Text="纯色背景" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                            <TextBlock Text="{local:Loc '纯色背景'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                             <DockPanel Grid.Row="1" Margin="0,3,0,0" LastChildFill="True">
                                 <Button x:Name="CreationBackgroundPickerButton" Width="38" Padding="3" Margin="0,0,6,0"
-                                        Click="CreationBackgroundPickerButton_Click" ToolTip="从色板选择背景色"
-                                        AutomationProperties.Name="选择背景色">
+                                        Click="CreationBackgroundPickerButton_Click" ToolTip="{local:Loc '从色板选择背景色'}"
+                                        AutomationProperties.Name="{local:Loc '选择背景色'}">
                                     <Border x:Name="CreationBackgroundSwatch" Width="22" Height="22" CornerRadius="4"
                                             Background="#F7F9FC" BorderBrush="{DynamicResource ControlLine}" BorderThickness="1" />
                                 </Button>
                                 <TextBox x:Name="CreationBackgroundHexInput" VerticalContentAlignment="Center" Padding="8,0"
                                          TextChanged="CreationBackgroundHexInput_TextChanged"
-                                         ToolTip="输入背景底色 HEX，例如 #F7F9FC" AutomationProperties.Name="背景色 HEX" />
+                                         ToolTip="{local:Loc '输入背景底色 HEX，例如 #F7F9FC'}" AutomationProperties.Name="{local:Loc '背景色 HEX'}" />
                             </DockPanel>
                         </Grid>
 
-                        <TextBlock Text="整体明暗" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                        <TextBlock Text="{local:Loc '整体明暗'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                         <ComboBox x:Name="CreationAppearanceInput" Margin="0,3,0,8"
                                   SelectionChanged="CreationAppearanceInput_SelectionChanged"
-                                  AutomationProperties.Name="创作明暗">
-                            <ComboBoxItem Content="浅色" Tag="light" />
-                            <ComboBoxItem Content="深色" Tag="dark" />
+                                  AutomationProperties.Name="{local:Loc '创作明暗'}">
+                            <ComboBoxItem Content="{local:Loc '浅色'}" Tag="light" />
+                            <ComboBoxItem Content="{local:Loc '深色'}" Tag="dark" />
                         </ComboBox>
 
-                        <TextBlock Text="主色" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                        <TextBlock Text="{local:Loc '主色'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                         <DockPanel Margin="0,3,0,7" LastChildFill="True">
                             <Button x:Name="CreationAccentPickerButton" Width="38" Padding="3" Margin="0,0,6,0"
-                                    Click="CreationAccentPickerButton_Click" ToolTip="从色板选择主色"
-                                    AutomationProperties.Name="选择主色">
+                                    Click="CreationAccentPickerButton_Click" ToolTip="{local:Loc '从色板选择主色'}"
+                                    AutomationProperties.Name="{local:Loc '选择主色'}">
                                 <Border x:Name="CreationAccentSwatch" Width="22" Height="22" CornerRadius="4"
                                         Background="#3B82F6" BorderBrush="{DynamicResource ControlLine}" BorderThickness="1" />
                             </Button>
                             <TextBox x:Name="CreationAccentHexInput" VerticalContentAlignment="Center" Padding="8,0"
                                      TextChanged="CreationAccentHexInput_TextChanged"
-                                     ToolTip="输入十六进制颜色，例如 #3B82F6" AutomationProperties.Name="主色 HEX" />
+                                     ToolTip="{local:Loc '输入十六进制颜色，例如 #3B82F6'}" AutomationProperties.Name="{local:Loc '主色 HEX'}" />
                         </DockPanel>
 
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="面板透明度" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                            <TextBlock Text="{local:Loc '面板透明度'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                             <TextBlock x:Name="PanelTransparencyValue" Grid.Column="1" Text="28%" FontSize="11"
                                        Foreground="{DynamicResource PrimaryText}" HorizontalAlignment="Right" />
                         </Grid>
@@ -218,11 +218,11 @@
                                 PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
                                 PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
                                 LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
-                                AutomationProperties.Name="面板透明度" />
+                                AutomationProperties.Name="{local:Loc '面板透明度'}" />
 
                         <Grid Margin="0,5,0,8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="圆角" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                            <TextBlock Text="{local:Loc '圆角'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                             <TextBlock x:Name="CornerRadiusValue" Grid.Column="1" Text="16 px" FontSize="11"
                                        Foreground="{DynamicResource PrimaryText}" HorizontalAlignment="Right" />
                         </Grid>
@@ -233,12 +233,12 @@
                                 PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
                                 PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
                                 LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
-                                AutomationProperties.Name="圆角" />
+                                AutomationProperties.Name="{local:Loc '圆角'}" />
 
                         <StackPanel x:Name="BackgroundTreatmentPanel">
                         <Grid Margin="0,5,0,8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="背景明暗" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                            <TextBlock Text="{local:Loc '背景明暗'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                             <TextBlock x:Name="BackgroundDarknessValue" Grid.Column="1" Text="8%" FontSize="11"
                                        Foreground="{DynamicResource PrimaryText}" HorizontalAlignment="Right" />
                         </Grid>
@@ -249,24 +249,24 @@
                                 PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
                                 PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
                                 LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
-                                AutomationProperties.Name="背景明暗" />
-                        <TextBlock Text="增加遮罩后，背景更柔和，便于阅读。"
+                                AutomationProperties.Name="{local:Loc '背景明暗'}" />
+                        <TextBlock Text="{local:Loc '增加遮罩后，背景更柔和，便于阅读。'}"
                                    FontSize="10" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,9" />
                         </StackPanel>
                         <StackPanel x:Name="BackgroundFocusPanel">
-                        <CheckBox x:Name="BackgroundFocusModeCheckBox" Content="调整背景位置"
+                        <CheckBox x:Name="BackgroundFocusModeCheckBox" Content="{local:Loc '调整背景位置'}"
                                   Margin="0,5,0,0" Checked="BackgroundFocusModeCheckBox_Changed"
                                   Unchecked="BackgroundFocusModeCheckBox_Changed"
-                                  AutomationProperties.Name="调整背景位置" />
-                        <TextBlock Text="开启后拖动右侧预览调整焦点；关闭后可在精细编辑中点击组件。"
+                                  AutomationProperties.Name="{local:Loc '调整背景位置'}" />
+                        <TextBlock Text="{local:Loc '开启后拖动右侧预览调整焦点；关闭后可在精细编辑中点击组件。'}"
                                    FontSize="10" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,3,0,0" />
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="精细编辑">
+            <TabItem Header="{local:Loc '精细编辑'}">
                 <Grid Margin="1,5,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -278,19 +278,19 @@
                             <ColumnDefinition Width="82" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="写入范围" FontSize="11"
+                        <TextBlock Grid.Column="0" Text="{local:Loc '写入范围'}" FontSize="11"
                                    Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center" />
                         <ComboBox x:Name="ScopeInput" Grid.Column="1" SelectedIndex="0"
                                   SelectionChanged="ScopeInput_SelectionChanged"
-                                  ToolTip="元数据始终属于基础包；颜色、背景与组件覆盖写入当前范围">
-                            <ComboBoxItem Content="基础 · 整体默认" Tag="base" />
-                            <ComboBoxItem Content="浅色变体" Tag="light" />
-                            <ComboBoxItem Content="深色变体" Tag="dark" />
-                            <ComboBoxItem Content="首页场景" Tag="home" />
-                            <ComboBoxItem Content="对话场景" Tag="conversation" />
+                                  ToolTip="{local:Loc '元数据始终属于基础包；颜色、背景与组件覆盖写入当前范围'}">
+                            <ComboBoxItem Content="{local:Loc '基础 · 整体默认'}" Tag="base" />
+                            <ComboBoxItem Content="{local:Loc '浅色变体'}" Tag="light" />
+                            <ComboBoxItem Content="{local:Loc '深色变体'}" Tag="dark" />
+                            <ComboBoxItem Content="{local:Loc '首页场景'}" Tag="home" />
+                            <ComboBoxItem Content="{local:Loc '对话场景'}" Tag="conversation" />
                         </ComboBox>
                     </Grid>
-                    <TextBlock Grid.Row="1" Text="下方修改写入所选范围；右侧预览切换仅用于查看。留空即可恢复跟随。"
+                    <TextBlock Grid.Row="1" Text="{local:Loc '下方修改写入所选范围；右侧预览切换仅用于查看。留空即可恢复跟随。'}"
                                FontSize="10" Foreground="{DynamicResource SecondaryText}"
                                TextWrapping="Wrap" Margin="0,2,0,0" />
 
@@ -328,13 +328,13 @@
                     </Setter>
                 </Style>
             </TabControl.Resources>
-            <TabItem Header="基础">
+            <TabItem Header="{local:Loc '基础'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
                         <Expander x:Name="MetadataExpander" IsExpanded="False" Margin="0,0,0,8">
                             <Expander.Header>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="皮肤信息" FontSize="13" FontWeight="SemiBold"
+                                    <TextBlock Text="{local:Loc '皮肤信息'}" FontSize="13" FontWeight="SemiBold"
                                                Foreground="{DynamicResource PrimaryText}" />
                                     <TextBlock x:Name="MetadataSummary" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                VerticalAlignment="Center" Margin="8,1,0,0" />
@@ -343,28 +343,28 @@
                             <StackPanel Margin="0,7,0,0">
                                 <TextBlock Text="ID" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                 <TextBox x:Name="IdInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
-                                <TextBlock Text="版本" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                                <TextBlock Text="{local:Loc '版本'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                 <TextBox x:Name="VersionInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
-                                <TextBlock Text="作者（可选）" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                                <TextBlock Text="{local:Loc '作者（可选）'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                 <TextBox x:Name="AuthorInput" Margin="0,3,0,8" TextChanged="Metadata_TextChanged" />
-                                <TextBlock Text="默认外观" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                                <TextBlock Text="{local:Loc '默认外观'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                 <ComboBox x:Name="AppearanceInput" Margin="0,3,0,6" SelectedIndex="0"
                                           SelectionChanged="AppearanceInput_SelectionChanged">
-                                    <ComboBoxItem Content="跟随系统" Tag="system" />
-                                    <ComboBoxItem Content="浅色" Tag="light" />
-                                    <ComboBoxItem Content="深色" Tag="dark" />
+                                    <ComboBoxItem Content="{local:Loc '跟随系统'}" Tag="system" />
+                                    <ComboBoxItem Content="{local:Loc '浅色'}" Tag="light" />
+                                    <ComboBoxItem Content="{local:Loc '深色'}" Tag="dark" />
                                 </ComboBox>
                             </StackPanel>
                         </Expander>
-                        <TextBlock Text="皮肤信息始终写入基础范围；下方样式写入所选范围。"
+                        <TextBlock Text="{local:Loc '皮肤信息始终写入基础范围；下方样式写入所选范围。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,10" />
 
-                        <TextBlock Text="基础颜色" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,3" />
-                        <TextBlock Text="强调色、主背景和主要文字会直接影响整套配色。"
+                        <TextBlock Text="{local:Loc '基础颜色'}" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,3" />
+                        <TextBlock Text="{local:Loc '强调色、主背景和主要文字会直接影响整套配色。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,6" />
-                        <TextBlock Text="可输入 HEX 或令牌引用；留空会删除覆盖并恢复继承值。"
+                        <TextBlock Text="{local:Loc '可输入 HEX 或令牌引用；留空会删除覆盖并恢复继承值。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,6" />
                         <ItemsControl x:Name="TokenFields">
@@ -375,7 +375,7 @@
                                         <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                         <DockPanel Grid.Row="1" Margin="0,3,0,0">
                                             <Button x:Name="ColorPickerFieldButton" Width="34" Padding="2" Margin="0,0,5,0" Tag="{Binding}"
-                                                    Click="ColorPickerButton_Click" ToolTip="选择颜色">
+                                                    Click="ColorPickerButton_Click" ToolTip="{local:Loc '选择颜色'}">
                                                 <Border Width="20" Height="20" CornerRadius="4"
                                                         Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource ControlLine}"
                                                         BorderThickness="1" />
@@ -383,7 +383,7 @@
                                             <Grid>
                                                 <TextBox x:Name="FieldValueInput" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
                                                          VerticalContentAlignment="Center" Padding="8,0"
-                                                         ToolTip="支持 HEX 颜色、令牌引用或数值；留空删除覆盖并恢复继承值" />
+                                                         ToolTip="{local:Loc '支持 HEX 颜色、令牌引用或数值；留空删除覆盖并恢复继承值'}" />
                                                 <TextBlock x:Name="FieldPlaceholder" Text="{Binding Placeholder}" Margin="8,0,0,0"
                                                            FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                            VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed" />
@@ -402,26 +402,26 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="背景">
+            <TabItem Header="{local:Loc '背景'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
-                        <TextBlock Text="背景图片" FontSize="13" FontWeight="SemiBold" />
-                        <TextBlock x:Name="BackgroundImagePathText" Text="未选择背景图"
+                        <TextBlock Text="{local:Loc '背景图片'}" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock x:Name="BackgroundImagePathText" Text="{local:Loc '未选择背景图'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
-                                   TextTrimming="CharacterEllipsis" ToolTip="未选择背景图" Margin="0,4,0,8" />
+                                   TextTrimming="CharacterEllipsis" Margin="0,4,0,8" />
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,13">
-                            <Button Content="选择图片" Padding="10,6" Click="ChooseBackgroundButton_Click" />
-                            <Button x:Name="RemoveBackgroundButton" Content="移除" Padding="10,6"
+                            <Button Content="{local:Loc '选择图片'}" Padding="10,6" Click="ChooseBackgroundButton_Click" />
+                            <Button x:Name="RemoveBackgroundButton" Content="{local:Loc '移除'}" Padding="10,6"
                                     Margin="6,0,0,0" Click="RemoveBackgroundButton_Click" />
                         </StackPanel>
-                        <TextBlock Text="填充方式" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                        <TextBlock Text="{local:Loc '填充方式'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                         <ComboBox x:Name="BackgroundFitInput" Margin="0,3,0,10" SelectionChanged="BackgroundFitInput_SelectionChanged">
-                            <ComboBoxItem Content="继承基础设置" Tag="inherit" />
-                            <ComboBoxItem Content="覆盖 · cover" Tag="cover" />
-                            <ComboBoxItem Content="包含 · contain" Tag="contain" />
+                            <ComboBoxItem Content="{local:Loc '继承基础设置'}" Tag="inherit" />
+                            <ComboBoxItem Content="{local:Loc '覆盖 · cover'}" Tag="cover" />
+                            <ComboBoxItem Content="{local:Loc '包含 · contain'}" Tag="contain" />
                         </ComboBox>
-                        <TextBlock Text="图片位置与透明度" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,5" />
-                        <TextBlock Text="透明度和焦点位置都使用 0% 到 100%。留空可恢复皮肤默认值。"
+                        <TextBlock Text="{local:Loc '图片位置与透明度'}" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,5" />
+                        <TextBlock Text="{local:Loc '透明度和焦点位置都使用 0% 到 100%。留空可恢复皮肤默认值。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,6" />
                         <ItemsControl x:Name="BackgroundFields">
@@ -432,7 +432,7 @@
                                         <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                         <DockPanel Grid.Row="1" Margin="0,3,0,0">
                                             <Button x:Name="ColorPickerFieldButton" Width="34" Padding="2" Margin="0,0,5,0" Tag="{Binding}"
-                                                    Click="ColorPickerButton_Click" ToolTip="选择颜色"
+                                                    Click="ColorPickerButton_Click" ToolTip="{local:Loc '选择颜色'}"
                                                     Visibility="{Binding IsColor, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                 <Border Width="20" Height="20" CornerRadius="4"
                                                         Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource ControlLine}"
@@ -441,7 +441,7 @@
                                             <Grid>
                                                 <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
                                                          VerticalContentAlignment="Center" Padding="8,0"
-                                                         ToolTip="透明度和焦点位置使用 0% 到 100%；留空删除此覆盖" />
+                                                         ToolTip="{local:Loc '透明度和焦点位置使用 0% 到 100%；留空删除此覆盖'}" />
                                                 <TextBlock x:Name="FieldPlaceholder" Text="{Binding Placeholder}" Margin="8,0,0,0"
                                                            FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                            VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed" />
@@ -460,19 +460,19 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem x:Name="ComponentsTab" Header="组件">
+            <TabItem x:Name="ComponentsTab" Header="{local:Loc '组件'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
-                        <TextBlock Text="组件样式" FontSize="13" FontWeight="SemiBold" />
-                        <TextBlock Text="可点击右侧本地预览中的组件，或从列表选择。"
+                        <TextBlock Text="{local:Loc '组件样式'}" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="{local:Loc '可点击右侧本地预览中的组件，或从列表选择。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,4,0,8" />
-                        <TextBlock Text="可编辑项留空会删除该覆盖并恢复继承值；颜色支持 HEX 和令牌引用。"
+                        <TextBlock Text="{local:Loc '可编辑项留空会删除该覆盖并恢复继承值；颜色支持 HEX 和令牌引用。'}"
                                    FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                    TextWrapping="Wrap" Margin="0,0,0,6" />
                         <ComboBox x:Name="ComponentInput" DisplayMemberPath="Label" SelectedValuePath="Id"
                                   SelectedValue="window" SelectionChanged="ComponentInput_SelectionChanged" />
-                        <TextBlock Text="状态" FontSize="11" Foreground="{DynamicResource SecondaryText}" Margin="0,10,0,3" />
+                        <TextBlock Text="{local:Loc '状态'}" FontSize="11" Foreground="{DynamicResource SecondaryText}" Margin="0,10,0,3" />
                         <ComboBox x:Name="ComponentStateInput" DisplayMemberPath="Label" SelectedValuePath="Id"
                                   SelectedIndex="0" SelectionChanged="ComponentStateInput_SelectionChanged" />
                         <TextBlock x:Name="ComponentScopeHint" Margin="0,8,0,0" FontSize="11"
@@ -486,7 +486,7 @@
                                         <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
                                         <DockPanel Grid.Row="1" Margin="0,3,0,0">
                                             <Button x:Name="ColorPickerFieldButton" Width="34" Padding="2" Margin="0,0,5,0" Tag="{Binding}"
-                                                    Click="ColorPickerButton_Click" ToolTip="选择颜色"
+                                                    Click="ColorPickerButton_Click" ToolTip="{local:Loc '选择颜色'}"
                                                     Visibility="{Binding IsColor, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                 <Border Width="20" Height="20" CornerRadius="4"
                                                         Background="{Binding SwatchBrush}" BorderBrush="{DynamicResource ControlLine}"
@@ -495,7 +495,7 @@
                                             <Grid>
                                                 <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
                                                          VerticalContentAlignment="Center" Padding="8,0"
-                                                         ToolTip="透明度使用 0% 到 100%；尺寸、字号、圆角和间距使用数字；留空删除覆盖" />
+                                                         ToolTip="{local:Loc '透明度使用 0% 到 100%；尺寸、字号、圆角和间距使用数字；留空删除覆盖'}" />
                                                 <TextBlock x:Name="FieldPlaceholder" Text="{Binding Placeholder}" Margin="8,0,0,0"
                                                            FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                            VerticalAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed" />
@@ -513,7 +513,7 @@
                         <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                             <ComboBox x:Name="AddComponentPropertyInput" DisplayMemberPath="Label"
                                       SelectedValuePath="Id" Width="176" />
-                            <Button Content="添加" Padding="8,5" MinHeight="32" Margin="5,0,0,0"
+                            <Button Content="{local:Loc '添加'}" Padding="8,5" MinHeight="32" Margin="5,0,0,0"
                                     Click="AddComponentPropertyButton_Click" />
                         </StackPanel>
                     </StackPanel>
@@ -534,10 +534,10 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <DockPanel Grid.Row="0">
-                <TextBlock Text="皮肤名称" FontSize="11" Foreground="{DynamicResource SecondaryText}"
+                <TextBlock Text="{local:Loc '皮肤名称'}" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                            VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBox x:Name="NameInput" MinHeight="34" Padding="8,5" VerticalContentAlignment="Center"
-                         TextChanged="Metadata_TextChanged" AutomationProperties.Name="皮肤名称" />
+                         TextChanged="Metadata_TextChanged" AutomationProperties.Name="{local:Loc '皮肤名称'}" />
             </DockPanel>
             <Grid x:Name="SaveActionsGrid" Grid.Row="2">
                 <Grid.ColumnDefinitions>
@@ -547,9 +547,9 @@
                     <ColumnDefinition Width="7" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="SaveAsButton" Grid.Column="0" Content="另存为" Padding="6,6" Click="SaveAsButton_Click" />
-                <Button x:Name="CancelButton" Grid.Column="2" Content="取消" Padding="6,6" Click="CancelButton_Click" />
-                <Button x:Name="SaveButton" Grid.Column="4" Content="保存" Style="{StaticResource PrimaryButton}" Padding="6,6"
+                <Button x:Name="SaveAsButton" Grid.Column="0" Content="{local:Loc '另存为'}" Padding="6,6" Click="SaveAsButton_Click" />
+                <Button x:Name="CancelButton" Grid.Column="2" Content="{local:Loc '取消'}" Padding="6,6" Click="CancelButton_Click" />
+                <Button x:Name="SaveButton" Grid.Column="4" Content="{local:Loc '保存'}" Style="{StaticResource PrimaryButton}" Padding="6,6"
                         Click="SaveButton_Click" />
             </Grid>
         </Grid>
@@ -562,7 +562,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                               PreviewKeyDown="ColorPalettePopup_PreviewKeyDown">
                     <StackPanel>
-                        <TextBlock Text="选择颜色" FontSize="12" FontWeight="SemiBold" Margin="1,0,0,4" />
+                        <TextBlock Text="{local:Loc '选择颜色'}" FontSize="12" FontWeight="SemiBold" Margin="1,0,0,4" />
                         <local:ColorPickerControl x:Name="ColorPicker" Width="220" Height="220"
                                                   HorizontalAlignment="Center"
                                                   ColorChanged="ColorPicker_ColorChanged"
@@ -570,14 +570,14 @@
                         <Grid Margin="0,1,0,7">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <StackPanel Margin="0,0,5,0">
-                                <TextBlock Text="原色" FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="1,0,0,3" />
+                                <TextBlock Text="{local:Loc '原色'}" FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="1,0,0,3" />
                                 <Border Height="26" CornerRadius="4" Background="{DynamicResource ColorCheckerboard}"
                                         BorderBrush="{DynamicResource ControlLine}" BorderThickness="1">
                                     <Border x:Name="ColorPickerOriginalPreview" CornerRadius="4" Background="#FFFFFF" />
                                 </Border>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="5,0,0,0">
-                                <TextBlock Text="新色" FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="1,0,0,3" />
+                                <TextBlock Text="{local:Loc '新色'}" FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="1,0,0,3" />
                                 <Border Height="26" CornerRadius="4" Background="{DynamicResource ColorCheckerboard}"
                                         BorderBrush="{DynamicResource ControlLine}" BorderThickness="1">
                                     <Border x:Name="ColorPickerNewPreview" CornerRadius="4" Background="#FFFFFF" />
@@ -591,7 +591,7 @@
                                 <TextBox x:Name="PaletteHexInput" Text="#FFFFFF" Padding="6,3" MinHeight="28"
                                          VerticalContentAlignment="Center" TextChanged="PaletteHexInput_TextChanged"
                                          LostKeyboardFocus="PaletteColorInput_LostKeyboardFocus"
-                                         AutomationProperties.Name="颜色 HEX" />
+                                         AutomationProperties.Name="{local:Loc '颜色 HEX'}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="RGB" FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="1,0,0,2" />
@@ -600,20 +600,20 @@
                                         <ColumnDefinition Width="*" /><ColumnDefinition Width="5" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <TextBox x:Name="PaletteRedInput" Padding="5,3" MinHeight="28" VerticalContentAlignment="Center"
                                              TextChanged="PaletteRgbInput_TextChanged" LostKeyboardFocus="PaletteColorInput_LostKeyboardFocus"
-                                             AutomationProperties.Name="红色通道" />
+                                             AutomationProperties.Name="{local:Loc '红色通道'}" />
                                     <TextBox x:Name="PaletteGreenInput" Grid.Column="2" Padding="5,3" MinHeight="28" VerticalContentAlignment="Center"
                                              TextChanged="PaletteRgbInput_TextChanged" LostKeyboardFocus="PaletteColorInput_LostKeyboardFocus"
-                                             AutomationProperties.Name="绿色通道" />
+                                             AutomationProperties.Name="{local:Loc '绿色通道'}" />
                                     <TextBox x:Name="PaletteBlueInput" Grid.Column="4" Padding="5,3" MinHeight="28" VerticalContentAlignment="Center"
                                              TextChanged="PaletteRgbInput_TextChanged" LostKeyboardFocus="PaletteColorInput_LostKeyboardFocus"
-                                             AutomationProperties.Name="蓝色通道" />
+                                             AutomationProperties.Name="{local:Loc '蓝色通道'}" />
                                 </Grid>
                             </StackPanel>
                         </Grid>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="34" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="透明度" FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                            <TextBlock Text="{local:Loc '透明度'}" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        VerticalAlignment="Center" Margin="1,0,8,0" />
                             <Slider x:Name="PaletteAlphaSlider" Grid.Column="1" Minimum="0" Maximum="255"
                                     TickFrequency="1" IsSnapToTickEnabled="True" Value="255" Height="24"
@@ -621,15 +621,15 @@
                                     PreviewMouseLeftButtonUp="PaletteAlphaSlider_MouseLeftButtonUp"
                                     PreviewKeyUp="PaletteAlphaSlider_KeyUp"
                                     Style="{StaticResource ColorPickerAlphaSliderStyle}"
-                                    AutomationProperties.Name="颜色透明度" />
+                                    AutomationProperties.Name="{local:Loc '颜色透明度'}" />
                             <TextBlock x:Name="PaletteAlphaValue" Grid.Column="2" Text="100%" FontSize="12"
                                        Foreground="{DynamicResource PrimaryText}" VerticalAlignment="Center"
                                        HorizontalAlignment="Right" />
                         </Grid>
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Button x:Name="PaletteCancelButton" Content="取消" Padding="8,5" Click="CancelPaletteButton_Click" />
-                            <Button x:Name="PaletteConfirmButton" Grid.Column="2" Content="确定" Padding="8,5" Style="{StaticResource PrimaryButton}"
+                            <Button x:Name="PaletteCancelButton" Content="{local:Loc '取消'}" Padding="8,5" Click="CancelPaletteButton_Click" />
+                            <Button x:Name="PaletteConfirmButton" Grid.Column="2" Content="{local:Loc '确定'}" Padding="8,5" Style="{StaticResource PrimaryButton}"
                                     Click="ConfirmPaletteButton_Click" />
                         </Grid>
                     </StackPanel>

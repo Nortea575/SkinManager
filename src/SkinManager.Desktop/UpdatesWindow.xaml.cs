@@ -18,6 +18,7 @@ public partial class UpdatesWindow : Window
         _coordinator = coordinator;
         _canInstall = canInstall ?? (() => true);
         InitializeComponent();
+        AppLocalization.LanguageChanged += Localization_LanguageChanged;
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this);
         HistoryEntries.ItemsSource = ChangelogReader.ReadEmbedded();
@@ -26,15 +27,18 @@ public partial class UpdatesWindow : Window
         if (_coordinator is not null)
         {
             _coordinator.PropertyChanged += Coordinator_PropertyChanged;
-            CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}{(_coordinator.CurrentVersionIsPrerelease ? "（测试版）" : "")}";
+            CurrentVersionText.Text = AppLocalization.Format(
+                "当前版本：{0}{1}", _coordinator.CurrentVersionLabel,
+                _coordinator.CurrentVersionIsPrerelease ? AppLocalization.Get("（测试版）") : string.Empty);
             AutomaticCheckBox.IsChecked = _coordinator.AutomaticCheckAndDownload;
             PrereleaseCheckBox.IsChecked = _coordinator.IncludePrereleases;
         }
         else
         {
-            CurrentVersionText.Text = $"当前版本：{UpdateCoordinator.ReadCurrentVersionTag()}";
-            ChannelText.Text = "更新通道：不可用";
-            StatusText.Text = "当前没有可用的更新服务。";
+            CurrentVersionText.Text = AppLocalization.Format("当前版本：{0}{1}",
+                UpdateCoordinator.ReadCurrentVersionTag(), string.Empty);
+            ChannelText.Text = AppLocalization.Get("更新通道：不可用");
+            StatusText.Text = AppLocalization.Get("当前没有可用的更新服务。");
             AutomaticCheckBox.IsEnabled = false;
             PrereleaseCheckBox.IsEnabled = false;
             CheckButton.IsEnabled = false;
@@ -50,6 +54,7 @@ public partial class UpdatesWindow : Window
             {
                 _coordinator.PropertyChanged -= Coordinator_PropertyChanged;
             }
+            AppLocalization.LanguageChanged -= Localization_LanguageChanged;
         };
         RefreshState();
     }
@@ -57,6 +62,18 @@ public partial class UpdatesWindow : Window
     public event Func<Task<bool>>? InstallRequested;
 
     private void Coordinator_PropertyChanged(object? sender, PropertyChangedEventArgs e) => RefreshState();
+
+    private void Localization_LanguageChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.InvokeAsync(() => Localization_LanguageChanged(sender, e));
+            return;
+        }
+
+        HistoryEntries.ItemsSource = ChangelogReader.ReadEmbedded();
+        RefreshState();
+    }
 
     private void ViewTab_Checked(object sender, RoutedEventArgs e)
     {
@@ -80,30 +97,33 @@ public partial class UpdatesWindow : Window
             return;
         }
 
-        CurrentVersionText.Text = $"当前版本：{_coordinator.CurrentVersionLabel}{(_coordinator.CurrentVersionIsPrerelease ? "（测试版）" : "")}";
-        ChannelText.Text = _coordinator.IncludePrereleases
+        CurrentVersionText.Text = AppLocalization.Format(
+            "当前版本：{0}{1}", _coordinator.CurrentVersionLabel,
+            _coordinator.CurrentVersionIsPrerelease ? AppLocalization.Get("（测试版）") : string.Empty);
+        ChannelText.Text = AppLocalization.Get(_coordinator.IncludePrereleases
             ? "更新通道：正式版与测试版"
-            : "更新通道：仅正式版";
+            : "更新通道：仅正式版");
         StatusText.Text = _coordinator.StatusMessage;
         ReleaseVersionText.Text = _coordinator.Release is { } release
-            ? $"可用版本：{release.DisplayVersion}{(release.IsPrerelease ? "（测试版）" : "（正式版）")}"
+            ? AppLocalization.Format("可用版本：{0}{1}", release.DisplayVersion,
+                AppLocalization.Get(release.IsPrerelease ? "（测试版）" : "（正式版）"))
             : _coordinator.CheckState switch
             {
-                UpdateCheckState.UpToDate => "没有可用的新版本。",
-                UpdateCheckState.NotPublished => "此版本尚未发布可用的更新。",
-                UpdateCheckState.PackageNotReady => "发现新版本，但安装包尚未准备好。",
+                UpdateCheckState.UpToDate => AppLocalization.Get("没有可用的新版本。"),
+                UpdateCheckState.NotPublished => AppLocalization.Get("此版本尚未发布可用的更新。"),
+                UpdateCheckState.PackageNotReady => AppLocalization.Get("发现新版本，但安装包尚未准备好。"),
                 _ => ""
             };
         ReleaseSizeText.Text = _coordinator.Release is { } releaseWithSize
-            ? $"安装包大小：{FormatBytes(releaseWithSize.Size)}"
+            ? AppLocalization.Format("安装包大小：{0}", FormatBytes(releaseWithSize.Size))
             : "";
-        ReleaseNotesText.Text = _coordinator.Release?.Notes ?? "检查更新后，发布说明会显示在这里。";
+        ReleaseNotesText.Text = _coordinator.Release?.Notes ?? AppLocalization.Get("检查更新后，发布说明会显示在这里。");
         AutomaticCheckBox.IsChecked = _coordinator.AutomaticCheckAndDownload;
         PrereleaseCheckBox.IsChecked = _coordinator.IncludePrereleases;
         PrereleaseCheckBox.IsEnabled = !_coordinator.IsWorking && !_installPending;
         CheckButton.IsEnabled = !_coordinator.IsWorking && !_installPending;
         DownloadButton.Visibility = _coordinator.HasAvailableUpdate ? Visibility.Visible : Visibility.Collapsed;
-        DownloadButton.Content = _coordinator.HasDownloadedUpdate ? "重新下载" : "下载更新";
+        DownloadButton.Content = AppLocalization.Get(_coordinator.HasDownloadedUpdate ? "重新下载" : "下载更新");
         DownloadButton.IsEnabled = !_coordinator.IsWorking && !_installPending;
         CancelDownloadButton.Visibility = _coordinator.IsDownloading ? Visibility.Visible : Visibility.Collapsed;
         CancelDownloadButton.IsEnabled = _coordinator.IsDownloading;
@@ -116,7 +136,8 @@ public partial class UpdatesWindow : Window
         {
             DownloadProgress.IsIndeterminate = progress.Percent is null;
             DownloadProgress.Value = progress.Percent ?? 0;
-            ProgressText.Text = $"{FormatBytes(progress.BytesReceived)} / {FormatBytes(progress.TotalBytes)}";
+            ProgressText.Text = string.Format(AppLocalization.Culture,
+                "{0} / {1}", FormatBytes(progress.BytesReceived), FormatBytes(progress.TotalBytes));
         }
     }
 
@@ -213,9 +234,9 @@ public partial class UpdatesWindow : Window
         var kibibytes = bytes / 1024d;
         if (kibibytes < 1024)
         {
-            return $"{kibibytes:0.#} KB";
+            return kibibytes.ToString("0.#", AppLocalization.Culture) + " KB";
         }
 
-        return $"{kibibytes / 1024:0.##} MB";
+        return (kibibytes / 1024).ToString("0.##", AppLocalization.Culture) + " MB";
     }
 }

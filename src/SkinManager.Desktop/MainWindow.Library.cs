@@ -28,8 +28,8 @@ public partial class MainWindow
 
         SkinList.Tag = CanReorderSkins;
         SortStatusText.Text = !string.IsNullOrWhiteSpace(SearchBox.Text)
-            ? "搜索结果已筛选；清空搜索后可排序"
-            : _skinOrderPersistenceWarning ?? "拖动皮肤卡片调整顺序（单击选择）";
+            ? AppLocalization.Get("搜索结果已筛选；清空搜索后可排序")
+            : _skinOrderPersistenceWarning ?? AppLocalization.Get("拖动皮肤卡片调整顺序（单击选择）");
         SortStatusText.ToolTip = SortStatusText.Text;
     }
 
@@ -151,7 +151,7 @@ public partial class MainWindow
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _skinOrderPersistenceWarning = "无法保存排序；检查皮肤库目录权限后重试。";
+            _skinOrderPersistenceWarning = AppLocalization.Get("无法保存排序；检查皮肤库目录权限后重试。");
             SortStatusText.ToolTip = exception.Message;
             UpdateSortStatus();
         }

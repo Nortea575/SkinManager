@@ -1,4 +1,5 @@
 using SkinManager.Runtime;
+using SkinManager.Core;
 
 namespace SkinManager.Desktop;
 
@@ -9,11 +10,11 @@ internal sealed record RuntimeConnectionViewState(
     bool IsConnected,
     bool IsApplied)
 {
-    internal static RuntimeConnectionViewState From(RuntimeStatus? status)
+    internal static RuntimeConnectionViewState From(RuntimeStatus? status, bool preferStateSummary = false)
     {
         if (status is null)
         {
-            return new("未连接", "SecondaryText", "选择一个窗口，或在没有 Codex 实例时启动调试版。", false, false);
+            return new(AppLocalization.Get("未连接"), "SecondaryText", AppLocalization.Get("选择一个窗口，或在没有 Codex 实例时启动调试版。"), false, false);
         }
 
         var isConnected = status.State == RuntimeStatusState.Connected;
@@ -27,7 +28,7 @@ internal sealed record RuntimeConnectionViewState(
             RuntimeStatusState.Applying =>
                 ("正在应用", "WarningText", "正在将当前皮肤应用到 Codex 页面。"),
             RuntimeStatusState.Connected when status.AppliedTargetCount > 0 =>
-                ("已连接并已应用", "SuccessText", $"已应用到 {status.AppliedTargetCount} 个 Codex 页面。"),
+                ("已连接并已应用", "SuccessText", AppLocalization.Format("已应用到 {0} 个 Codex 页面。", status.AppliedTargetCount)),
             RuntimeStatusState.Connected =>
                 ("已连接，尚未应用", "WarningText", "连接已建立，但没有匹配的 Codex 主窗口；皮肤尚未应用。"),
             RuntimeStatusState.Error =>
@@ -36,20 +37,18 @@ internal sealed record RuntimeConnectionViewState(
                 ("未连接", "SecondaryText", "选择一个窗口，或在没有 Codex 实例时启动调试版。")
         };
 
-        var message = string.IsNullOrWhiteSpace(status.Message) ? fallback : status.Message;
-        if (isConnected && status.AppliedTargetCount == 0 &&
-            !message.Contains("尚未应用", StringComparison.OrdinalIgnoreCase) &&
-            !message.Contains("未应用", StringComparison.OrdinalIgnoreCase))
-        {
-            message = $"连接已建立，皮肤尚未应用。{message}";
-        }
+        label = AppLocalization.Get(label);
+        fallback = AppLocalization.Get(fallback);
+        var message = preferStateSummary || string.IsNullOrWhiteSpace(status.Message)
+            ? fallback
+            : AppLocalization.Get(status.Message);
 
         return new RuntimeConnectionViewState(label, brush, message, isConnected, isApplied);
     }
 
-    internal static string GetPrimaryActionLabel(bool hasActiveConnection, bool hasSelectedTarget, bool hasSkin) =>
+    internal static string GetPrimaryActionLabel(bool hasActiveConnection, bool hasSelectedTarget, bool hasSkin) => AppLocalization.Get(
         !hasSkin ? "先选择皮肤" :
         hasActiveConnection ? "应用皮肤 / 更新" :
         hasSelectedTarget ? "连接并应用" :
-        "启动并应用";
+        "启动并应用");
 }

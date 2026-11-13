@@ -19,13 +19,13 @@ internal sealed record MarketCommentRow(string Id, string Author, string Content
 {
     internal static MarketCommentRow From(SkinMarketComment comment) => new(
         comment.Id.ToString(CultureInfo.InvariantCulture),
-        string.IsNullOrWhiteSpace(comment.Author) ? "匿名用户" : comment.Author,
+        string.IsNullOrWhiteSpace(comment.Author) ? AppLocalization.Get("匿名用户") : comment.Author,
         comment.Content,
         FormatDate(comment.Date));
 
     private static string FormatDate(string value) =>
         DateTimeOffset.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var date)
-            ? date.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
+            ? date.ToLocalTime().ToString("g", AppLocalization.Culture)
             : value;
 }
 
@@ -105,9 +105,14 @@ public partial class SkinMarketWindow
             }
 
             OnAccountChanged(oldUserId);
-            SetAccountStatus(_client.Account is { } account
-                ? $"已登录：{account.DisplayName}"
-                : "未登录，可浏览市场；点赞、评论与投稿需要账号。");
+            if (_client.Account is { } account)
+            {
+                SetAccountStatus("已登录：{0}", arguments: [account.DisplayName]);
+            }
+            else
+            {
+                SetAccountStatus("未登录，可浏览市场；点赞、评论与投稿需要账号。");
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -116,7 +121,7 @@ public partial class SkinMarketWindow
         {
             if (!_isClosed)
             {
-                SetAccountStatus($"无法验证市场账号：{exception.Message}", isError: true);
+                SetAccountStatus("无法验证市场账号：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -155,9 +160,14 @@ public partial class SkinMarketWindow
             }
 
             OnAccountChanged(oldUserId);
-            SetAccountStatus(_client.Account is { } account
-                ? $"已登录：{account.DisplayName}"
-                : "尚未验证为登录状态；完成网站注册验证后可再次登录。");
+            if (_client.Account is { } account)
+            {
+                SetAccountStatus("已登录：{0}", arguments: [account.DisplayName]);
+            }
+            else
+            {
+                SetAccountStatus("尚未验证为登录状态；完成网站注册验证后可再次登录。");
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -166,7 +176,7 @@ public partial class SkinMarketWindow
         {
             if (!_isClosed)
             {
-                SetAccountStatus($"账号验证失败：{exception.Message}", isError: true);
+                SetAccountStatus("账号验证失败：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -267,7 +277,7 @@ public partial class SkinMarketWindow
 
             if (!_isClosed && accountGeneration == _accountGeneration)
             {
-                SetAccountStatus($"账号已登录，但无法同步点赞状态：{exception.Message}", isError: true);
+                SetAccountStatus("账号已登录，但无法同步点赞状态：{0}", isError: true, arguments: [exception.Message]);
             }
         }
     }
@@ -304,8 +314,8 @@ public partial class SkinMarketWindow
         var expectedUserId = _client.Account?.UserId ?? 0;
         _commentsPage = page;
         _comments.Clear();
-        CommentsEmptyText.Text = page == 1 ? "正在读取评论…" : "正在读取下一页…";
-        SetCommunityStatus(CommentsEmptyText.Text);
+        LocalizedUiText.SetText(CommentsEmptyText, page == 1 ? "正在读取评论…" : "正在读取下一页…");
+        SetCommunityStatus(page == 1 ? "正在读取评论…" : "正在读取下一页…");
         UpdateCommunityControls();
         try
         {
@@ -324,9 +334,10 @@ public partial class SkinMarketWindow
             _commentsPage = result.Pagination.Page;
             _commentsTotalPages = result.Pagination.TotalPages;
             row.SetCommentCount(result.Pagination.Total);
-            CommentsEmptyText.Text = _comments.Count == 0 ? "还没有评论。" : string.Empty;
+            LocalizedUiText.SetText(CommentsEmptyText, _comments.Count == 0 ? "还没有评论。" : string.Empty);
             CommentsEmptyText.Visibility = _comments.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            CommentsPaginationText.Text = $"第 {_commentsPage}/{Math.Max(1, _commentsTotalPages)} 页 · 共 {result.Pagination.Total} 条";
+            LocalizedUiText.SetText(CommentsPaginationText, "第 {0}/{1} 页 · 共 {2} 条",
+                _commentsPage, Math.Max(1, _commentsTotalPages), result.Pagination.Total);
             SetCommunityStatus(string.Empty);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -339,14 +350,14 @@ public partial class SkinMarketWindow
             {
                 if (HandleReauthenticationFailure(exception, expectedUserId, accountGeneration, "评论读取"))
                 {
-                    CommentsEmptyText.Text = "市场登录状态已过期，请重新登录后继续。";
+                    LocalizedUiText.SetText(CommentsEmptyText, "市场登录状态已过期，请重新登录后继续。");
                     CommentsEmptyText.Visibility = Visibility.Visible;
                     return;
                 }
 
-                CommentsEmptyText.Text = "暂时无法读取评论。";
+                LocalizedUiText.SetText(CommentsEmptyText, "暂时无法读取评论。");
                 CommentsEmptyText.Visibility = Visibility.Visible;
-                SetCommunityStatus($"评论读取失败：{exception.Message}", isError: true);
+                SetCommunityStatus("评论读取失败：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -369,9 +380,10 @@ public partial class SkinMarketWindow
             return;
         }
 
-        DetailsLikeButton.Content = _client.Account is null
-            ? $"登录后点赞 · {row.LikeCount}"
-            : row.LikedByMe ? $"取消点赞 · {row.LikeCount}" : $"点赞 · {row.LikeCount}";
+        var likeSource = _client.Account is null
+            ? "登录后点赞 · {0}"
+            : row.LikedByMe ? "取消点赞 · {0}" : "点赞 · {0}";
+        LocalizedUiText.SetContent(DetailsLikeButton, likeSource, row.LikeCount);
         if (_comments.Count == 0 && _commentsCancellation is null && string.IsNullOrWhiteSpace(DetailsCommunityStatus.Text))
         {
             CommentsEmptyText.Visibility = Visibility.Visible;
@@ -404,19 +416,19 @@ public partial class SkinMarketWindow
         UploadForm.Visibility = _isUploadVisible && canSubmit ? Visibility.Visible : Visibility.Collapsed;
         if (_isUploadVisible && account is null)
         {
-            UploadAccessMessage.Text = "登录后可以选择本地皮肤或 ZIP 包提交。投稿会由网站审核，审核前不会公开展示。";
+            LocalizedUiText.SetText(UploadAccessMessage, "登录后可以选择本地皮肤或 ZIP 包提交。投稿会由网站审核，审核前不会公开展示。");
             UploadLoginButton.Visibility = Visibility.Visible;
-            UploadPermissionSummary.Text = "需要登录并具备投稿权限。";
+            LocalizedUiText.SetText(UploadPermissionSummary, "需要登录并具备投稿权限。");
         }
         else if (_isUploadVisible && account is { CanSubmit: false })
         {
-            UploadAccessMessage.Text = "当前账号没有投稿权限，暂时不能提交皮肤。";
+            LocalizedUiText.SetText(UploadAccessMessage, "当前账号没有投稿权限，暂时不能提交皮肤。");
             UploadLoginButton.Visibility = Visibility.Collapsed;
-            UploadPermissionSummary.Text = "当前账号没有投稿权限。";
+            LocalizedUiText.SetText(UploadPermissionSummary, "当前账号没有投稿权限。");
         }
         else
         {
-            UploadPermissionSummary.Text = _isUploadVisible ? "投稿内容会经过网站审核。" : string.Empty;
+            LocalizedUiText.SetText(UploadPermissionSummary, _isUploadVisible ? "投稿内容会经过网站审核。" : string.Empty);
         }
 
         SubmitUploadButton.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload && _uploadPackagePath is not null &&
@@ -449,39 +461,41 @@ public partial class SkinMarketWindow
         }
     }
 
-    private void SetAccountStatus(string text, bool isError = false)
+    private void SetAccountStatus(string source, bool isError = false, params object?[] arguments)
     {
         if (_isClosed)
         {
             return;
         }
 
-        MarketAccountStatusText.Text = text;
-        MarketAccountStatusText.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
+        LocalizedUiText.SetText(MarketAccountStatusText, source, arguments);
+        MarketAccountStatusText.Visibility = string.IsNullOrWhiteSpace(LocalizedUiText.Format(source, arguments))
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         MarketAccountStatusText.SetResourceReference(TextBlock.ForegroundProperty,
             isError ? "ErrorText" : "SecondaryText");
     }
 
-    private void SetCommunityStatus(string text, bool isError = false)
+    private void SetCommunityStatus(string source, bool isError = false, params object?[] arguments)
     {
         if (_isClosed)
         {
             return;
         }
 
-        DetailsCommunityStatus.Text = text;
+        LocalizedUiText.SetText(DetailsCommunityStatus, source, arguments);
         DetailsCommunityStatus.SetResourceReference(TextBlock.ForegroundProperty,
             isError ? "ErrorText" : "SecondaryText");
     }
 
-    private void SetUploadStatus(string text, bool isError = false)
+    private void SetUploadStatus(string source, bool isError = false, params object?[] arguments)
     {
         if (_isClosed)
         {
             return;
         }
 
-        UploadStatusText.Text = text;
+        LocalizedUiText.SetText(UploadStatusText, source, arguments);
         UploadStatusText.SetResourceReference(TextBlock.ForegroundProperty,
             isError ? "ErrorText" : "SecondaryText");
     }
@@ -586,7 +600,7 @@ public partial class SkinMarketWindow
         }
         catch (Exception exception)
         {
-            SetAccountStatus($"退出账号失败：{exception.Message}", isError: true);
+            SetAccountStatus("退出账号失败：{0}", isError: true, arguments: [exception.Message]);
         }
         finally
         {
@@ -651,7 +665,7 @@ public partial class SkinMarketWindow
             if (!cancellation.IsCancellationRequested && !_isClosed &&
                 ReferenceEquals(_selectedRow, row) && accountGeneration == _accountGeneration)
             {
-                SetCommunityStatus($"点赞没有完成：{exception.Message}", isError: true);
+                SetCommunityStatus("点赞没有完成：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -744,7 +758,7 @@ public partial class SkinMarketWindow
             if (!cancellation.IsCancellationRequested && !_isClosed &&
                 ReferenceEquals(_selectedRow, row) && accountGeneration == _accountGeneration)
             {
-                SetCommunityStatus($"评论没有完成，输入内容已保留：{exception.Message}", isError: true);
+                SetCommunityStatus("评论没有完成，输入内容已保留：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -842,7 +856,7 @@ public partial class SkinMarketWindow
         catch (Exception exception)
         {
             catalog = Array.Empty<SkinCatalogEntry>();
-            SetUploadStatus($"无法读取本地皮肤库：{exception.Message}", isError: true);
+            SetUploadStatus("无法读取本地皮肤库：{0}", isError: true, arguments: [exception.Message]);
         }
 
         var options = catalog.OrderBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -881,8 +895,8 @@ public partial class SkinMarketWindow
     {
         var dialog = new OpenFileDialog
         {
-            Title = "选择皮肤 ZIP 包",
-            Filter = "皮肤 ZIP 包 (*.zip)|*.zip",
+            Title = AppLocalization.Get("选择皮肤 ZIP 包"),
+            Filter = AppLocalization.Get("皮肤 ZIP 包 (*.zip)|*.zip"),
             CheckFileExists = true,
             Multiselect = false
         };
@@ -929,7 +943,7 @@ public partial class SkinMarketWindow
                 var fileInfo = new FileInfo(path);
                 if (!fileInfo.Exists || fileInfo.Length is <= 0 or > SkinMarketClient.MaxDownloadBytes)
                 {
-                    throw new InvalidDataException("皮肤包为空或超过 64 MB 上传上限。");
+                    throw new InvalidDataException(AppLocalization.Get("皮肤包为空或超过 64 MB 上传上限。"));
                 }
 
                 var packageBytes = File.ReadAllBytes(path);
@@ -958,7 +972,8 @@ public partial class SkinMarketWindow
                 _pendingTemporaryUploadPath = null;
             }
 
-            UploadPackageSummary.Text = $"{package.Name} · {package.Id} · v{package.Version} · skin v{package.Definition.FormatVersion}";
+            LocalizedUiText.SetRawText(UploadPackageSummary,
+                $"{package.Name} · {package.Id} · v{package.Version} · skin v{package.Definition.FormatVersion}");
             UploadAuthorBox.Text = package.Definition.Author ?? string.Empty;
             SetUploadStatus("包已读取；ID、名称和版本来自包清单。", isError: false);
         }
@@ -973,7 +988,7 @@ public partial class SkinMarketWindow
         {
             if (!_isClosed)
             {
-                SetUploadStatus($"无法读取皮肤包：{exception.Message}", isError: true);
+                SetUploadStatus("无法读取皮肤包：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -1083,7 +1098,7 @@ public partial class SkinMarketWindow
             if (!cancellation.IsCancellationRequested && !_isClosed &&
                 _client.Account?.UserId == userId && accountGeneration == _accountGeneration)
             {
-                SetUploadStatus($"投稿没有完成，表单与包仍保留：{exception.Message}", isError: true);
+                SetUploadStatus("投稿没有完成，表单与包仍保留：{0}", isError: true, arguments: [exception.Message]);
             }
         }
         finally
@@ -1135,7 +1150,7 @@ public partial class SkinMarketWindow
 
         if (updateUi && !_isClosed && UploadPackageSummary is not null)
         {
-            UploadPackageSummary.Text = "请选择本地皮肤或 ZIP 包。";
+            LocalizedUiText.SetText(UploadPackageSummary, "请选择本地皮肤或 ZIP 包。");
         }
 
         if (updateUi && !_isClosed)
@@ -1176,22 +1191,26 @@ public partial class SkinMarketWindow
         }
 
         OnAccountChanged(expectedUserId);
-        var message = $"{operation}请求发现登录状态已过期，请重新登录后继续。";
-        SetAccountStatus(message, isError: true);
+        SetAccountStatus("{0}请求发现登录状态已过期，请重新登录后继续。", isError: true,
+            arguments: [AppLocalization.Get(operation)]);
         if (IsDetailsVisible)
         {
-            SetCommunityStatus(message, isError: true);
+            SetCommunityStatus("{0}请求发现登录状态已过期，请重新登录后继续。", isError: true,
+                arguments: [AppLocalization.Get(operation)]);
         }
 
         if (_isUploadVisible)
         {
-            SetUploadStatus($"{message} 投稿表单与所选皮肤包仍保留。", isError: true);
+            SetUploadStatus("{0}请求发现登录状态已过期，请重新登录后继续。投稿表单与所选皮肤包仍保留。",
+                isError: true, arguments: [AppLocalization.Get(operation)]);
         }
 
         UpdateCommunityControls();
         if (_isUploadVisible)
         {
-            UploadAccessMessage.Text = $"{message} 投稿表单与所选皮肤包已保留。";
+            LocalizedUiText.SetText(UploadAccessMessage,
+                "{0}请求发现登录状态已过期，请重新登录后继续。投稿表单与所选皮肤包已保留。",
+                AppLocalization.Get(operation));
             UploadLoginButton.Visibility = Visibility.Visible;
         }
 

@@ -13,7 +13,7 @@ public static class SkinRuntimeCompiler
         ArgumentNullException.ThrowIfNull(package);
         if (userTransparency.HasValue && (!double.IsFinite(userTransparency.Value) || userTransparency.Value is < 0 or > 100))
         {
-            throw new ArgumentOutOfRangeException(nameof(userTransparency), "透明度必须介于 0 到 100 之间。");
+            throw new ArgumentOutOfRangeException(nameof(userTransparency), AppLocalization.Get("透明度必须介于 0 到 100 之间。"));
         }
 
         var panelOpacity = userTransparency.HasValue ? (100 - userTransparency.Value) / 100 : (double?)null;
@@ -32,7 +32,7 @@ public static class SkinRuntimeCompiler
                     var bytes = background.ImageBytes ?? (package.Files.TryGetValue(imagePath, out var packageBytes) ? packageBytes : null);
                     if (bytes is null || bytes.Length == 0)
                     {
-                        throw new InvalidDataException($"皮肤背景资源“{imagePath}”没有可用的图片数据。");
+                        throw new InvalidDataException(AppLocalization.Format("皮肤背景资源“{0}”没有可用的图片数据。", imagePath));
                     }
 
                     var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();

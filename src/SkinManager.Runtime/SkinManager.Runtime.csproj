@@ -8,6 +8,8 @@
     <RootNamespace>SkinManager.Runtime</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
+    <Using Include="SkinManager.Core" />
     <InternalsVisibleTo Include="SkinManager.Agent" />
     <InternalsVisibleTo Include="SkinManager.Runtime.Tests" />
   </ItemGroup>

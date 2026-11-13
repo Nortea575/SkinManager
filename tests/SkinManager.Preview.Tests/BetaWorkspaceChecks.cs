@@ -37,7 +37,7 @@ internal static class BetaWorkspaceChecks
 
             VerifySkinOrderPersistence(root, ayanami, saya);
             await VerifyLibraryReorderAndPreviewAsync(root, ayanami, saya, native);
-            await VerifySettingsStorageMigrationAsync(root, ayanami, saya, native);
+            await VerifySettingsLanguageAndTabsAsync(root, ayanami, saya, native);
             await VerifyRuntimeResultSurvivesPassiveRefreshAsync(root, native);
         }
         finally
@@ -148,7 +148,7 @@ internal static class BetaWorkspaceChecks
                 "导入后仍选中刚导入的 Ayanami");
 
             var version = Find<TextBlock>(window, "AppVersionLabel");
-            Require(version.Text == "1.1.4-beta.1",
+            Require(version.Text == "1.1.4-beta.2",
                 "主窗口显示本轮公开测试版本标签");
             var updateLabel = Find<TextBlock>(window, "UpdateEntryLabel");
             Require(updateLabel.Text == "版本与更新" &&
@@ -213,11 +213,14 @@ internal static class BetaWorkspaceChecks
 
         var oldRenderer = GetRenderer(window);
         var host = Find<Grid>(window, "PreviewBrowserHost");
+        var previewContainer = Find<Border>(window, "PreviewContainer");
+        var previewViewport = Find<Grid>(window, "PreviewViewport");
+        var selectedMetadata = Find<Grid>(window, "SelectedMetadata");
         var oldBrowser = Find<WebView2>(window, "PreviewBrowser");
         Find<Button>(window, "PreviewPowerButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var previewRow = Find<Grid>(window, "DetailsScroll").RowDefinitions[3];
         await WaitUntilAsync(() =>
-            Find<Border>(window, "PreviewContainer").Visibility == Visibility.Collapsed &&
+            previewContainer.Visibility == Visibility.Collapsed &&
             Find<Grid>(window, "PreviewClosedHeader").Visibility == Visibility.Visible &&
             Find<Grid>(window, "PreviewActiveHeader").Visibility == Visibility.Collapsed &&
             previewRow.Height.Value == 0 && previewRow.MinHeight == 0 &&
@@ -232,11 +235,18 @@ internal static class BetaWorkspaceChecks
         {
             var currentRenderer = GetRendererOrNull(window);
             var currentBrowser = FindVisualChildren<WebView2>(host).SingleOrDefault();
+            var previewBounds = GetBounds(window, previewContainer);
+            var viewportBounds = GetBounds(window, previewViewport);
+            var metadataBounds = GetBounds(window, selectedMetadata);
             if (currentRenderer is null || ReferenceEquals(currentRenderer, oldRenderer) ||
                 currentBrowser is null || ReferenceEquals(currentBrowser, oldBrowser) ||
                 currentBrowser.CoreWebView2 is null ||
-                Find<Border>(window, "PreviewContainer").Visibility != Visibility.Visible ||
-                !previewRow.Height.IsStar || previewRow.MinHeight < 150 ||
+                previewContainer.Visibility != Visibility.Visible ||
+                !previewRow.Height.IsStar || previewRow.MinHeight <= 0 ||
+                Math.Abs(previewRow.MinHeight - previewViewport.MinHeight) > 0.1 ||
+                previewRow.ActualHeight <= 0 || previewViewport.ActualHeight < previewViewport.MinHeight - 1 ||
+                !previewViewport.IsVisible ||
+                !IsWithinBounds(viewportBounds, previewBounds) || previewBounds.Bottom > metadataBounds.Top + 1 ||
                 Find<TextBlock>(window, "PreviewStatus").Text != "预览草稿 · 点击组件可切换编辑目标" ||
                 editor.Visibility != Visibility.Visible)
             {
@@ -271,7 +281,7 @@ internal static class BetaWorkspaceChecks
         await WaitUntilAsync(() => editor.Visibility == Visibility.Collapsed, "取消草稿并回到皮肤库");
     }
 
-    private static async Task VerifySettingsStorageMigrationAsync(
+    private static async Task VerifySettingsLanguageAndTabsAsync(
         string root,
         SkinPackage ayanami,
         SkinPackage saya,
@@ -281,9 +291,11 @@ internal static class BetaWorkspaceChecks
         var store = CreateStore(Path.Combine(managerRoot, "skins"), ayanami, saya);
         var profile = Path.Combine(managerRoot, "profile");
         Directory.CreateDirectory(profile);
+        AppLocalization.Initialize(Path.Combine(managerRoot, "language.json"));
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         var compatibilityPath = Path.Combine(profile, "compatibility-settings.json");
-        var persistedSettings = new CompatibilitySettingsStore(compatibilityPath);
-        persistedSettings.Save(new RuntimeCompatibilityOptions(true));
+        const string legacySettings = "{\"forceSimplifiedChinese\":true}";
+        File.WriteAllText(compatibilityPath, legacySettings);
 
         var window = CreateMainWindow(store, native, profile, readRuntimeStatusOnLoad: false);
         window.Show();
@@ -293,28 +305,24 @@ internal static class BetaWorkspaceChecks
             Find<Button>(window, "SettingsEntryButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var settings = await WaitForSettingsWindowAsync(window);
             Require(settings.Title == "设置" &&
-                    Find<CheckBox>(settings, "ForceSimplifiedChineseCheckBox").Content?.ToString() == "固定使用简体中文",
-                "设置入口打开标题为‘设置’的真实设置面板");
-            Require(Find<TextBlock>(settings, "CompatibilityGroupHeader").Text == "兼容性" &&
-                    Find<CheckBox>(settings, "ForceSimplifiedChineseCheckBox").IsChecked == true,
-                "原兼容选项归入兼容性分组并读取旧路径保存值");
+                    Find<TabItem>(settings, "GeneralTab").Header?.ToString() == "常规" &&
+                    Find<TabItem>(settings, "AppearanceTab").Header?.ToString() == "外观" &&
+                    Find<TabItem>(settings, "CompatibilityTab").Header?.ToString() == "兼容性",
+                "设置入口打开标题为‘设置’并显示横向分类标签");
+            Require(settings.FindName("ForceSimplifiedChineseCheckBox") is null &&
+                    settings.FindName("LanguageSavedStatusText") is null &&
+                    File.ReadAllText(compatibilityPath) == legacySettings,
+                "旧固定中文偏好不再出现在设置界面，也不会因打开设置被改写");
 
-            Toggle(Find<CheckBox>(settings, "ForceSimplifiedChineseCheckBox"));
-            await WaitUntilAsync(() => persistedSettings.Load().ForceSimplifiedChinese == false,
-                "设置页通过原兼容设置存储位置保存新值");
-            Require(File.Exists(compatibilityPath) &&
-                    Find<TextBlock>(settings, "LanguageSavedStatusText").Text.Contains("已保存：关闭", StringComparison.Ordinal),
-                "设置迁移不丢失原存储文件，并保留保存状态反馈");
+            var languageBox = Find<ComboBox>(settings, "LanguageBox");
+            languageBox.SelectedItem = languageBox.Items.OfType<ComboBoxItem>()
+                .First(item => string.Equals(item.Tag?.ToString(), nameof(AppLanguage.English), StringComparison.Ordinal));
+            await WaitUntilAsync(() => settings.Title == "Settings", "切换英文设置窗口");
+            Require(Find<TabItem>(settings, "GeneralTab").Header?.ToString() == "General" &&
+                    Find<TabItem>(settings, "CompatibilityTab").Header?.ToString() == "Compatibility",
+                "真实主窗口的设置标签会随偏好即时切换语言");
 
-            var compatibilityGroup = Find<Expander>(settings, "CompatibilityGroupExpander");
-            Require(compatibilityGroup.IsExpanded, "设置截图展示展开的兼容性分组");
-            var magpieConfigExpander = Find<Expander>(settings, "MagpieSettingsExpander");
-            magpieConfigExpander.IsExpanded = true;
-            var magpieConfigContent = magpieConfigExpander.Content as FrameworkElement
-                ?? throw new InvalidOperationException("兼容设置没有 Magpie/config.toml 展开内容。");
-            await WaitUntilAsync(() => magpieConfigContent.Opacity >= 0.999,
-                "Magpie 与 Codex 配置区域展开动画完成");
-            var configPanel = Find<Border>(settings, "CodexMagpieConfigPanel");
+            Find<TabControl>(settings, "SettingsTabs").SelectedItem = Find<TabItem>(settings, "CompatibilityTab");
             var settingsScrollViewer = Find<ScrollViewer>(settings, "SettingsScrollViewer");
             var refreshCompatibility = Find<Button>(settings, "InspectButton");
             var screenshotDirectory = Program.FindTestOutputDirectory();
@@ -323,15 +331,14 @@ internal static class BetaWorkspaceChecks
             settings.UpdateLayout();
             await WaitUntilAsync(() => settings.ActualWidth >= 759 && settings.ActualHeight >= 569,
                 "设置窗口常规尺寸完成布局");
-            configPanel.BringIntoView();
             await WaitUntilAsync(() => refreshCompatibility.IsVisible &&
                 IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
-                "统一检测入口滚动到760×570设置视口");
+                "兼容性检测入口显示在760×570设置视口");
             await settings.Dispatcher.InvokeAsync(() => settings.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
             Require(Find<TextBlock>(settings, "CodexConfigStatusText").Text.Length > 0 &&
                     refreshCompatibility.IsVisible &&
                     IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
-                "760×570设置截图显示统一配置状态与配置/Magpie重新检测入口");
+                "760×570设置截图显示配置状态与Magpie重新检测入口");
             await Program.SaveWindowScreenshotAsync(
                 settings,
                 Path.Combine(screenshotDirectory, "beta2-settings-compatibility-760x570.png"));
@@ -341,14 +348,15 @@ internal static class BetaWorkspaceChecks
             settings.UpdateLayout();
             await WaitUntilAsync(() => settings.ActualWidth >= 619 && settings.ActualHeight >= 439,
                 "设置窗口最小尺寸完成布局");
-            configPanel.BringIntoView();
+            refreshCompatibility.BringIntoView();
+            await settings.Dispatcher.InvokeAsync(() => settings.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
             await WaitUntilAsync(() => refreshCompatibility.IsVisible &&
                 IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
-                "统一检测入口滚动到620×440设置视口");
+                "兼容性检测入口显示在620×440设置视口");
             await settings.Dispatcher.InvokeAsync(() => settings.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
             Require(refreshCompatibility.IsVisible &&
                     IsWithinBounds(GetBounds(settings, refreshCompatibility), GetBounds(settings, settingsScrollViewer)),
-                "620×440设置截图仍能显示统一配置检测入口");
+                "620×440设置截图仍能显示兼容性检测入口");
             await Program.SaveWindowScreenshotAsync(
                 settings,
                 Path.Combine(screenshotDirectory, "beta2-settings-compatibility-620x440.png"));
@@ -360,6 +368,7 @@ internal static class BetaWorkspaceChecks
             {
                 window.Close();
             }
+            AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         }
     }
 

@@ -9,6 +9,8 @@
     <RootNamespace>SkinManager.Agent</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
     <ProjectReference Include="..\SkinManager.Runtime\SkinManager.Runtime.csproj" />
+    <Using Include="SkinManager.Core" />
   </ItemGroup>
 </Project>

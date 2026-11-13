@@ -5,6 +5,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using SkinManager.Core;
 
 namespace SkinManager.Runtime;
 
@@ -67,7 +68,7 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
         using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var response = await httpClient.GetAsync(new Uri(endpoint, "/json/version"), HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK)
-            throw new InvalidOperationException($"调试端点 /json/version 返回 HTTP {(int)response.StatusCode}。请确认端口属于使用调试参数启动的 Codex。 ");
+            throw new InvalidOperationException(AppLocalization.Format("调试端点 /json/version 返回 HTTP {0}。请确认端口属于使用调试参数启动的 Codex。", ((int)response.StatusCode).ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
         using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!document.RootElement.TryGetProperty("Browser", out var browserValue) || browserValue.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(browserValue.GetString()))
@@ -149,7 +150,7 @@ internal sealed class CdpBrowserClient : IAsyncDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !_lifetime.IsCancellationRequested)
         {
-            throw new TimeoutException($"CDP 命令 {method} 在 {CommandTimeout.TotalSeconds:0} 秒内未响应。 ");
+            throw new TimeoutException(AppLocalization.Format("CDP 命令 {0} 在 {1:0} 秒内未响应。", method, CommandTimeout.TotalSeconds));
         }
         finally
         {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SkinManager.Core;
 using SkinManager.Runtime;
 
 namespace SkinManager.Agent;
@@ -11,6 +12,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        AppLocalization.Initialize();
         if (args.Length == 1 && string.Equals(args[0], "--stop", StringComparison.OrdinalIgnoreCase))
             return StopAgentAsync().GetAwaiter().GetResult();
         if (args.Length != 0)
@@ -51,7 +53,7 @@ internal static class Program
         {
             var status = await new RuntimeController(agentExecutablePath).StopAsync(timeout.Token).ConfigureAwait(false);
             if (status.State == RuntimeStatusState.Error)
-                return Fail(2, status.Message ?? "后台程序未能恢复当前皮肤并停止连接。");
+                return Fail(2, status.Message ?? AppLocalization.Get("后台程序未能恢复当前皮肤并停止连接。"));
 
             var exitDeadline = Stopwatch.GetTimestamp() + (long)(AgentExitTimeout.TotalSeconds * Stopwatch.Frequency);
             while (Stopwatch.GetTimestamp() < exitDeadline)
@@ -62,15 +64,15 @@ internal static class Program
                 await Task.Delay(200, timeout.Token).ConfigureAwait(false);
             }
 
-            return Fail(3, "等待皮肤后台退出超时。请关闭 SkinManager 后重试；未强制结束任何进程。");
+            return Fail(3, AppLocalization.Get("等待皮肤后台退出超时。请关闭 SkinManager 后重试；未强制结束任何进程。"));
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            return Fail(3, "停止命令超时。请确认 SkinManager 已关闭后重试；未强制结束任何进程。");
+            return Fail(3, AppLocalization.Get("停止命令超时。请确认 SkinManager 已关闭后重试；未强制结束任何进程。"));
         }
         catch (Exception exception)
         {
-            return Fail(2, $"无法停止皮肤后台：{exception.Message}");
+            return Fail(2, AppLocalization.Format("无法停止皮肤后台：{0}", exception.Message));
         }
     }
 

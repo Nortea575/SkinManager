@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.ComponentModel;
 using Microsoft.Win32.SafeHandles;
 using System.Net;
+using SkinManager.Core;
 
 namespace SkinManager.Runtime;
 
@@ -70,7 +71,7 @@ public interface ICodexInstanceService
         }
         catch (Exception exception)
         {
-            return ActiveConnectionHealthResult.Unverifiable($"暂时无法检查 Codex 实例列表：{exception.Message}");
+            return ActiveConnectionHealthResult.Unverifiable(AppLocalization.Format("暂时无法检查 Codex 实例列表：{0}", exception.Message));
         }
 
         var matching = instances.FirstOrDefault(instance => SameIdentity(instance.Identity, identity));
@@ -78,21 +79,21 @@ public interface ICodexInstanceService
         {
             var replacement = instances.FirstOrDefault(instance => instance.Identity.ProcessId == identity.ProcessId);
             return replacement is null
-                ? new(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已不在实例列表中。")
-                : new(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+                ? new(ActiveConnectionHealthState.ProcessExited, AppLocalization.Format("Codex 进程 PID {0} 已不在实例列表中。", identity.ProcessId))
+                : new(ActiveConnectionHealthState.IdentityChanged, AppLocalization.Format("Codex 进程 PID {0} 的完整身份已变化。", identity.ProcessId));
         }
 
         if (matching.IsExitResidual)
-            return new(ActiveConnectionHealthState.ProcessExited, $"Codex 主进程 PID {identity.ProcessId} 已退出。 ");
+            return new(ActiveConnectionHealthState.ProcessExited, AppLocalization.Format("Codex 主进程 PID {0} 已退出。", identity.ProcessId));
         if (matching.Kind != CodexInstanceKind.Debug || matching.DebugPort is null)
-            return new(ActiveConnectionHealthState.EndpointOwnershipChanged, "活动 Codex 实例不再声明调试连接。 ");
+            return new(ActiveConnectionHealthState.EndpointOwnershipChanged, AppLocalization.Get("活动 Codex 实例不再声明调试连接。"));
         if (!matching.CanConnect || !ActiveConnectionEndpoint.TryParse(endpoint, out var activeEndpoint) ||
             !ActiveConnectionEndpoint.TryParse(matching.DebugEndpoint, out var discoveredEndpoint))
-            return ActiveConnectionHealthResult.Unverifiable("HTTP listener 探测暂时不可用，未据此断开已建立的 CDP 会话。 ");
+            return ActiveConnectionHealthResult.Unverifiable(AppLocalization.Get("HTTP listener 探测暂时不可用，未据此断开已建立的 CDP 会话。"));
 
         return ActiveConnectionEndpoint.SameAddress(activeEndpoint!, discoveredEndpoint!)
             ? ActiveConnectionHealthResult.Verified()
-            : ActiveConnectionHealthResult.Unverifiable("实例快照发现了不同地址；默认核验器无法证明活动地址的监听归属。 ");
+            : ActiveConnectionHealthResult.Unverifiable(AppLocalization.Get("实例快照发现了不同地址；默认核验器无法证明活动地址的监听归属。"));
     }
 
     Task<CodexLocateResult> LocateAsync(CodexInstance instance, CancellationToken cancellationToken = default);
@@ -167,7 +168,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 int? debugPort = int.TryParse(port, out var parsedPort) && parsedPort is >= 1 and <= 65535 ? parsedPort : null;
                 var (debugEndpoint, connectionMessage, connectionState) = debugPort is { } requestedPort
                     ? await FindConnectableEndpointAsync(requestedPort, candidate.Identity.ProcessId, debugAddress, cancellationToken).ConfigureAwait(false)
-                    : (null, hasDebugOption ? "调试端口参数缺失或无效。请使用 1 到 65535 之间的端口重新启动调试版。" : null,
+                    : (null, hasDebugOption ? AppLocalization.Get("调试端口参数缺失或无效。请使用 1 到 65535 之间的端口重新启动调试版。") : null,
                         hasDebugOption ? CodexDebugConnectionState.Rejected : CodexDebugConnectionState.NotApplicable);
 
                 var windows = _platform.GetVisibleTopLevelWindows(candidate.Identity.ProcessId);
@@ -241,10 +242,10 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         {
             var ownedListenerExists = listeners.Any(listener => listener.ProcessId == processId);
             return ownedListenerExists
-                ? (null, $"调试端口 {port} 的监听地址不是可验证的 loopback 地址。", CodexDebugConnectionState.Rejected)
+                ? (null, AppLocalization.Format("调试端口 {0} 的监听地址不是可验证的 loopback 地址。", port), CodexDebugConnectionState.Rejected)
                 : listeners.Count == 0
-                    ? (null, $"调试端口 {port} 尚未开始监听。", CodexDebugConnectionState.WaitingForListener)
-                    : (null, $"调试端口 {port} 正由其他进程监听，无法连接所选 Codex 实例。", CodexDebugConnectionState.Rejected);
+                    ? (null, AppLocalization.Format("调试端口 {0} 尚未开始监听。", port), CodexDebugConnectionState.WaitingForListener)
+                    : (null, AppLocalization.Format("调试端口 {0} 正由其他进程监听，无法连接所选 Codex 实例。", port), CodexDebugConnectionState.Rejected);
         }
 
         var ambiguousEndpoint = false;
@@ -266,8 +267,8 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         }
 
         if (ambiguousEndpoint)
-            return (null, $"调试端口 {port} 的 loopback 地址由多个进程监听，无法安全连接。请处理端口占用后刷新。 ", CodexDebugConnectionState.Rejected);
-        return (null, $"调试端口 {port} 已由此 Codex 进程监听，正在等待 CDP 服务就绪。", CodexDebugConnectionState.WaitingForCdp);
+            return (null, AppLocalization.Format("调试端口 {0} 的 loopback 地址由多个进程监听，无法安全连接。请处理端口占用后刷新。", port), CodexDebugConnectionState.Rejected);
+        return (null, AppLocalization.Format("调试端口 {0} 已由此 Codex 进程监听，正在等待 CDP 服务就绪。", port), CodexDebugConnectionState.WaitingForCdp);
     }
 
     private static int GetEndpointPreference(Uri endpoint, string? requestedAddress)
@@ -310,14 +311,14 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
 
         var observation = _platform.ObserveProcess(identity.ProcessId);
         if (observation.State == CodexProcessObservationState.Exited)
-            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已退出。 ");
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, AppLocalization.Format("Codex 进程 PID {0} 已退出。", identity.ProcessId));
         if (observation.State == CodexProcessObservationState.Unknown || observation.Identity is null)
-            return ActiveConnectionHealthResult.Unverifiable(observation.Issue ?? "暂时无法核验活动 Codex 进程身份。 ");
+            return ActiveConnectionHealthResult.Unverifiable(observation.Issue ?? AppLocalization.Get("暂时无法核验活动 Codex 进程身份。"));
         if (!SameIdentity(observation.Identity, identity) || !_platform.IsCodexIdentity(observation.Identity))
-            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, AppLocalization.Format("Codex 进程 PID {0} 的完整身份已变化。", identity.ProcessId));
 
         if (!ActiveConnectionEndpoint.TryParse(endpoint, out var activeEndpoint))
-            return ActiveConnectionHealthResult.Unverifiable("活动 CDP endpoint 不是可核验的 loopback 地址。 ");
+            return ActiveConnectionHealthResult.Unverifiable(AppLocalization.Get("活动 CDP endpoint 不是可核验的 loopback 地址。"));
 
         IReadOnlyList<CodexListenerEndpoint> listeners;
         try
@@ -326,7 +327,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         }
         catch (Exception exception) when (exception is InvalidOperationException or Win32Exception or NotSupportedException or System.Security.SecurityException)
         {
-            return ActiveConnectionHealthResult.Unverifiable($"暂时无法读取活动 endpoint 的 listener 归属：{exception.Message}");
+            return ActiveConnectionHealthResult.Unverifiable(AppLocalization.Format("暂时无法读取活动 endpoint 的 listener 归属：{0}", exception.Message));
         }
 
         var exactOwners = listeners
@@ -336,19 +337,19 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             .Distinct()
             .ToArray();
         if (exactOwners.Length == 0)
-            return ActiveConnectionHealthResult.Unverifiable("活动 endpoint 当前没有可核验的 listener；已建立的 CDP 会话保持原状态。 ");
+            return ActiveConnectionHealthResult.Unverifiable(AppLocalization.Get("活动 endpoint 当前没有可核验的 listener；已建立的 CDP 会话保持原状态。"));
         if (exactOwners.Length != 1 || exactOwners[0] != identity.ProcessId)
             return new ActiveConnectionHealthResult(ActiveConnectionHealthState.EndpointOwnershipChanged,
-                $"活动 endpoint {activeEndpoint} 不再由所选 Codex 进程唯一监听。 ");
+                AppLocalization.Format("活动 endpoint {0} 不再由所选 Codex 进程唯一监听。", activeEndpoint));
 
         cancellationToken.ThrowIfCancellationRequested();
         var finalObservation = _platform.ObserveProcess(identity.ProcessId);
         if (finalObservation.State == CodexProcessObservationState.Exited)
-            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, $"Codex 进程 PID {identity.ProcessId} 已退出。 ");
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.ProcessExited, AppLocalization.Format("Codex 进程 PID {0} 已退出。", identity.ProcessId));
         if (finalObservation.State == CodexProcessObservationState.Unknown || finalObservation.Identity is null)
-            return ActiveConnectionHealthResult.Unverifiable(finalObservation.Issue ?? "读取 listener 后无法重新核验活动进程身份。 ");
+            return ActiveConnectionHealthResult.Unverifiable(finalObservation.Issue ?? AppLocalization.Get("读取 listener 后无法重新核验活动进程身份。"));
         if (!SameIdentity(finalObservation.Identity, identity) || !_platform.IsCodexIdentity(finalObservation.Identity))
-            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, $"Codex 进程 PID {identity.ProcessId} 的完整身份已变化。 ");
+            return new ActiveConnectionHealthResult(ActiveConnectionHealthState.IdentityChanged, AppLocalization.Format("Codex 进程 PID {0} 的完整身份已变化。", identity.ProcessId));
 
         return ActiveConnectionHealthResult.Verified();
     }, cancellationToken);
@@ -371,12 +372,12 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         if (request.State == CodexNativeQuitRequestState.Unavailable)
         {
             StorePendingExit(pending);
-            return new(CodexCloseResult.NativeQuitUnavailable, pending, request.Message);
+            return new(CodexCloseResult.NativeQuitUnavailable, pending, AppLocalization.Get(request.Message));
         }
         if (request.State == CodexNativeQuitRequestState.Failed)
         {
             StorePendingExit(pending);
-            return new(CodexCloseResult.Incomplete, pending, request.Message);
+            return new(CodexCloseResult.Incomplete, pending, AppLocalization.Get(request.Message));
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -384,7 +385,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         if (current is null)
         {
             RemovePendingExit(instance.Identity);
-            return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, "已确认所选实例的主进程和已归属后台进程均已退出。");
+            return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, AppLocalization.Get("已确认所选实例的主进程和已归属后台进程均已退出。"));
         }
         StorePendingExit(pending with { PendingExitSnapshot = current, IsExitResidual = !ContainsRoot(current) });
 
@@ -395,7 +396,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             if (current is null)
             {
                 RemovePendingExit(instance.Identity);
-                return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, "已确认所选实例的主进程和已归属后台进程均已退出。");
+                return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, AppLocalization.Get("已确认所选实例的主进程和已归属后台进程均已退出。"));
             }
             StorePendingExit(pending with { PendingExitSnapshot = current, IsExitResidual = !ContainsRoot(current) });
 
@@ -409,7 +410,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         if (current is null)
         {
             RemovePendingExit(instance.Identity);
-            return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, "已确认所选实例的主进程和已归属后台进程均已退出。");
+            return new(CodexCloseResult.Closed, pending with { PendingExitSnapshot = null }, AppLocalization.Get("已确认所选实例的主进程和已归属后台进程均已退出。"));
         }
 
         var updated = pending with { PendingExitSnapshot = current, IsExitResidual = !ContainsRoot(current) };
@@ -417,21 +418,21 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         var outcome = current.Issue is null && current.UnverifiedProcessIds.Count == 0
             ? CodexCloseResult.StillRunning
             : CodexCloseResult.Incomplete;
-        return new(outcome, updated, DescribeRemainingProcesses(current, "已发送所选实例的原生 Quit 请求"));
+        return new(outcome, updated, DescribeRemainingProcesses(current, AppLocalization.Get("已发送所选实例的原生 Quit 请求")));
     }
 
     private CodexCloseOperationResult ForceSelected(CodexInstance instance, CancellationToken cancellationToken)
     {
         var snapshot = instance.PendingExitSnapshot;
         if (snapshot is null || !SameIdentity(snapshot.RootIdentity, instance.Identity))
-            return new(CodexCloseResult.Incomplete, instance, "没有可验证的待处理退出快照。请先选择实例并发起退出请求，再单独确认强制结束。");
+            return new(CodexCloseResult.Incomplete, instance, AppLocalization.Get("没有可验证的待处理退出快照。请先选择实例并发起退出请求，再单独确认强制结束。"));
 
         var currentRoots = GetVerifiedMainCodexIdentities(cancellationToken);
         var rootObservation = _platform.ObserveProcess(snapshot.RootIdentity.ProcessId);
         if (rootObservation.State == CodexProcessObservationState.Running && rootObservation.Identity is not null)
         {
             if (!SameIdentity(rootObservation.Identity, snapshot.RootIdentity))
-                return new(CodexCloseResult.IdentityChanged, instance, $"PID {snapshot.RootIdentity.ProcessId} 已被其他进程复用；未操作新进程。请刷新实例列表。 ");
+                return new(CodexCloseResult.IdentityChanged, instance, AppLocalization.Format("PID {0} 已被其他进程复用；未操作新进程。请刷新实例列表。", snapshot.RootIdentity.ProcessId));
 
             try
             {
@@ -447,14 +448,14 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         }
         else if (rootObservation.State == CodexProcessObservationState.Unknown)
         {
-            snapshot = snapshot with { Issue = rootObservation.Issue ?? "无法确认主进程身份；未将其视为已退出。" };
+            snapshot = snapshot with { Issue = rootObservation.Issue ?? AppLocalization.Get("无法确认主进程身份；未将其视为已退出。") };
         }
 
         var refreshed = RefreshPendingSnapshot(snapshot, cancellationToken, discoverNewDescendants: true, currentRoots: currentRoots);
         if (refreshed is null)
         {
             RemovePendingExit(instance.Identity);
-            return new(CodexCloseResult.Closed, instance with { PendingExitSnapshot = null }, "已确认先前记录的所选进程均已退出；没有发送强制结束命令。");
+            return new(CodexCloseResult.Closed, instance with { PendingExitSnapshot = null }, AppLocalization.Get("已确认先前记录的所选进程均已退出；没有发送强制结束命令。"));
         }
 
         var deadline = Stopwatch.StartNew();
@@ -480,7 +481,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 var protectedProcessIds = CodexProcessOwnership.GetSubtreeProcessIds(protectedRoots, relations);
                 if (protectedProcessIds.Contains(target.Identity.ProcessId))
                 {
-                    issue = "所选进程当前位于其他 Codex 实例或 SkinManager 进程分支中；为避免影响其他程序，未结束该 PID。";
+                    issue = AppLocalization.Get("所选进程当前位于其他 Codex 实例或 SkinManager 进程分支中；为避免影响其他程序，未结束该 PID。");
                     continue;
                 }
 
@@ -492,13 +493,13 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                 }
                 if (before.State == CodexProcessObservationState.Unknown)
                 {
-                    issue = before.Issue ?? $"无法读取 PID {target.Identity.ProcessId} 的进程身份；未结束该进程。";
+                    issue = before.Issue ?? AppLocalization.Format("无法读取 PID {0} 的进程身份；未结束该进程。", target.Identity.ProcessId);
                     break;
                 }
                 if (before.Identity is null || !SameIdentity(before.Identity, target.Identity))
                 {
                     current = MarkUnverified(current, target.Identity.ProcessId,
-                        $"PID {target.Identity.ProcessId} 的身份已变化；未向新进程发送结束命令。");
+                        AppLocalization.Format("PID {0} 的身份已变化；未向新进程发送结束命令。", target.Identity.ProcessId));
                     issue = current.Issue;
                     break;
                 }
@@ -536,13 +537,13 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                     }
                     if (observed.State == CodexProcessObservationState.Unknown)
                     {
-                        issue = observed.Issue ?? $"无法确认 PID {target.Identity.ProcessId} 的退出状态。";
+                        issue = observed.Issue ?? AppLocalization.Format("无法确认 PID {0} 的退出状态。", target.Identity.ProcessId);
                         break;
                     }
                     if (observed.Identity is null || !SameIdentity(observed.Identity, target.Identity))
                     {
                         current = MarkUnverified(current, target.Identity.ProcessId,
-                            $"PID {target.Identity.ProcessId} 已变化；未将新进程当作已退出或继续操作。");
+                            AppLocalization.Format("PID {0} 已变化；未将新进程当作已退出或继续操作。", target.Identity.ProcessId));
                         issue = current.Issue;
                         break;
                     }
@@ -567,7 +568,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             if (refreshedAfterPass is null)
             {
                 RemovePendingExit(instance.Identity);
-                return new(CodexCloseResult.Closed, instance with { PendingExitSnapshot = null }, "已确认所选实例及本次记录的所有后台进程均已退出。");
+                return new(CodexCloseResult.Closed, instance with { PendingExitSnapshot = null }, AppLocalization.Get("已确认所选实例及本次记录的所有后台进程均已退出。"));
             }
             current = refreshedAfterPass;
             if (current.Issue is not null)
@@ -580,7 +581,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
 
         var updated = instance with { PendingExitSnapshot = current, IsExitResidual = !ContainsRoot(current) };
         StorePendingExit(updated);
-        return new(CodexCloseResult.Incomplete, updated, DescribeRemainingProcesses(current, "强制结束后仍有进程未能确认退出"));
+        return new(CodexCloseResult.Incomplete, updated, DescribeRemainingProcesses(current, AppLocalization.Get("强制结束后仍有进程未能确认退出")));
     }
 
     internal CodexProcessExitSnapshot CaptureProcessExitSnapshot(CodexProcessIdentity selectedIdentity, CancellationToken cancellationToken)
@@ -593,7 +594,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         var excludedProcessIds = CodexProcessOwnership.GetSubtreeProcessIds(protectedRoots, relations);
         var tree = CodexProcessOwnership.SelectOwnedSubtree(selectedIdentity.ProcessId, relations, excludedProcessIds);
         if (tree.Count == 0 || tree[0].Relation.ProcessId != selectedIdentity.ProcessId)
-            throw new InvalidOperationException("无法从当前进程树确认所选实例及其父子关系。未发送退出请求；请刷新实例列表后重试。");
+            throw new InvalidOperationException(AppLocalization.Get("无法从当前进程树确认所选实例及其父子关系。未发送退出请求；请刷新实例列表后重试。"));
 
         var identities = new Dictionary<int, CodexProcessIdentity>();
         var entries = new List<CodexProcessTreeEntry>();
@@ -611,26 +612,26 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             if (observation.State == CodexProcessObservationState.Exited)
             {
                 if (processId == selectedIdentity.ProcessId)
-                    throw new InvalidOperationException("所选 Codex 主进程已退出。请刷新实例列表后重试。");
+                    throw new InvalidOperationException(AppLocalization.Get("所选 Codex 主进程已退出。请刷新实例列表后重试。"));
                 continue;
             }
             if (observation.State == CodexProcessObservationState.Unknown || observation.Identity is null)
             {
                 unverified.Add(processId);
-                issue = observation.Issue ?? $"无法读取 PID {processId} 的身份信息。";
+                issue = observation.Issue ?? AppLocalization.Format("无法读取 PID {0} 的身份信息。", processId);
                 continue;
             }
 
             var identity = observation.Identity;
             if (processId == selectedIdentity.ProcessId && !SameIdentity(identity, selectedIdentity))
-                throw new InvalidOperationException("所选 Codex 主进程身份已变化。请刷新实例列表后重试。");
+                throw new InvalidOperationException(AppLocalization.Get("所选 Codex 主进程身份已变化。请刷新实例列表后重试。"));
 
             CodexProcessIdentity? parentIdentity = null;
             if (processId != selectedIdentity.ProcessId &&
                 !identities.TryGetValue(node.Relation.ParentProcessId, out parentIdentity))
             {
                 unverified.Add(processId);
-                issue = $"无法确认 PID {processId} 与其父进程之间的身份关系。";
+                issue = AppLocalization.Format("无法确认 PID {0} 与其父进程之间的身份关系。", processId);
                 continue;
             }
 
@@ -645,7 +646,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         }
 
         if (!identities.TryGetValue(selectedIdentity.ProcessId, out var rootIdentity) || !SameIdentity(rootIdentity, selectedIdentity))
-            throw new InvalidOperationException("无法为所选 Codex 主进程建立可验证的退出快照。未发送退出请求；请刷新实例列表后重试。");
+            throw new InvalidOperationException(AppLocalization.Get("无法为所选 Codex 主进程建立可验证的退出快照。未发送退出请求；请刷新实例列表后重试。"));
 
         return new CodexProcessExitSnapshot(
             selectedIdentity,
@@ -668,7 +669,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         var relationByPid = relations.ToDictionary(relation => relation.ProcessId);
         var processes = new List<CodexProcessTreeEntry>();
         var unverified = snapshot.UnverifiedProcessIds.Where(currentIds.Contains).ToHashSet();
-        var issue = unverified.Count > 0 ? "部分进程 PID 尚未获得可核验的身份信息；未将其视为已退出。" : null;
+        var issue = unverified.Count > 0 ? AppLocalization.Get("部分进程 PID 尚未获得可核验的身份信息；未将其视为已退出。") : null;
         var verifiedRunning = new Dictionary<int, CodexProcessTreeEntry>();
         var excludedForeignProcesses = snapshot.ExcludedForeignProcesses.ToDictionary(identity => identity.ProcessId);
         var originalTargetIds = snapshot.Processes.Select(entry => entry.Identity.ProcessId)
@@ -693,7 +694,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             {
                 excludedForeignProcesses.Remove(excluded.ProcessId);
                 unverified.Add(excluded.ProcessId);
-                issue = observation.Issue ?? $"无法核验此前排除的 PID {excluded.ProcessId}；未将其视为已退出。";
+                issue = observation.Issue ?? AppLocalization.Format("无法核验此前排除的 PID {0}；未将其视为已退出。", excluded.ProcessId);
                 foreach (var descendantPid in CodexProcessOwnership.GetSubtreeProcessIds([excluded.ProcessId], relations))
                 {
                     if (currentIds.Contains(descendantPid))
@@ -735,7 +736,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
             if (observation.State == CodexProcessObservationState.Running && observation.Identity is not null && !SameIdentity(observation.Identity, entry.Identity))
             {
                 unverified.Add(entry.Identity.ProcessId);
-                issue = $"PID {entry.Identity.ProcessId} 的身份已变化；不会将其当作已完成，也不会结束新进程。";
+                issue = AppLocalization.Format("PID {0} 的身份已变化；不会将其当作已完成，也不会结束新进程。", entry.Identity.ProcessId);
                 continue;
             }
 
@@ -747,7 +748,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
 
             processes.Add(entry);
             if (observation.State == CodexProcessObservationState.Unknown)
-                issue = observation.Issue ?? $"无法确认 PID {entry.Identity.ProcessId} 是否仍是原进程。";
+                issue = observation.Issue ?? AppLocalization.Format("无法确认 PID {0} 是否仍是原进程。", entry.Identity.ProcessId);
             else if (observation.Identity is not null)
                 verifiedRunning[entry.Identity.ProcessId] = entry;
         }
@@ -788,7 +789,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                         {
                             excludedForeignProcesses.Remove(child.ProcessId);
                             unverified.Add(child.ProcessId);
-                            issue = observation.Issue ?? $"无法读取先前排除的 PID {child.ProcessId} 身份；不会将其视为已退出。";
+                            issue = observation.Issue ?? AppLocalization.Format("无法读取先前排除的 PID {0} 身份；不会将其视为已退出。", child.ProcessId);
                             foreach (var descendantPid in CodexProcessOwnership.GetSubtreeProcessIds([child.ProcessId], relations))
                             {
                                 if (!protectedProcessIds.Contains(descendantPid))
@@ -815,7 +816,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                     if (observation.State == CodexProcessObservationState.Unknown || observation.Identity is null)
                     {
                         unverified.Add(child.ProcessId);
-                        issue = observation.Issue ?? $"无法读取新发现的子进程 PID {child.ProcessId} 的身份。";
+                        issue = observation.Issue ?? AppLocalization.Format("无法读取新发现的子进程 PID {0} 的身份。", child.ProcessId);
                         foreach (var descendantPid in CodexProcessOwnership.GetSubtreeProcessIds([child.ProcessId], relations))
                         {
                             if (!protectedProcessIds.Contains(descendantPid) && currentIds.Contains(descendantPid))
@@ -850,7 +851,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
                     if (!protectedProcessIds.Contains(descendantPid) && currentIds.Contains(descendantPid))
                         unverified.Add(descendantPid);
                 }
-                issue = "发现父进程已退出或 PID 已复用后的未验证子进程；为避免结束错误实例，保留为未完成项。";
+                issue = AppLocalization.Get("发现父进程已退出或 PID 已复用后的未验证子进程；为避免结束错误实例，保留为未完成项。");
             }
         }
 
@@ -916,7 +917,7 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
 
                 foreach (var uncertainPid in CodexProcessOwnership.GetSubtreeProcessIds([processId], relations))
                     unverifiedProcessIds.Add(uncertainPid);
-                issue = observation.Issue ?? $"无法确认外部分支 PID {processId} 的父子身份链；未将其视为已退出。";
+                issue = observation.Issue ?? AppLocalization.Format("无法确认外部分支 PID {0} 的父子身份链；未将其视为已退出。", processId);
             }
         }
     }
@@ -1016,10 +1017,10 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
     private static string DescribeRemainingProcesses(CodexProcessExitSnapshot snapshot, string prefix)
     {
         if (!ContainsRoot(snapshot))
-            return $"{prefix}。主进程已退出，但仍有 {snapshot.RemainingCount} 个已记录或身份未确认的后台 PID；可单独确认后继续处理。";
+            return AppLocalization.Format("{0}。主进程已退出，但仍有 {1} 个已记录或身份未确认的后台 PID；可单独确认后继续处理。", prefix, snapshot.RemainingCount);
         if (snapshot.Issue is not null)
-            return $"{prefix}。仍有 {snapshot.RemainingCount} 个进程未完成确认：{snapshot.Issue}";
-        return $"{prefix}。所选实例仍有 {snapshot.RemainingCount} 个已记录进程运行；可单独确认后强制结束。";
+            return AppLocalization.Format("{0}。仍有 {1} 个进程未完成确认：{2}", prefix, snapshot.RemainingCount, snapshot.Issue);
+        return AppLocalization.Format("{0}。所选实例仍有 {1} 个已记录进程运行；可单独确认后强制结束。", prefix, snapshot.RemainingCount);
     }
 
     private void VerifyCurrentIdentity(CodexProcessIdentity expected)
@@ -1028,13 +1029,13 @@ public sealed class WindowsCodexInstanceService : ICodexInstanceService
         if (observation.State != CodexProcessObservationState.Running || observation.Identity is null ||
             !SameIdentity(observation.Identity, expected) || !_platform.IsCodexIdentity(observation.Identity))
         {
-            var detail = observation.Issue is null ? string.Empty : $" {observation.Issue}";
-            throw new InvalidOperationException($"无法确认所选 Codex 实例仍是原进程，可能已退出、身份已变化或权限不足。{detail}请刷新实例列表后重试。");
+            var detail = observation.Issue is null ? string.Empty : $" {AppLocalization.Get(observation.Issue)}";
+            throw new InvalidOperationException(AppLocalization.Format("无法确认所选 Codex 实例仍是原进程，可能已退出、身份已变化或权限不足。{0}请刷新实例列表后重试。", detail));
         }
     }
 
     private static InvalidOperationException CreateRefreshException(Win32Exception innerException) =>
-        new("无法操作所选 Codex 实例，可能是进程已变化或权限不足。请刷新实例列表后重试。", innerException);
+        new(AppLocalization.Get("无法操作所选 Codex 实例，可能是进程已变化或权限不足。请刷新实例列表后重试。"), innerException);
 
     private static string? GetOptionValue(IReadOnlyList<string> arguments, string name)
     {
@@ -1068,7 +1069,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
     public IReadOnlyList<CodexProcessCandidate> EnumerateCandidates(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("实例管理仅支持 Windows Store 安装的 Codex 桌面版。");
+            throw new PlatformNotSupportedException(AppLocalization.Get("实例管理仅支持 Windows Store 安装的 Codex 桌面版。"));
 
         var commandLines = ReadWmiProcessData();
         var candidates = new List<CodexProcessCandidate>();
@@ -1127,7 +1128,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
             {
                 var path = process.MainModule?.FileName;
                 if (string.IsNullOrWhiteSpace(path))
-                    return new(CodexProcessObservationState.Unknown, null, $"无法读取 PID {processId} 的可执行文件路径。");
+                    return new(CodexProcessObservationState.Unknown, null, AppLocalization.Format("无法读取 PID {0} 的可执行文件路径。", processId));
                 var identity = new CodexProcessIdentity(
                     process.Id,
                     new DateTimeOffset(process.StartTime.ToUniversalTime()),
@@ -1140,7 +1141,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
             }
             catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or System.Security.SecurityException)
             {
-                return new(CodexProcessObservationState.Unknown, null, $"无法核验 PID {processId} 的启动时间和可执行文件：{ex.Message}");
+                return new(CodexProcessObservationState.Unknown, null, AppLocalization.Format("无法核验 PID {0} 的启动时间和可执行文件：{1}", processId, ex.Message));
             }
         }
         catch (ArgumentException)
@@ -1149,7 +1150,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException or System.Security.SecurityException)
         {
-            return new(CodexProcessObservationState.Unknown, null, $"无法核验 PID {processId} 的进程状态：{ex.Message}");
+            return new(CodexProcessObservationState.Unknown, null, AppLocalization.Format("无法核验 PID {0} 的进程状态：{1}", processId, ex.Message));
         }
     }
 
@@ -1204,16 +1205,16 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("进程树读取仅支持 Windows。");
+            throw new PlatformNotSupportedException(AppLocalization.Get("进程树读取仅支持 Windows。"));
 
         using var snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
         if (snapshot.IsInvalid)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取 Windows 进程父子关系。");
+            throw new Win32Exception(Marshal.GetLastWin32Error(), AppLocalization.Get("无法读取 Windows 进程父子关系。"));
 
         var result = new List<CodexProcessRelation>();
         var entry = new ProcessEntry32 { Size = (uint)Marshal.SizeOf<ProcessEntry32>() };
         if (!Process32First(snapshot, ref entry))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取 Windows 进程快照。");
+            throw new Win32Exception(Marshal.GetLastWin32Error(), AppLocalization.Get("无法读取 Windows 进程快照。"));
 
         do
         {
@@ -1225,7 +1226,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
 
         var error = Marshal.GetLastWin32Error();
         if (error is not 0 and not 18)
-            throw new Win32Exception(error, "读取 Windows 进程父子关系时失败。");
+            throw new Win32Exception(error, AppLocalization.Get("读取 Windows 进程父子关系时失败。"));
         return result;
     }
 
@@ -1247,15 +1248,15 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
             using var verified = OpenVerifiedProcess(expectedIdentity, requireCodexMain: true);
             if (!IsOwnedTopLevelWindow(handle, verified.Id) || GetMenu(handle) != menu ||
                 !TryFindNativeQuitCommand(menu, out var revalidatedCommandId) || revalidatedCommandId != commandId)
-                return new(CodexNativeQuitRequestState.Failed, "原生菜单或窗口归属在发送前发生变化；未发送退出命令。");
+                return new(CodexNativeQuitRequestState.Failed, AppLocalization.Get("原生菜单或窗口归属在发送前发生变化；未发送退出命令。"));
 
             var sent = SendMessageTimeout(handle, WmCommand, new IntPtr(commandId), IntPtr.Zero, SmtoAbortIfHung, 1_500, out _);
             return sent != IntPtr.Zero
-                ? new(CodexNativeQuitRequestState.Requested, "已向所选实例窗口发送当前菜单中的 Quit 命令；等待其进程树退出确认。")
-                : new(CodexNativeQuitRequestState.Failed, $"向所选实例发送原生 Quit 命令失败（Win32 {Marshal.GetLastWin32Error()}）；未改用关闭窗口。");
+                ? new(CodexNativeQuitRequestState.Requested, AppLocalization.Get("已向所选实例窗口发送当前菜单中的 Quit 命令；等待其进程树退出确认。"))
+                : new(CodexNativeQuitRequestState.Failed, AppLocalization.Format("向所选实例发送原生 Quit 命令失败（Win32 {0}）；未改用关闭窗口。", Marshal.GetLastWin32Error()));
         }
 
-        return new(CodexNativeQuitRequestState.Unavailable, "当前 Codex 没有可用的正常退出入口。可从托盘退出，或单独确认强制结束此实例及后台进程。");
+        return new(CodexNativeQuitRequestState.Unavailable, AppLocalization.Get("当前 Codex 没有可用的正常退出入口。可从托盘退出，或单独确认强制结束此实例及后台进程。"));
     }
 
     public void TerminateProcess(CodexProcessIdentity expectedIdentity, CancellationToken cancellationToken)
@@ -1272,7 +1273,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
     {
         Process process;
         try { process = Process.GetProcessById(expectedIdentity.ProcessId); }
-        catch (ArgumentException) { throw new InvalidOperationException("所选 Codex 实例已退出。请刷新实例列表后重试。"); }
+        catch (ArgumentException) { throw new InvalidOperationException(AppLocalization.Get("所选 Codex 实例已退出。请刷新实例列表后重试。")); }
         try
         {
             // Pin a handle to this OS process before reading identity fields. Process.Kill reuses this handle,
@@ -1283,7 +1284,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
                 !MatchesExpectedProcessIdentity(expectedIdentity, process.Id, process.StartTime.ToUniversalTime(), path) ||
                 (requireCodexMain && (!WindowsCodexIdentityVerifier.IsKnownCodexExecutable(path) ||
                     !string.Equals(FileVersionInfo.GetVersionInfo(path).ProductName, "Codex", StringComparison.OrdinalIgnoreCase))))
-                throw new InvalidOperationException("所选 Codex 实例身份已变化。请刷新实例列表后重试。");
+                throw new InvalidOperationException(AppLocalization.Get("所选 Codex 实例身份已变化。请刷新实例列表后重试。"));
             return process;
         }
         catch
@@ -1388,7 +1389,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
         try
         {
             var locatorType = Type.GetTypeFromProgID("WbemScripting.SWbemLocator", throwOnError: true)!;
-            locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("无法连接 WMI。");
+            locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException(AppLocalization.Get("无法连接 WMI。"));
             dynamic locatorObject = locator;
             services = locatorObject.ConnectServer(".", @"root\cimv2");
             dynamic servicesObject = services;
@@ -1416,7 +1417,7 @@ internal sealed class WindowsCodexInstancePlatform : ICodexInstancePlatform
         }
         catch (COMException ex)
         {
-            throw new InvalidOperationException("无法读取 Codex 进程的只读命令行信息。请确认当前 Windows 用户具有本机 WMI 查询权限后刷新。", ex);
+            throw new InvalidOperationException(AppLocalization.Get("无法读取 Codex 进程的只读命令行信息。请确认当前 Windows 用户具有本机 WMI 查询权限后刷新。"), ex);
         }
         finally
         {

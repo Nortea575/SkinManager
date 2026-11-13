@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using Microsoft.Win32;
+using SkinManager.Core;
 
 namespace SkinManager.Desktop;
 
@@ -80,7 +81,7 @@ public sealed class StartupPreferencesService : IStartupPreferencesService
         var managerStartsAtWindowsSignIn = _runRegistration.IsEnabled();
         if (enabled && !managerStartsAtWindowsSignIn)
         {
-            throw new InvalidOperationException("请先开启“管理器随 Windows 登录启动”。");
+            throw new InvalidOperationException(AppLocalization.Get("请先开启“管理器随 Windows 登录启动”。"));
         }
 
         SavePreferences(current with { ApplyLastSelectedSkin = enabled });
@@ -103,7 +104,7 @@ public sealed class StartupPreferencesService : IStartupPreferencesService
 
         var content = File.ReadAllText(_preferencesPath);
         return JsonSerializer.Deserialize<StoredStartupPreferences>(content)
-            ?? throw new InvalidDataException("开机启动设置文件为空或格式无效。");
+            ?? throw new InvalidDataException(AppLocalization.Get("开机启动设置文件为空或格式无效。"));
     }
 
     private void SavePreferences(StoredStartupPreferences preferences)
@@ -111,7 +112,7 @@ public sealed class StartupPreferencesService : IStartupPreferencesService
         var directory = Path.GetDirectoryName(_preferencesPath);
         if (string.IsNullOrWhiteSpace(directory))
         {
-            throw new InvalidOperationException("开机启动设置路径无效。");
+            throw new InvalidOperationException(AppLocalization.Get("开机启动设置路径无效。"));
         }
 
         Directory.CreateDirectory(directory);
@@ -140,7 +141,7 @@ public sealed class StartupPreferencesService : IStartupPreferencesService
         {
             if (enabled)
             {
-                throw new InvalidOperationException("此预览窗口不会写入 Windows 开机启动设置。");
+                throw new InvalidOperationException(AppLocalization.Get("此预览窗口不会写入 Windows 开机启动设置。"));
             }
         }
     }
@@ -168,7 +169,7 @@ public sealed class WindowsCurrentUserRunRegistration : IStartupRunRegistration
     {
         if (!OperatingSystem.IsWindows())
         {
-            throw new PlatformNotSupportedException("Windows 登录自启仅适用于 Windows。");
+                throw new PlatformNotSupportedException(AppLocalization.Get("Windows 登录自启仅适用于 Windows。"));
         }
 
         if (!enabled)
@@ -182,11 +183,11 @@ public sealed class WindowsCurrentUserRunRegistration : IStartupRunRegistration
         if (string.IsNullOrWhiteSpace(executablePath) ||
             !string.Equals(Path.GetFileNameWithoutExtension(executablePath), "SkinManager", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("只能从 SkinManager.exe 开启 Windows 登录自启；当前进程不是管理器程序。");
+            throw new InvalidOperationException(AppLocalization.Get("只能从 SkinManager.exe 开启 Windows 登录自启；当前进程不是管理器程序。"));
         }
 
         using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true)
-            ?? throw new InvalidOperationException("无法打开当前用户的 Windows 登录自启项。");
+            ?? throw new InvalidOperationException(AppLocalization.Get("无法打开当前用户的 Windows 登录自启项。"));
         key.SetValue(ValueName, BuildCommandLine(executablePath), RegistryValueKind.String);
     }
 
@@ -196,7 +197,7 @@ public sealed class WindowsCurrentUserRunRegistration : IStartupRunRegistration
         var fullPath = Path.GetFullPath(executablePath);
         if (fullPath.Contains('"', StringComparison.Ordinal))
         {
-            throw new ArgumentException("可执行文件路径包含无效引号。", nameof(executablePath));
+            throw new ArgumentException(AppLocalization.Get("可执行文件路径包含无效引号。"), nameof(executablePath));
         }
 
         return $"\"{fullPath}\" --autostart";

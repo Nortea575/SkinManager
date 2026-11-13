@@ -28,68 +28,6 @@ public sealed record RuntimeCompatibilityResult(
     bool? IsDebugPortOpen = null,
     CodexProcessIdentity? ConnectedInstance = null);
 
-public sealed class CompatibilitySettingsStore
-{
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly string _path;
-    private readonly object _sync = new();
-
-    public CompatibilitySettingsStore(string? path = null)
-    {
-        _path = Path.GetFullPath(path ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SkinManager",
-            "compatibility-settings.json"));
-    }
-
-    public RuntimeCompatibilityOptions Load()
-    {
-        lock (_sync)
-        {
-            if (!File.Exists(_path))
-                return new RuntimeCompatibilityOptions();
-
-            var json = File.ReadAllText(_path);
-            var options = JsonSerializer.Deserialize<RuntimeCompatibilityOptions>(json, JsonOptions);
-            return options ?? throw new InvalidDataException("兼容性设置文件内容无效。");
-        }
-    }
-
-    public void Save(RuntimeCompatibilityOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        lock (_sync)
-            WriteAtomically(_path, JsonSerializer.Serialize(options, JsonOptions));
-    }
-
-    internal static void WriteAtomically(string path, string content)
-    {
-        var directory = Path.GetDirectoryName(path);
-        if (string.IsNullOrWhiteSpace(directory))
-            throw new InvalidOperationException("兼容性状态文件路径无效。");
-
-        Directory.CreateDirectory(directory);
-        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.Write(content);
-                writer.Flush();
-                stream.Flush(flushToDisk: true);
-            }
-            File.Move(temporaryPath, path, overwrite: true);
-        }
-        finally
-        {
-            try { File.Delete(temporaryPath); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-    }
-}
-
 internal sealed record LocaleOverrideRestoreSnapshot(string? OriginalValue, string LastWrittenValue = "zh-CN");
 
 internal sealed class LocaleOverrideSnapshotStore
@@ -134,7 +72,7 @@ internal sealed class LocaleOverrideSnapshotStore
             }
 
             var snapshot = new LocaleOverrideRestoreSnapshot(originalValue);
-            CompatibilitySettingsStore.WriteAtomically(_path, JsonSerializer.Serialize(snapshot, JsonOptions));
+            WriteAtomically(_path, JsonSerializer.Serialize(snapshot, JsonOptions));
             return snapshot;
         }
     }
@@ -145,6 +83,33 @@ internal sealed class LocaleOverrideSnapshotStore
         {
             if (File.Exists(_path))
                 File.Delete(_path);
+        }
+    }
+
+    private static void WriteAtomically(string path, string content)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory))
+            throw new InvalidOperationException("语言恢复状态文件路径无效。");
+
+        Directory.CreateDirectory(directory);
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }

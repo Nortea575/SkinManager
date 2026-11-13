@@ -56,7 +56,7 @@ internal sealed class RuntimeApplyWorkflow
             activeConnectedInstance,
             hasActiveConnection,
             activeEndpoint: null,
-            compatibilityOnly: false,
+            connectionOnly: false,
             cancellationToken).ConfigureAwait(false);
         if (resolution.Error is not null)
         {
@@ -98,7 +98,7 @@ internal sealed class RuntimeApplyWorkflow
             activeConnectedInstance,
             hasActiveConnection,
             activeEndpoint,
-            compatibilityOnly: true,
+            connectionOnly: true,
             cancellationToken).ConfigureAwait(false);
         if (resolution.Error is not null)
         {
@@ -117,13 +117,13 @@ internal sealed class RuntimeApplyWorkflow
         CodexProcessIdentity? activeConnectedInstance,
         bool hasActiveConnection,
         string? activeEndpoint,
-        bool compatibilityOnly,
+        bool connectionOnly,
         CancellationToken cancellationToken)
     {
         if (_instances is null)
         {
             return TargetResolution.Failed(Error(
-                compatibilityOnly
+                connectionOnly
                     ? "无法核验 Codex 实例身份。请打开“选择窗口”确认目标后重试。"
                     : "无法核验 Codex 实例身份。请打开“选择窗口”确认目标后再应用。",
                 endpoint,
@@ -155,7 +155,7 @@ internal sealed class RuntimeApplyWorkflow
             : instances.FirstOrDefault(instance => SameIdentity(instance.Identity, selectedTarget.Identity));
         if (latestSelectedTarget is not null)
         {
-            var invalid = ValidatePinnedTarget(latestSelectedTarget, port, endpoint, skinId, compatibilityOnly);
+            var invalid = ValidatePinnedTarget(latestSelectedTarget, port, endpoint, skinId, connectionOnly);
             if (invalid is not null)
             {
                 return TargetResolution.Failed(invalid);
@@ -164,7 +164,7 @@ internal sealed class RuntimeApplyWorkflow
             var selectedMatchesActive = hasActiveConnection && activeConnectedInstance is not null &&
                 SameIdentity(latestSelectedTarget.Identity, activeConnectedInstance);
             var selected = await WaitForPinnedTargetAsync(
-                latestSelectedTarget, port, endpoint, skinId, compatibilityOnly, cancellationToken).ConfigureAwait(false);
+                latestSelectedTarget, port, endpoint, skinId, connectionOnly, cancellationToken).ConfigureAwait(false);
             return selected.Error is not null
                 ? TargetResolution.Failed(selected.Error)
                 : new TargetResolution(selected.Target, null, selectedMatchesActive,
@@ -176,14 +176,14 @@ internal sealed class RuntimeApplyWorkflow
             var activeTarget = instances.FirstOrDefault(instance => SameIdentity(instance.Identity, activeConnectedInstance));
             if (activeTarget is { Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int activePort } && activePort == port)
             {
-                var invalid = ValidatePinnedTarget(activeTarget, port, endpoint, skinId, compatibilityOnly);
+                var invalid = ValidatePinnedTarget(activeTarget, port, endpoint, skinId, connectionOnly);
                 if (invalid is not null)
                 {
                     return TargetResolution.Failed(invalid);
                 }
 
                 var active = await WaitForPinnedTargetAsync(
-                    activeTarget, port, endpoint, skinId, compatibilityOnly, cancellationToken).ConfigureAwait(false);
+                    activeTarget, port, endpoint, skinId, connectionOnly, cancellationToken).ConfigureAwait(false);
                 return active.Error is not null
                     ? TargetResolution.Failed(active.Error)
                     : new TargetResolution(active.Target, null, true,
@@ -195,7 +195,7 @@ internal sealed class RuntimeApplyWorkflow
         if (residual is not null)
         {
             return TargetResolution.Failed(Error(
-                $"检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）。请在“选择窗口”中检查并处理后再启动。",
+                AppLocalization.Format("检测到 Codex 后台残留（PID {0}）。请在“选择窗口”中检查并处理后再启动。", residual.Identity.ProcessId),
                 endpoint,
                 skinId));
         }
@@ -215,14 +215,14 @@ internal sealed class RuntimeApplyWorkflow
                 return TargetResolution.Failed(Error(DescribePortMismatch(existing, port), endpoint, skinId));
             }
 
-            var invalid = ValidatePinnedTarget(existing, port, endpoint, skinId, compatibilityOnly);
+            var invalid = ValidatePinnedTarget(existing, port, endpoint, skinId, connectionOnly);
             if (invalid is not null)
             {
                 return TargetResolution.Failed(invalid);
             }
 
             var existingResolution = await WaitForPinnedTargetAsync(
-                existing, port, endpoint, skinId, compatibilityOnly, cancellationToken,
+                existing, port, endpoint, skinId, connectionOnly, cancellationToken,
                 requireUniqueDebugInstance: true).ConfigureAwait(false);
             return existingResolution.Error is not null
                 ? TargetResolution.Failed(existingResolution.Error)
@@ -248,7 +248,7 @@ internal sealed class RuntimeApplyWorkflow
         ReportProgress(skinId, endpoint,
             "启动请求已发送，正在自动检测调试窗口、监听端口和 CDP 身份。");
         var launched = await WaitForUniqueDebugTargetAsync(
-            port, endpoint, skinId, compatibilityOnly, cancellationToken).ConfigureAwait(false);
+            port, endpoint, skinId, connectionOnly, cancellationToken).ConfigureAwait(false);
         return launched.Error is not null
             ? TargetResolution.Failed(launched.Error)
             : new TargetResolution(launched.Target, null, false, null);
@@ -278,9 +278,9 @@ internal sealed class RuntimeApplyWorkflow
         {
             throw;
         }
-        catch (Exception exception)
+            catch (Exception exception)
         {
-            return Error($"无法确认普通版 Codex 切换：{exception.Message}", endpoint, skinId);
+            return Error(AppLocalization.Format("无法确认普通版 Codex 切换：{0}", exception.Message), endpoint, skinId);
         }
 
         if (!accepted)
@@ -288,7 +288,7 @@ internal sealed class RuntimeApplyWorkflow
                 RuntimeStatusState.Stopped,
                 skinId,
                 endpoint,
-                "已取消切换；当前 Codex 保持运行，未启动调试版或应用皮肤。",
+                AppLocalization.Get("已取消切换；当前 Codex 保持运行，未启动调试版或应用皮肤。"),
                 false);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -303,7 +303,7 @@ internal sealed class RuntimeApplyWorkflow
         }
         catch (Exception exception)
         {
-            return Error($"确认后无法重新核验 Codex 窗口：{exception.Message}。未关闭或启动实例。", endpoint, skinId);
+            return Error(AppLocalization.Format("确认后无法重新核验 Codex 窗口：{0}。未关闭或启动实例。", exception.Message), endpoint, skinId);
         }
 
         var stillSelected = beforeClose.Count == 1 &&
@@ -325,12 +325,12 @@ internal sealed class RuntimeApplyWorkflow
         }
         catch (Exception exception)
         {
-            return Error($"退出普通版 Codex 时未能确认完成：{exception.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+            return Error(AppLocalization.Format("退出普通版 Codex 时未能确认完成：{0}。未启动调试版或应用皮肤。", exception.Message), endpoint, skinId);
         }
 
         if (closeResult.Outcome != CodexCloseResult.Closed)
         {
-            return Error($"普通版 Codex 尚未确认完全退出：{closeResult.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+            return Error(AppLocalization.Format("普通版 Codex 尚未确认完全退出：{0}。未启动调试版或应用皮肤。", closeResult.Message), endpoint, skinId);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -345,7 +345,7 @@ internal sealed class RuntimeApplyWorkflow
         }
         catch (Exception exception)
         {
-            return Error($"普通版退出后无法核验是否仍有 Codex 窗口或后台残留：{exception.Message}。未启动调试版或应用皮肤。", endpoint, skinId);
+            return Error(AppLocalization.Format("普通版退出后无法核验是否仍有 Codex 窗口或后台残留：{0}。未启动调试版或应用皮肤。", exception.Message), endpoint, skinId);
         }
 
         if (afterClose.Count != 0)
@@ -361,11 +361,11 @@ internal sealed class RuntimeApplyWorkflow
         int port,
         string endpoint,
         string? skinId,
-        bool compatibilityOnly,
+        bool connectionOnly,
         CancellationToken cancellationToken,
         bool requireUniqueDebugInstance = false)
     {
-        var initialError = ValidatePinnedTarget(initialTarget, port, endpoint, skinId, compatibilityOnly);
+        var initialError = ValidatePinnedTarget(initialTarget, port, endpoint, skinId, connectionOnly);
         if (initialError is not null)
         {
             return (null, initialError);
@@ -376,9 +376,9 @@ internal sealed class RuntimeApplyWorkflow
             return (initialTarget, null);
         }
 
-        var operationNotSent = GetOperationNotSent(compatibilityOnly);
+        var operationNotSent = GetOperationNotSent(connectionOnly);
         ReportProgress(skinId, endpoint,
-            $"已发现调试实例 PID {initialTarget.Identity.ProcessId}，正在等待监听端口和 CDP 身份就绪。",
+            AppLocalization.Format("已发现调试实例 PID {0}，正在等待监听端口和 CDP 身份就绪。", initialTarget.Identity.ProcessId),
             initialTarget.Identity);
         var deadline = DateTimeOffset.UtcNow + _readinessTimeout;
         var lastState = initialTarget.DebugConnectionState;
@@ -394,7 +394,7 @@ internal sealed class RuntimeApplyWorkflow
                 if (debugTargets.Length > 1)
                 {
                     return (null, Error(
-                        DescribeMultipleDebugTargets(debugTargets, port, "等待期间出现多个调试版 Codex") + $"；{operationNotSent}。",
+                        AppLocalization.Format("{0}；{1}。", DescribeMultipleDebugTargets(debugTargets, port, "等待期间出现多个调试版 Codex"), operationNotSent),
                         endpoint,
                         skinId));
                 }
@@ -405,12 +405,12 @@ internal sealed class RuntimeApplyWorkflow
             {
                 var samePidReplacement = instances.FirstOrDefault(instance => instance.Identity.ProcessId == initialTarget.Identity.ProcessId);
                 var message = samePidReplacement is null
-                    ? $"等待期间调试实例 PID {initialTarget.Identity.ProcessId} 已退出；{operationNotSent}。请刷新实例列表后重试。"
-                    : $"等待期间 PID {initialTarget.Identity.ProcessId} 的启动时间或可执行文件身份发生变化；{operationNotSent}。已停止连接。";
+                    ? AppLocalization.Format("等待期间调试实例 PID {0} 已退出；{1}。请刷新实例列表后重试。", initialTarget.Identity.ProcessId, operationNotSent)
+                    : AppLocalization.Format("等待期间 PID {0} 的启动时间或可执行文件身份发生变化；{1}。已停止连接。", initialTarget.Identity.ProcessId, operationNotSent);
                 return (null, Error(message, endpoint, skinId));
             }
 
-            var invalid = ValidatePinnedTarget(current, port, endpoint, skinId, compatibilityOnly);
+            var invalid = ValidatePinnedTarget(current, port, endpoint, skinId, connectionOnly);
             if (invalid is not null)
             {
                 return (null, invalid);
@@ -423,7 +423,7 @@ internal sealed class RuntimeApplyWorkflow
 
             if (current.DebugConnectionState != lastState)
             {
-                ReportProgress(skinId, endpoint, DescribeWaitingState(current, compatibilityOnly), current.Identity);
+                ReportProgress(skinId, endpoint, DescribeWaitingState(current, connectionOnly), current.Identity);
                 lastState = current.DebugConnectionState;
             }
 
@@ -431,7 +431,7 @@ internal sealed class RuntimeApplyWorkflow
         }
 
         return (null, Error(
-            $"等待调试实例 PID {initialTarget.Identity.ProcessId} 的端口 {port} 就绪超时；{operationNotSent}。{DescribeWaitingState(initialTarget with { DebugConnectionState = lastState }, compatibilityOnly)}",
+                AppLocalization.Format("等待调试实例 PID {0} 的端口 {1} 就绪超时；{2}。{3}", initialTarget.Identity.ProcessId, port, operationNotSent, DescribeWaitingState(initialTarget with { DebugConnectionState = lastState }, connectionOnly)),
             endpoint,
             skinId));
     }
@@ -440,10 +440,10 @@ internal sealed class RuntimeApplyWorkflow
         int port,
         string endpoint,
         string? skinId,
-        bool compatibilityOnly,
+        bool connectionOnly,
         CancellationToken cancellationToken)
     {
-        var operationNotSent = GetOperationNotSent(compatibilityOnly);
+        var operationNotSent = GetOperationNotSent(connectionOnly);
         var deadline = DateTimeOffset.UtcNow + _readinessTimeout;
         CodexDebugConnectionState? lastReportedState = null;
         CodexProcessIdentity? discoveredIdentity = null;
@@ -455,7 +455,7 @@ internal sealed class RuntimeApplyWorkflow
             if (residual is not null)
             {
                 return (null, Error(
-                    $"启动等待期间检测到 Codex 后台残留（PID {residual.Identity.ProcessId}）；{operationNotSent}。请在“选择窗口”中检查并处理。",
+                    AppLocalization.Format("启动等待期间检测到 Codex 后台残留（PID {0}）；{1}。请在“选择窗口”中检查并处理。", residual.Identity.ProcessId, operationNotSent),
                     endpoint,
                     skinId));
             }
@@ -464,7 +464,7 @@ internal sealed class RuntimeApplyWorkflow
             if (running.Any(instance => instance.Kind == CodexInstanceKind.Normal))
             {
                 return (null, Error(
-                    $"启动后检测到普通版 Codex；{operationNotSent}。请在“选择窗口”中检查当前窗口。",
+                    AppLocalization.Format("启动后检测到普通版 Codex；{0}。请在“选择窗口”中检查当前窗口。", operationNotSent),
                     endpoint,
                     skinId));
             }
@@ -473,7 +473,7 @@ internal sealed class RuntimeApplyWorkflow
             if (debugTargets.Length > 1)
             {
                 return (null, Error(
-                    DescribeMultipleDebugTargets(debugTargets, port, "等待期间出现多个调试版 Codex") + $"；{operationNotSent}。",
+                    AppLocalization.Format("{0}；{1}。", DescribeMultipleDebugTargets(debugTargets, port, "等待期间出现多个调试版 Codex"), operationNotSent),
                     endpoint,
                     skinId));
             }
@@ -484,19 +484,19 @@ internal sealed class RuntimeApplyWorkflow
                 if (discoveredIdentity is not null && !SameIdentity(discoveredIdentity, target.Identity))
                 {
                     return (null, Error(
-                        $"启动等待期间调试实例的进程身份发生变化；{operationNotSent}。已停止自动选择。",
+                        AppLocalization.Format("启动等待期间调试实例的进程身份发生变化；{0}。已停止自动选择。", operationNotSent),
                         endpoint,
                         skinId));
                 }
 
                 if (target.DebugPort != port)
                 {
-                    return (null, Error($"启动后检测到端口为 {FormatPort(target.DebugPort)} 的调试实例，与请求端口 {port} 不同；{operationNotSent}。请在“选择窗口”中选择窗口。", endpoint, skinId));
+                    return (null, Error(AppLocalization.Format("启动后检测到端口为 {0} 的调试实例，与请求端口 {1} 不同；{2}。请在“选择窗口”中选择窗口。", FormatPort(target.DebugPort), port, operationNotSent), endpoint, skinId));
                 }
 
                 discoveredIdentity ??= target.Identity;
 
-                var invalid = ValidatePinnedTarget(target, port, endpoint, skinId, compatibilityOnly);
+                var invalid = ValidatePinnedTarget(target, port, endpoint, skinId, connectionOnly);
                 if (invalid is not null)
                 {
                     return (null, invalid);
@@ -509,14 +509,14 @@ internal sealed class RuntimeApplyWorkflow
 
                 if (lastReportedState != target.DebugConnectionState)
                 {
-                    ReportProgress(skinId, endpoint, DescribeWaitingState(target, compatibilityOnly), target.Identity);
+                    ReportProgress(skinId, endpoint, DescribeWaitingState(target, connectionOnly), target.Identity);
                     lastReportedState = target.DebugConnectionState;
                 }
             }
             else if (discoveredIdentity is not null)
             {
                 return (null, Error(
-                    $"等待期间调试实例 PID {discoveredIdentity.ProcessId} 已退出；{operationNotSent}。请刷新实例列表后重试。",
+                    AppLocalization.Format("等待期间调试实例 PID {0} 已退出；{1}。请刷新实例列表后重试。", discoveredIdentity.ProcessId, operationNotSent),
                     endpoint,
                     skinId));
             }
@@ -525,7 +525,7 @@ internal sealed class RuntimeApplyWorkflow
         }
 
         return (null, Error(
-            $"等待 Codex 调试端口 {port} 就绪超时；{operationNotSent}。已启动的 Codex 会保持运行。",
+            AppLocalization.Format("等待 Codex 调试端口 {0} 就绪超时；{1}。已启动的 Codex 会保持运行。", port, operationNotSent),
             endpoint,
             skinId));
     }
@@ -535,12 +535,12 @@ internal sealed class RuntimeApplyWorkflow
         int port,
         string endpoint,
         string? skinId,
-        bool compatibilityOnly)
+        bool connectionOnly)
     {
         if (target.IsExitResidual)
         {
             return Error(
-                $"所选调试实例 PID {target.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留。{GetOperationNotSent(compatibilityOnly)}。请在“选择窗口”中检查并处理后再启动。",
+                AppLocalization.Format("所选调试实例 PID {0} 的主进程已退出，但仍有后台进程残留。{1}。请在“选择窗口”中检查并处理后再启动。", target.Identity.ProcessId, GetOperationNotSent(connectionOnly)),
                 endpoint,
                 skinId);
         }
@@ -565,7 +565,7 @@ internal sealed class RuntimeApplyWorkflow
             not CodexDebugConnectionState.WaitingForCdp)
         {
             return Error(
-                $"调试实例 PID {target.Identity.ProcessId} 缺少可靠的 listener/CDP 就绪状态；{GetOperationNotSent(compatibilityOnly)}。请刷新实例列表。",
+                AppLocalization.Format("调试实例 PID {0} 缺少可靠的 listener/CDP 就绪状态；{1}。请刷新实例列表。", target.Identity.ProcessId, GetOperationNotSent(connectionOnly)),
                 endpoint,
                 skinId);
         }
@@ -629,7 +629,7 @@ internal sealed class RuntimeApplyWorkflow
     {
         if (target.IsExitResidual)
         {
-            return $"调试实例 PID {target.Identity.ProcessId} 的主进程已退出，但仍有后台进程残留。";
+            return AppLocalization.Format("调试实例 PID {0} 的主进程已退出，但仍有后台进程残留。", target.Identity.ProcessId);
         }
 
         if (!string.IsNullOrWhiteSpace(target.ConnectionMessage))
@@ -639,50 +639,50 @@ internal sealed class RuntimeApplyWorkflow
 
         if (target.DebugPort is not int port || port is < 1 or > 65535)
         {
-            return $"调试实例 PID {target.Identity.ProcessId} 没有有效的调试端口。请刷新实例列表检查启动参数。";
+            return AppLocalization.Format("调试实例 PID {0} 没有有效的调试端口。请刷新实例列表检查启动参数。", target.Identity.ProcessId);
         }
 
         if (target.DebugConnectionState == CodexDebugConnectionState.WaitingForListener)
         {
-            return $"调试实例 PID {target.Identity.ProcessId} 的端口 {port} 尚未开始监听。";
+            return AppLocalization.Format("调试实例 PID {0} 的端口 {1} 尚未开始监听。", target.Identity.ProcessId, port);
         }
 
         if (target.DebugConnectionState == CodexDebugConnectionState.WaitingForCdp)
         {
-            return $"调试实例 PID {target.Identity.ProcessId} 已拥有端口 {port}，但 CDP 服务尚未就绪。";
+            return AppLocalization.Format("调试实例 PID {0} 已拥有端口 {1}，但 CDP 服务尚未就绪。", target.Identity.ProcessId, port);
         }
 
         if (target.CanConnect && string.IsNullOrWhiteSpace(target.DebugEndpoint))
         {
-            return $"调试实例 PID {target.Identity.ProcessId} 的监听端口已响应，但 Runtime 未返回经过身份核验的 Endpoint。";
+            return AppLocalization.Format("调试实例 PID {0} 的监听端口已响应，但 Runtime 未返回经过身份核验的 Endpoint。", target.Identity.ProcessId);
         }
 
-        return $"调试实例 PID {target.Identity.ProcessId} 声明了端口 {port}，但尚未核验到由该进程拥有的可连接端口。请处理占用进程并刷新列表。";
+        return AppLocalization.Format("调试实例 PID {0} 声明了端口 {1}，但尚未核验到由该进程拥有的可连接端口。请处理占用进程并刷新列表。", target.Identity.ProcessId, port);
     }
 
-    private static string DescribeWaitingState(CodexInstance target, bool compatibilityOnly) =>
+    private static string DescribeWaitingState(CodexInstance target, bool connectionOnly) =>
         target.DebugConnectionState switch
         {
             CodexDebugConnectionState.WaitingForListener =>
-                $"正在等待调试实例 PID {target.Identity.ProcessId} 开始监听端口 {target.DebugPort}；{GetOperationNotSent(compatibilityOnly)}。",
+                AppLocalization.Format("正在等待调试实例 PID {0} 开始监听端口 {1}；{2}。", target.Identity.ProcessId, FormatPort(target.DebugPort), GetOperationNotSent(connectionOnly)),
             CodexDebugConnectionState.WaitingForCdp =>
-                $"端口已由调试实例 PID {target.Identity.ProcessId} 持有，正在等待 CDP 服务完成身份核验；{GetOperationNotSent(compatibilityOnly)}。",
-            _ => $"正在等待调试实例 PID {target.Identity.ProcessId} 完成端口和 CDP 身份核验；{GetOperationNotSent(compatibilityOnly)}。"
+                AppLocalization.Format("端口已由调试实例 PID {0} 持有，正在等待 CDP 服务完成身份核验；{1}。", target.Identity.ProcessId, GetOperationNotSent(connectionOnly)),
+            _ => AppLocalization.Format("正在等待调试实例 PID {0} 完成端口和 CDP 身份核验；{1}。", target.Identity.ProcessId, GetOperationNotSent(connectionOnly))
         };
 
     private static string DescribePortMismatch(CodexInstance instance, int requestedPort) =>
-        $"检测到正在运行的调试版 Codex（端口 {FormatPort(instance.DebugPort)}），与当前端口 {requestedPort} 不匹配。请在“选择窗口”中选择窗口。";
+        AppLocalization.Format("检测到正在运行的调试版 Codex（端口 {0}），与当前端口 {1} 不匹配。请在“选择窗口”中选择窗口。", FormatPort(instance.DebugPort), requestedPort);
 
     private static string DescribeMultipleDebugTargets(IReadOnlyList<CodexInstance> targets, int requestedPort, string prefix)
     {
         var ports = string.Join("、", targets.Select(instance => instance.DebugPort).Distinct()
             .OrderBy(port => port ?? int.MaxValue).Select(FormatPort));
-        return $"{prefix}（端口 {ports}），当前请求端口为 {requestedPort}。请在“选择窗口”中选择窗口。";
+        return AppLocalization.Format("{0}（端口 {1}），当前请求端口为 {2}。请在“选择窗口”中选择窗口。", AppLocalization.Get(prefix), ports, requestedPort);
     }
 
-    private static string FormatPort(int? port) => port?.ToString(CultureInfo.InvariantCulture) ?? "未知";
+    private static string FormatPort(int? port) => port?.ToString(CultureInfo.InvariantCulture) ?? AppLocalization.Get("未知");
 
-    private static string GetOperationNotSent(bool compatibilityOnly) => compatibilityOnly ? "未配置界面语言" : "未发送皮肤脚本";
+    private static string GetOperationNotSent(bool connectionOnly) => AppLocalization.Get(connectionOnly ? "未应用皮肤" : "尚未发送皮肤脚本");
 
     private static bool SameIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
         left.ProcessId == right.ProcessId &&
@@ -690,7 +690,7 @@ internal sealed class RuntimeApplyWorkflow
         string.Equals(Path.GetFullPath(left.ExecutablePath), Path.GetFullPath(right.ExecutablePath), StringComparison.OrdinalIgnoreCase);
 
     private static RuntimeStatus Error(string message, string? endpoint = null, string? skinId = null) =>
-        new(RuntimeStatusState.Error, skinId, endpoint, message, false);
+        new(RuntimeStatusState.Error, skinId, endpoint, AppLocalization.Get(message), false);
 
     private sealed record TargetResolution(
         CodexInstance? Target,

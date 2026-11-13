@@ -22,6 +22,8 @@ internal static class CreationWorkflowChecks
     {
         Directory.CreateDirectory(testRoot);
         Directory.CreateDirectory(screenshotDirectory);
+        AppLocalization.Initialize(Path.Combine(testRoot, "editor-language.json"));
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         await VerifyCreationWorkflowAsync(testRoot, basePackage, ayanamiBytes, screenshotDirectory);
         await VerifyCopyWorkflowAsync(testRoot, basePackage, ayanamiBytes, sayaBytes, screenshotDirectory);
     }
@@ -93,6 +95,7 @@ internal static class CreationWorkflowChecks
         SelectByTag(scope, "dark");
         await WaitUntilAsync(() => Task.FromResult(renderer.CurrentResolvedSkin?.Appearance == SkinAppearance.Dark),
             "精细编辑范围同步到深色预览");
+        await VerifyEditorCatalogLocalizationAsync(window, editor, scope);
         await CaptureAsync(window, browser, Path.Combine(screenshotDirectory, "精细编辑-最小-960x640-深色.png"));
 
         // A preview-only appearance switch must leave the explicit dark write scope in place.
@@ -301,6 +304,72 @@ internal static class CreationWorkflowChecks
 
         CloseTestWindow(window);
     }
+
+    private static async Task VerifyEditorCatalogLocalizationAsync(
+        MainWindow window,
+        SkinEditorView editor,
+        ComboBox scope)
+    {
+        var editorTabs = Find<TabControl>(editor, "EditorTabs");
+        var previousTab = editorTabs.SelectedItem;
+        editorTabs.SelectedItem = Find<TabItem>(editor, "ComponentsTab");
+        var componentInput = Find<ComboBox>(editor, "ComponentInput");
+        var stateInput = Find<ComboBox>(editor, "ComponentStateInput");
+        var propertyInput = Find<ComboBox>(editor, "AddComponentPropertyInput");
+        var fields = Find<ItemsControl>(editor, "ComponentFields");
+
+        componentInput.SelectedValue = "content";
+        componentInput.SelectedValue = "window";
+        stateInput.SelectedValue = "hover";
+        var state = editor.Draft.Manifest["variants"]?["dark"]?["components"]?["window"]?["states"]?["hover"] as System.Text.Json.Nodes.JsonObject;
+        var definition = SkinDefinitionCatalog.DefaultComponentEditorFields.FirstOrDefault(candidate =>
+            candidate.EditorKind != SkinEditorFieldKind.Unsupported && state?[candidate.Key] is null)
+            ?? throw new InvalidDataException("测试用例找不到可添加的组件属性。");
+        propertyInput.SelectedValue = definition.Key;
+        var addProperty = typeof(SkinEditorView).GetMethod("AddComponentPropertyButton_Click", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(SkinEditorView), "AddComponentPropertyButton_Click");
+        addProperty.Invoke(editor, [new Button(), new RoutedEventArgs()]);
+        var field = fields.Items.Cast<SkinEditorView.SkinEditorField>()
+            .Single(candidate => candidate.Path[^1] == definition.Key);
+        field.Value = field.IsColor ? "#C0FFEE" : "17";
+
+        var draftJson = editor.Draft.Manifest.ToJsonString();
+        var draftValue = field.Value;
+        var draftChangedEvents = 0;
+        editor.DraftChanged += (_, _) => draftChangedEvents++;
+        AppLocalization.SetLanguage(AppLanguage.English);
+        await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
+        Check(ReadOptionLabel(componentInput.SelectedItem) == "Window" &&
+              ReadOptionLabel(stateInput.SelectedItem) == "Hover" &&
+              ReadOptionLabel(propertyInput.SelectedItem) == AppLocalization.Get(definition.Label) &&
+              field.Label == AppLocalization.Get(definition.Label),
+            "英语下动态组件、状态、属性选项与字段标签来自 Core source 翻译");
+        Check(editor.SelectedScope == "dark" && componentInput.SelectedValue as string == "window" &&
+              stateInput.SelectedValue as string == "hover" && propertyInput.SelectedValue as string == definition.Key &&
+              field.Value == draftValue && editor.Draft.Manifest.ToJsonString() == draftJson && editor.IsDirty &&
+              draftChangedEvents == 0,
+            "切换到英语保留写入范围、组件/属性/状态选择及脏草稿值");
+        Check(Find<TextBlock>(editor, "EditorTitle").Text == "New skin" &&
+              Find<Button>(editor, "SaveButton").Content?.ToString() == "Create skin",
+            "编辑器标题和长保存按钮使用英语，未重建草稿表单");
+
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+        await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), System.Windows.Threading.DispatcherPriority.Render);
+        Check(ReadOptionLabel(componentInput.SelectedItem) == "窗口" &&
+              ReadOptionLabel(stateInput.SelectedItem) == "悬停" &&
+              ReadOptionLabel(propertyInput.SelectedItem) == definition.Label && field.Label == definition.Label &&
+              field.Value == draftValue && editor.Draft.Manifest.ToJsonString() == draftJson &&
+              editor.SelectedScope == "dark" && draftChangedEvents == 0,
+            "切回中文后恢复 Core 中文source显示且不覆盖字段草稿或当前选择");
+
+        field.Value = string.Empty;
+        stateInput.SelectedValue = "default";
+        editorTabs.SelectedItem = previousTab;
+    }
+
+    private static string ReadOptionLabel(object? option) =>
+        option?.GetType().GetProperty("Label", BindingFlags.Instance | BindingFlags.Public)?.GetValue(option) as string
+        ?? string.Empty;
 
     private static async Task VerifyCopyWorkflowAsync(
         string testRoot,

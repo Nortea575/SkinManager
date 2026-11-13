@@ -2,52 +2,37 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using Microsoft.Win32;
 using System.Windows.Shapes;
+using Microsoft.Win32;
+using SkinManager.Core;
 using SkinManager.Runtime;
 
 namespace SkinManager.Desktop;
 
 public partial class SettingsWindow : Window
 {
-    private readonly Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>> _saveAndConfigure;
-    private readonly Func<RuntimeCompatibilityOptions> _reloadSettings;
     private readonly Func<string?, MagpieCompatibilityResult> _inspectMagpie;
     private readonly Func<string?, CancellationToken, Task> _launchMagpie;
-    private readonly Func<Task<RuntimeStatus>> _launchDebugCodex;
     private readonly Func<CodexConfigReadabilityResult> _inspectCodexConfig;
     private readonly IStartupPreferencesService? _startupPreferencesService;
-    private RuntimeCompatibilityOptions _options;
     private StartupPreferencesState? _startupPreferences;
-    private RuntimeCompatibilityResult? _lastRuntimeResult;
-    private bool _settingsLoaded;
-    private bool _updatingSettingsControl;
-    private bool _isBusy;
+    private CodexConfigReadabilityResult? _codexConfigResult;
+    private MagpieCompatibilityResult? _currentMagpieResult;
     private bool _hasInspectedMagpie;
     private bool _themeModeReady;
     private bool _updatingThemeMode;
+    private bool _languageModeReady;
+    private bool _updatingLanguageMode;
     private bool _updatingStartupControls;
     private bool _startupPreferencesLoaded;
+    private bool _settingsReady;
+    private bool _isBusy;
 
     public SettingsWindow(
-        RuntimeCompatibilityOptions options,
-        bool settingsLoaded,
-        string? settingsLoadError,
-        RuntimeCompatibilityResult? lastRuntimeResult,
-        Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>> saveAndConfigure,
-        Func<RuntimeCompatibilityOptions> reloadSettings,
-        Func<Task<RuntimeStatus>> launchDebugCodex,
         MagpieCompatibilityService? magpieService = null,
         ICodexConfigReadabilityService? codexConfigReadabilityService = null,
         IStartupPreferencesService? startupPreferencesService = null)
         : this(
-            options,
-            settingsLoaded,
-            settingsLoadError,
-            lastRuntimeResult,
-            saveAndConfigure,
-            reloadSettings,
-            launchDebugCodex,
             CreateMagpieActions(magpieService),
             codexConfigReadabilityService,
             startupPreferencesService)
@@ -55,25 +40,11 @@ public partial class SettingsWindow : Window
     }
 
     internal SettingsWindow(
-        RuntimeCompatibilityOptions options,
-        bool settingsLoaded,
-        string? settingsLoadError,
-        RuntimeCompatibilityResult? lastRuntimeResult,
-        Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>> saveAndConfigure,
-        Func<RuntimeCompatibilityOptions> reloadSettings,
-        Func<Task<RuntimeStatus>> launchDebugCodex,
         Func<string?, MagpieCompatibilityResult> inspectMagpie,
         Func<string?, CancellationToken, Task> launchMagpie,
         ICodexConfigReadabilityService? codexConfigReadabilityService = null,
         IStartupPreferencesService? startupPreferencesService = null)
         : this(
-            options,
-            settingsLoaded,
-            settingsLoadError,
-            lastRuntimeResult,
-            saveAndConfigure,
-            reloadSettings,
-            launchDebugCodex,
             (inspectMagpie, launchMagpie),
             codexConfigReadabilityService,
             startupPreferencesService)
@@ -81,55 +52,62 @@ public partial class SettingsWindow : Window
     }
 
     private SettingsWindow(
-        RuntimeCompatibilityOptions options,
-        bool settingsLoaded,
-        string? settingsLoadError,
-        RuntimeCompatibilityResult? lastRuntimeResult,
-        Func<RuntimeCompatibilityOptions, CancellationToken, Task<RuntimeCompatibilityResult?>> saveAndConfigure,
-        Func<RuntimeCompatibilityOptions> reloadSettings,
-        Func<Task<RuntimeStatus>> launchDebugCodex,
         (Func<string?, MagpieCompatibilityResult> Inspect,
          Func<string?, CancellationToken, Task> Launch) magpieActions,
         ICodexConfigReadabilityService? codexConfigReadabilityService,
         IStartupPreferencesService? startupPreferencesService)
     {
-        _options = options;
-        _settingsLoaded = settingsLoaded;
-        _lastRuntimeResult = lastRuntimeResult;
-        _saveAndConfigure = saveAndConfigure;
-        _reloadSettings = reloadSettings;
-        _launchDebugCodex = launchDebugCodex;
         _inspectMagpie = magpieActions.Inspect;
         _launchMagpie = magpieActions.Launch;
         _inspectCodexConfig = (codexConfigReadabilityService ?? new CodexConfigReadabilityService()).Inspect;
         _startupPreferencesService = startupPreferencesService;
+
         InitializeComponent();
+        SetLanguageSelection(AppLocalization.Preference);
+        _languageModeReady = true;
         _themeModeReady = true;
         SetAppearanceSelection(AppThemeService.Mode);
         AppThemeService.ThemeChanged += AppThemeService_ThemeChanged;
+        AppLocalization.LanguageChanged += AppLocalization_LanguageChanged;
         Closed += SettingsWindow_Closed;
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this, animateWindow: true, animateClose: true, animateButtonPress: true);
-        InitializePreferenceView(settingsLoadError);
-    }
 
-    private void InitializePreferenceView(string? settingsLoadError)
-    {
-        _updatingSettingsControl = true;
-        ForceSimplifiedChineseCheckBox.IsChecked = _settingsLoaded ? _options.ForceSimplifiedChinese : null;
-        ForceSimplifiedChineseCheckBox.IsEnabled = _settingsLoaded;
-        RetrySettingsLoadButton.Visibility = _settingsLoaded ? Visibility.Collapsed : Visibility.Visible;
-        RetrySettingsLoadButton.IsEnabled = true;
-        _updatingSettingsControl = false;
-        RenderSavedPreference(settingsLoadError);
-        RenderRuntimePreference(_settingsLoaded ? _lastRuntimeResult : null);
-        RenderCodexConfigStatus(_inspectCodexConfig());
+        RenderCodexConfigStatus(InspectCodexConfig());
         RefreshStartupPreferences();
+        _settingsReady = true;
     }
 
-    private void AppearanceModeBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void LanguageBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_themeModeReady || _updatingThemeMode || AppearanceModeBox.SelectedItem is not System.Windows.Controls.ComboBoxItem item ||
+        if (!_languageModeReady || _updatingLanguageMode || LanguageBox.SelectedItem is not ComboBoxItem item ||
+            item.Tag is not string languageText || !Enum.TryParse<AppLanguage>(languageText, out var language))
+        {
+            return;
+        }
+
+        try
+        {
+            AppLocalization.SetLanguage(language);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetLanguageSelection(AppLocalization.Preference);
+            WindowStatusText.Text = AppLocalization.Format("无法保存界面语言：{0}", exception.Message);
+        }
+    }
+
+    private void SetLanguageSelection(AppLanguage language)
+    {
+        _updatingLanguageMode = true;
+        LanguageBox.SelectedItem = LanguageBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), language.ToString(), StringComparison.Ordinal));
+        _updatingLanguageMode = false;
+    }
+
+    private void AppearanceModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_themeModeReady || _updatingThemeMode || AppearanceModeBox.SelectedItem is not ComboBoxItem item ||
             item.Tag is not string modeText || !Enum.TryParse<AppThemeMode>(modeText, out var mode))
         {
             return;
@@ -142,7 +120,7 @@ public partial class SettingsWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             SetAppearanceSelection(AppThemeService.Mode);
-            WindowStatusText.Text = $"界面外观未能保存：{exception.Message}";
+            WindowStatusText.Text = AppLocalization.Format("无法保存界面外观：{0}", exception.Message);
         }
     }
 
@@ -164,14 +142,46 @@ public partial class SettingsWindow : Window
         _updatingThemeMode = false;
     }
 
+    private void AppLocalization_LanguageChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() => AppLocalization_LanguageChanged(sender, e)));
+            return;
+        }
+
+        SetLanguageSelection(AppLocalization.Preference);
+        if (_startupPreferencesLoaded)
+            RenderStartupPreferences();
+        if (_codexConfigResult is not null)
+            RenderCodexConfigStatus(_codexConfigResult);
+        if (_currentMagpieResult is not null)
+            RenderMagpieResult(_currentMagpieResult);
+        UpdateMagpieControls(_currentMagpieResult);
+    }
+
     private void SettingsWindow_Closed(object? sender, EventArgs e)
     {
         AppThemeService.ThemeChanged -= AppThemeService_ThemeChanged;
+        AppLocalization.LanguageChanged -= AppLocalization_LanguageChanged;
         Closed -= SettingsWindow_Closed;
+    }
+
+    private CodexConfigReadabilityResult InspectCodexConfig()
+    {
+        try
+        {
+            return _inspectCodexConfig();
+        }
+        catch (Exception)
+        {
+            return new CodexConfigReadabilityResult(string.Empty, CodexConfigReadabilityState.InvalidPath);
+        }
     }
 
     private void RenderCodexConfigStatus(CodexConfigReadabilityResult result)
     {
+        _codexConfigResult = result;
         var (label, brushKey) = result.State switch
         {
             CodexConfigReadabilityState.Readable => ("config.toml 可读取", "SuccessText"),
@@ -179,10 +189,10 @@ public partial class SettingsWindow : Window
             CodexConfigReadabilityState.Unreadable => ("config.toml 无法读取", "ErrorText"),
             _ => ("Codex 配置路径无效", "ErrorText")
         };
-        CodexConfigStatusText.Text = label;
+        CodexConfigStatusText.Text = AppLocalization.Get(label);
         CodexConfigStatusText.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
         CodexConfigPathText.Text = string.IsNullOrWhiteSpace(result.Path)
-            ? "配置文件路径无法解析。"
+            ? AppLocalization.Get("配置文件路径无法解析。")
             : result.Path;
     }
 
@@ -206,7 +216,7 @@ public partial class SettingsWindow : Window
         {
             _startupPreferences = null;
             _startupPreferencesLoaded = false;
-            RenderStartupPreferences($"无法读取开机启动设置：{exception.Message}");
+            RenderStartupPreferences(AppLocalization.Format("无法读取开机启动设置：{0}", exception.Message));
         }
     }
 
@@ -230,16 +240,16 @@ public partial class SettingsWindow : Window
 
         if (state is null)
         {
-            StartupPreferencesStatusText.Text = "开机启动状态未知。";
+            StartupPreferencesStatusText.Text = AppLocalization.Get("开机启动状态未知。");
             StartupPreferencesStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
             return;
         }
 
         var lastSkin = string.IsNullOrWhiteSpace(state.LastSelectedSkinId)
-            ? "尚无已记录的上次皮肤。"
-            : $"上次选择的皮肤 ID：{state.LastSelectedSkinId}。";
+            ? AppLocalization.Get("尚无已记录的上次皮肤。")
+            : AppLocalization.Format("上次选择的皮肤 ID：{0}。", state.LastSelectedSkinId);
         var paused = state.ApplyLastSelectedSkin && !state.ManagerStartsAtWindowsSignIn
-            ? "第二项已保留，开启管理器自启后才会生效。"
+            ? AppLocalization.Get("第二项已保留，开启管理器自启后才会生效。")
             : null;
         StartupPreferencesStatusText.Text = string.Join(" ", new[] { lastSkin, paused }.Where(text => !string.IsNullOrWhiteSpace(text)));
         StartupPreferencesStatusText.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryText");
@@ -248,9 +258,7 @@ public partial class SettingsWindow : Window
     private void StartupPreferenceCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         if (_updatingStartupControls || !_startupPreferencesLoaded || _startupPreferencesService is null || _isBusy)
-        {
             return;
-        }
 
         try
         {
@@ -259,164 +267,31 @@ public partial class SettingsWindow : Window
                 : _startupPreferencesService.SetApplyLastSelectedSkin(ApplyLastSelectedSkinCheckBox.IsChecked == true);
             _startupPreferencesLoaded = true;
             RenderStartupPreferences();
-            WindowStatusText.Text = "开机启动设置已保存。";
+            WindowStatusText.Text = AppLocalization.Get("开机启动设置已保存。");
         }
         catch (Exception exception)
         {
-            RenderStartupPreferences($"开机启动设置未能保存：{exception.Message}");
-            WindowStatusText.Text = "开机启动设置未保存；原值仍保留。";
+            RenderStartupPreferences(AppLocalization.Format("开机启动设置未能保存：{0}", exception.Message));
+            WindowStatusText.Text = AppLocalization.Get("开机启动设置未保存；原值仍保留。");
         }
     }
 
-    private async void ForceSimplifiedChineseCheckBox_Changed(object sender, RoutedEventArgs e)
+    private void SettingsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_updatingSettingsControl || !_settingsLoaded || _isBusy)
+        if (!_settingsReady || !ReferenceEquals(e.OriginalSource, SettingsTabs) ||
+            !ReferenceEquals(SettingsTabs.SelectedItem, CompatibilityTab) || _hasInspectedMagpie)
         {
             return;
         }
 
-        var requested = new RuntimeCompatibilityOptions(ForceSimplifiedChineseCheckBox.IsChecked == true);
-        if (requested == _options)
-        {
-            return;
-        }
-
-        SetBusy(true, "正在保存界面语言设置…");
-        try
-        {
-            var result = await _saveAndConfigure(requested, CancellationToken.None);
-            _options = requested;
-            _settingsLoaded = true;
-            _lastRuntimeResult = result;
-            RenderSavedPreference(null);
-            RenderRuntimePreference(result);
-            WindowStatusText.Text = "设置已保存。";
-        }
-        catch (Exception exception)
-        {
-            _updatingSettingsControl = true;
-            ForceSimplifiedChineseCheckBox.IsChecked = _settingsLoaded ? _options.ForceSimplifiedChinese : null;
-            _updatingSettingsControl = false;
-            LanguageSavedStatusText.Text = $"未能保存：{exception.Message}";
-            LanguageSavedStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
-            WindowStatusText.Text = "设置未保存；原值仍保留。";
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
-
-    private void RetrySettingsLoadButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isBusy)
-        {
-            return;
-        }
-
-        try
-        {
-            _options = _reloadSettings();
-            _settingsLoaded = true;
-            _updatingSettingsControl = true;
-            ForceSimplifiedChineseCheckBox.IsChecked = _options.ForceSimplifiedChinese;
-            ForceSimplifiedChineseCheckBox.IsEnabled = true;
-            _updatingSettingsControl = false;
-            RetrySettingsLoadButton.Visibility = Visibility.Collapsed;
-            RenderSavedPreference(null);
-            RenderRuntimePreference(_lastRuntimeResult);
-            WindowStatusText.Text = "已读取保存的设置。";
-        }
-        catch (Exception exception)
-        {
-            LanguageSavedStatusText.Text = $"无法读取保存值：{exception.Message}";
-            LanguageSavedStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
-            WindowStatusText.Text = "设置仍未知；修复存储后可重试读取。";
-        }
-    }
-
-    internal void UpdateRuntimePreference(RuntimeCompatibilityResult? result)
-    {
-        _lastRuntimeResult = result;
-        RenderRuntimePreference(result);
-    }
-
-    private void RenderSavedPreference(string? settingsLoadError)
-    {
-        if (!_settingsLoaded)
-        {
-            LanguageSavedStatusText.Text = string.IsNullOrWhiteSpace(settingsLoadError)
-                ? "无法读取保存值；当前偏好未知。"
-                : $"无法读取保存值：{settingsLoadError}";
-            LanguageSavedStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
-            return;
-        }
-
-        LanguageSavedStatusText.Text = _options.ForceSimplifiedChinese
-            ? "已保存：固定使用简体中文。"
-            : "已保存：关闭固定语言。";
-        LanguageSavedStatusText.SetResourceReference(TextBlock.ForegroundProperty, "PrimaryText");
-    }
-
-    private void RenderRuntimePreference(RuntimeCompatibilityResult? result)
-    {
-        if (result is null)
-        {
-            LanguageRuntimeStatusText.Text = _options.ForceSimplifiedChinese
-                ? "待连接：连接调试版 Codex 后生效。"
-                : "未连接：关闭设置已保存；连接实例后可确认恢复状态。";
-            LanguageRuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryText");
-            return;
-        }
-
-        var (text, brushKey) = result.State switch
-        {
-            RuntimeCompatibilityState.Applied when _options.ForceSimplifiedChinese =>
-                ("已生效：当前目标使用简体中文。", "SuccessText"),
-            RuntimeCompatibilityState.Applied =>
-                ("状态异常：目标已应用语言覆盖，但当前开关为关闭。", "WarningText"),
-            RuntimeCompatibilityState.Disabled when !_options.ForceSimplifiedChinese =>
-                ($"已关闭：{result.Message ?? "固定简体中文不再启用。"}", "SuccessText"),
-            RuntimeCompatibilityState.Disabled =>
-                ("未生效：目标语言覆盖当前处于关闭状态。", "WarningText"),
-            RuntimeCompatibilityState.Pending =>
-                ($"待处理：{result.Message ?? "目标尚未就绪，设置已保存。"}", "WarningText"),
-            RuntimeCompatibilityState.Unsupported =>
-                ($"当前宿主不支持：{result.Message ?? "无法设置界面语言。"}", "WarningText"),
-            RuntimeCompatibilityState.TimedOut =>
-                ($"等待超时：{result.Message ?? "未能确认界面语言状态。"}", "ErrorText"),
-            _ => ($"未能生效：{result.Message ?? "请检查目标状态后重试。"}", "ErrorText")
-        };
-        LanguageRuntimeStatusText.Text = text;
-        LanguageRuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
-        LanguageRuntimeStatusText.ToolTip = string.IsNullOrWhiteSpace(result.Endpoint)
-            ? text
-            : $"{text}\n{result.Endpoint}";
-    }
-
-    private void MagpieSettingsExpander_Expanded(object sender, RoutedEventArgs e)
-    {
-        if (!_hasInspectedMagpie)
-        {
-            RefreshCompatibilityStatuses();
-        }
+        RefreshCompatibilityStatuses();
     }
 
     private void InspectButton_Click(object sender, RoutedEventArgs e) => RefreshCompatibilityStatuses();
 
     private void RefreshCompatibilityStatuses()
     {
-        try
-        {
-            RenderCodexConfigStatus(_inspectCodexConfig());
-        }
-        catch (Exception exception)
-        {
-            CodexConfigStatusText.Text = $"检测失败：{exception.Message}";
-            CodexConfigStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
-            CodexConfigPathText.Text = string.Empty;
-        }
-
+        RenderCodexConfigStatus(InspectCodexConfig());
         InspectMagpieCompatibility();
     }
 
@@ -430,10 +305,7 @@ public partial class SettingsWindow : Window
             var result = _inspectMagpie(selectedPath);
             _hasInspectedMagpie = true;
             if (string.IsNullOrWhiteSpace(selectedPath) && !string.IsNullOrWhiteSpace(result.ExecutablePath))
-            {
                 ExecutablePathInput.Text = result.ExecutablePath;
-            }
-
             RenderMagpieResult(result);
         }
         catch (Exception exception)
@@ -441,12 +313,12 @@ public partial class SettingsWindow : Window
             _hasInspectedMagpie = true;
             _currentMagpieResult = null;
             SupportIndicator.SetResourceReference(Ellipse.FillProperty, "ErrorText");
-            SupportTitle.Text = "无法完成检测";
-            SupportSubtitle.Text = "检测未能读取 Magpie 状态。";
-            MagpieRunningText.Text = "运行状态：未知";
+            SupportTitle.Text = AppLocalization.Get("无法完成检测");
+            SupportSubtitle.Text = AppLocalization.Get("检测未能读取 Magpie 状态。");
+            MagpieRunningText.Text = AppLocalization.Get("运行状态：未知");
             CompatibilityMessageText.Text = exception.Message;
-            VersionText.Text = "版本：未检测";
-            ExecutablePathText.Text = "路径：未检测";
+            VersionText.Text = AppLocalization.Get("版本：未检测");
+            ExecutablePathText.Text = AppLocalization.Get("路径：未检测");
             EvidenceText.Text = string.Empty;
             LaunchMagpieButton.IsEnabled = false;
             UpdateMagpieControls();
@@ -467,26 +339,26 @@ public partial class SettingsWindow : Window
         };
 
         SupportIndicator.SetResourceReference(Ellipse.FillProperty, brushKey);
-        SupportTitle.Text = title;
+        SupportTitle.Text = AppLocalization.Get(title);
         SupportSubtitle.Text = result.IsInstalled
-            ? result.ProductVersion is { Length: > 0 } version ? $"检测到 Magpie · {version}" : "检测到 Magpie"
-            : "未检测到可识别的 Magpie，可选择便携版或指定路径。";
-        MagpieRunningText.Text = result.IsRunning ? "运行状态：正在运行" : "运行状态：未运行";
+            ? result.ProductVersion is { Length: > 0 } version
+                ? AppLocalization.Format("检测到 Magpie · {0}", version)
+                : AppLocalization.Get("检测到 Magpie")
+            : AppLocalization.Get("未检测到可识别的 Magpie，可选择便携版或指定路径。");
+        MagpieRunningText.Text = AppLocalization.Get(result.IsRunning ? "运行状态：正在运行" : "运行状态：未运行");
         CompatibilityMessageText.Text = result.Support switch
         {
-            MagpieCompatibilitySupport.Unsupported =>
-                "Magpie 自身启动 Codex 不附带调试参数。需要换肤时，从 SkinManager 启动调试版并应用皮肤；网关模型配置仍可独立使用。",
-            MagpieCompatibilitySupport.Unverified =>
-                "此版本的 Magpie 启动参数尚未核实。网关模型配置与皮肤启动参数相互独立。",
-            _ => result.Message
+            MagpieCompatibilitySupport.Unsupported => AppLocalization.Get("Magpie 自身启动 Codex 不附带调试参数。需要换肤时，从 SkinManager 启动调试版并应用皮肤；网关模型配置仍可独立使用。"),
+            MagpieCompatibilitySupport.Unverified => AppLocalization.Get("此版本的 Magpie 启动参数尚未核实。网关模型配置与皮肤启动参数相互独立。"),
+            _ => AppLocalization.Get(result.Message)
         };
         VersionText.Text = result.ProductVersion is { Length: > 0 } productVersion
-            ? $"版本：{productVersion}"
-            : "版本：未检测";
+            ? AppLocalization.Format("版本：{0}", productVersion)
+            : AppLocalization.Get("版本：未检测");
         ExecutablePathText.Text = result.ExecutablePath is { Length: > 0 } executablePath
-            ? $"路径：{executablePath}"
-            : "路径：未检测";
-        EvidenceText.Text = result.Evidence;
+            ? AppLocalization.Format("路径：{0}", executablePath)
+            : AppLocalization.Get("路径：未检测");
+        EvidenceText.Text = AppLocalization.Get(result.Evidence);
         UpdateMagpieControls(result);
     }
 
@@ -494,15 +366,13 @@ public partial class SettingsWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "选择 Magpie 程序",
-            Filter = "应用程序|*.exe|所有文件|*.*",
+            Title = AppLocalization.Get("选择 Magpie 程序"),
+            Filter = AppLocalization.Get("应用程序|*.exe|所有文件|*.*"),
             CheckFileExists = true,
             Multiselect = false
         };
         if (dialog.ShowDialog(this) != true)
-        {
             return;
-        }
 
         ExecutablePathInput.Text = dialog.FileName;
         InspectMagpieCompatibility();
@@ -511,50 +381,21 @@ public partial class SettingsWindow : Window
     private async void LaunchMagpieButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isBusy)
-        {
             return;
-        }
 
         var selectedPath = string.IsNullOrWhiteSpace(ExecutablePathInput.Text)
             ? null
             : ExecutablePathInput.Text.Trim();
-        SetBusy(true, "正在启动 Magpie…");
+        SetBusy(true, AppLocalization.Get("正在启动 Magpie…"));
         try
         {
             await _launchMagpie(selectedPath, CancellationToken.None);
-            MagpieActionStatusText.Text = "已启动 Magpie；未修改其配置。";
+            MagpieActionStatusText.Text = AppLocalization.Get("已启动 Magpie；未修改其配置。");
             RefreshCompatibilityStatuses();
         }
         catch (Exception exception)
         {
-            MagpieActionStatusText.Text = $"启动 Magpie 失败：{exception.Message}";
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
-
-    private async void LaunchDebugCodexButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isBusy)
-        {
-            return;
-        }
-
-        SetBusy(true, "正在请求启动 Codex 调试版…");
-        try
-        {
-            var status = await _launchDebugCodex();
-            WindowStatusText.Text = status.State == RuntimeStatusState.Error
-                ? $"启动未完成：{status.Message ?? "请检查实例状态后重试。"}"
-                : status.State == RuntimeStatusState.Connected
-                    ? status.Message ?? "目标已连接并同步界面语言设置；未应用皮肤。"
-                    : "已请求启动。此操作不会应用皮肤；端口就绪后会核验目标并同步保存的语言设置。";
-        }
-        catch (Exception exception)
-        {
-            WindowStatusText.Text = $"启动 Codex 调试版失败：{exception.Message}";
+            MagpieActionStatusText.Text = AppLocalization.Format("启动 Magpie 失败：{0}", exception.Message);
         }
         finally
         {
@@ -572,31 +413,22 @@ public partial class SettingsWindow : Window
     private void SetBusy(bool busy, string? message = null)
     {
         _isBusy = busy;
-        ForceSimplifiedChineseCheckBox.IsEnabled = _settingsLoaded && !_isBusy;
-        RetrySettingsLoadButton.IsEnabled = !_isBusy;
         StartManagerAtLoginCheckBox.IsEnabled = _startupPreferencesLoaded && !_isBusy;
         ApplyLastSelectedSkinCheckBox.IsEnabled = _startupPreferencesLoaded &&
             _startupPreferences?.ManagerStartsAtWindowsSignIn == true && !_isBusy;
-        LaunchDebugCodexButton.IsEnabled = !_isBusy;
+        LanguageBox.IsEnabled = !_isBusy;
+        AppearanceModeBox.IsEnabled = !_isBusy;
         if (!string.IsNullOrWhiteSpace(message))
-        {
             WindowStatusText.Text = message;
-        }
-
         UpdateMagpieControls(_currentMagpieResult);
     }
-
-    private MagpieCompatibilityResult? _currentMagpieResult;
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
     private void SettingsWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != System.Windows.Input.Key.Escape)
-        {
             return;
-        }
-
         e.Handled = true;
         Close();
     }

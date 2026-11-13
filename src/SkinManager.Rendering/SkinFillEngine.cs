@@ -12,7 +12,7 @@ internal static class SkinFillEngine
     private static string LoadSource()
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName)
-            ?? throw new InvalidOperationException($"找不到内嵌资源 {ResourceName}。");
+            ?? throw new InvalidOperationException(AppLocalization.Format("找不到内嵌资源 {0}。", ResourceName));
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }

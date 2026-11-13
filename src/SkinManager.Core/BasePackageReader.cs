@@ -23,12 +23,12 @@ public static class BasePackageReader
         var info = new FileInfo(path);
         if (!info.Exists)
         {
-            throw new FileNotFoundException("找不到原生基础包 ZIP。", path);
+            throw new FileNotFoundException(AppLocalization.Get("找不到原生基础包 ZIP。"), path);
         }
 
         if (info.Length > MaxArchiveBytes)
         {
-            throw new InvalidDataException("原生基础包 ZIP 超过 64 MB。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 ZIP 超过 64 MB。 "));
         }
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -39,7 +39,7 @@ public static class BasePackageReader
     {
         if (zipBytes.Length == 0 || zipBytes.Length > MaxArchiveBytes)
         {
-            throw new InvalidDataException("原生基础包 ZIP 为空或超过 64 MB。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 ZIP 为空或超过 64 MB。 "));
         }
 
         using var stream = new MemoryStream(zipBytes.ToArray(), writable: false);
@@ -51,7 +51,7 @@ public static class BasePackageReader
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         if (archive.Entries.Count is 0 or > MaxFiles + 1)
         {
-            throw new InvalidDataException($"原生基础包条目数量无效；最多支持 {MaxFiles} 个资源文件。 ");
+            throw new InvalidDataException(AppLocalization.Format("原生基础包条目数量无效；最多支持 {0} 个资源文件。 ", MaxFiles));
         }
 
         var files = new Dictionary<string, byte[]>(PathComparer);
@@ -67,13 +67,13 @@ public static class BasePackageReader
 
             if (entry.Length < 0 || entry.Length > MaxSingleFileBytes)
             {
-                throw new InvalidDataException($"原生基础包文件“{path}”超过单文件大小上限。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包文件“{0}”超过单文件大小上限。 ", path));
             }
 
             expandedSize = checked(expandedSize + entry.Length);
             if (expandedSize > MaxExpandedBytes)
             {
-                throw new InvalidDataException("原生基础包解压后总大小超过 64 MB。 ");
+                throw new InvalidDataException(AppLocalization.Get("原生基础包解压后总大小超过 64 MB。 "));
             }
 
             using var source = entry.Open();
@@ -81,23 +81,23 @@ public static class BasePackageReader
             CopyBounded(source, destination, entry.Length, path);
             if (destination.Length != entry.Length)
             {
-                throw new InvalidDataException($"原生基础包文件“{path}”的实际大小与 ZIP 目录不一致。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包文件“{0}”的实际大小与 ZIP 目录不一致。 ", path));
             }
 
             if (!files.TryAdd(path, destination.ToArray()))
             {
-                throw new InvalidDataException($"原生基础包存在重复路径“{path}”。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包存在重复路径“{0}”。 ", path));
             }
         }
 
         if (!files.TryGetValue("base.json", out var manifestBytes))
         {
-            throw new InvalidDataException("原生基础包 ZIP 根目录缺少 base.json。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 ZIP 根目录缺少 base.json。 "));
         }
 
         if (manifestBytes.Length is 0 or > MaxManifestBytes)
         {
-            throw new InvalidDataException("base.json 为空或超过 1 MB。 ");
+            throw new InvalidDataException(AppLocalization.Get("base.json 为空或超过 1 MB。 "));
         }
 
         JsonDocument document;
@@ -107,7 +107,7 @@ public static class BasePackageReader
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException("base.json 格式错误。 ", exception);
+            throw new InvalidDataException(AppLocalization.Get("base.json 格式错误。 "), exception);
         }
 
         using (document)
@@ -120,18 +120,18 @@ public static class BasePackageReader
     {
         if (root.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidDataException("base.json 顶层必须是对象。 ");
+            throw new InvalidDataException(AppLocalization.Get("base.json 顶层必须是对象。 "));
         }
 
         if (GetInt32(root, "schemaVersion") != 1)
         {
-            throw new InvalidDataException("仅支持 schemaVersion=1 的原生基础包。 ");
+            throw new InvalidDataException(AppLocalization.Get("仅支持 schemaVersion=1 的原生基础包。 "));
         }
 
         var id = GetRequiredString(root, "id");
         if (!IsIdentifier(id))
         {
-            throw new InvalidDataException("原生基础包 ID 格式无效。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 ID 格式无效。 "));
         }
 
         var name = GetRequiredString(root, "name");
@@ -140,7 +140,7 @@ public static class BasePackageReader
         if (name.Length > 120 || sourceVersion.Length > 80 ||
             sourceAsarSha256.Length != 64 || !sourceAsarSha256.All(Uri.IsHexDigit))
         {
-            throw new InvalidDataException("base.json 的名称、版本或源 ASAR SHA-256 无效。 ");
+            throw new InvalidDataException(AppLocalization.Get("base.json 的名称、版本或源 ASAR SHA-256 无效。 "));
         }
 
         var entry = NormalizeRelativePath(GetRequiredString(root, "entry"));
@@ -150,13 +150,13 @@ public static class BasePackageReader
         {
             if (!parts.Contains(requiredPart, StringComparer.Ordinal))
             {
-                throw new InvalidDataException($"原生基础包缺少 data-skin-part={requiredPart}。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包缺少 data-skin-part={0}。 ", requiredPart));
             }
         }
 
         if (!archiveFiles.TryGetValue("base.json", out _))
         {
-            throw new InvalidDataException("base.json 缺失。 ");
+            throw new InvalidDataException(AppLocalization.Get("base.json 缺失。 "));
         }
 
         var declarations = ReadFileDeclarations(root);
@@ -167,8 +167,8 @@ public static class BasePackageReader
             var missing = declaredPaths.Except(actualPaths, PathComparer).FirstOrDefault();
             var extra = actualPaths.Except(declaredPaths, PathComparer).FirstOrDefault();
             throw new InvalidDataException(missing is not null
-                ? $"base.json 声明的资源“{missing}”不在 ZIP 中。 "
-                : $"ZIP 包含未在 base.json 声明的资源“{extra}”。 ");
+                ? AppLocalization.Format("base.json 声明的资源“{0}”不在 ZIP 中。 ", missing)
+                : AppLocalization.Format("ZIP 包含未在 base.json 声明的资源“{0}”。 ", extra));
         }
 
         var verified = new Dictionary<string, byte[]>(PathComparer);
@@ -177,13 +177,13 @@ public static class BasePackageReader
             var bytes = archiveFiles[declaration.Path];
             if (bytes.LongLength != declaration.Size)
             {
-                throw new InvalidDataException($"原生基础包资源“{declaration.Path}”大小与 base.json 不一致。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包资源“{0}”大小与 base.json 不一致。 ", declaration.Path));
             }
 
             var actualHash = Convert.ToHexString(SHA256.HashData(bytes));
             if (!actualHash.Equals(declaration.Sha256, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException($"原生基础包资源“{declaration.Path}”SHA-256 与 base.json 不一致。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包资源“{0}”SHA-256 与 base.json 不一致。 ", declaration.Path));
             }
 
             verified.Add(declaration.Path, bytes);
@@ -191,14 +191,14 @@ public static class BasePackageReader
 
         if (!verified.ContainsKey(entry))
         {
-            throw new InvalidDataException($"原生基础包入口“{entry}”不在 files[] 中。 ");
+            throw new InvalidDataException(AppLocalization.Format("原生基础包入口“{0}”不在 files[] 中。 ", entry));
         }
 
         foreach (var style in styles)
         {
             if (!verified.TryGetValue(style, out var bytes))
             {
-                throw new InvalidDataException($"原生基础包样式表“{style}”不在 files[] 中。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包样式表“{0}”不在 files[] 中。 ", style));
             }
 
             try
@@ -207,7 +207,7 @@ public static class BasePackageReader
             }
             catch (DecoderFallbackException exception)
             {
-                throw new InvalidDataException($"原生基础包样式表“{style}”不是有效的 UTF-8 文本。 ", exception);
+                throw new InvalidDataException(AppLocalization.Format("原生基础包样式表“{0}”不是有效的 UTF-8 文本。 ", style), exception);
             }
         }
 
@@ -218,14 +218,14 @@ public static class BasePackageReader
         }
         catch (DecoderFallbackException exception)
         {
-            throw new InvalidDataException("原生基础包 HTML 入口不是有效的 UTF-8 文本。 ", exception);
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 HTML 入口不是有效的 UTF-8 文本。 "), exception);
         }
 
         if (Regex.IsMatch(entryHtml, "<script\\b", RegexOptions.IgnoreCase | RegexOptions.Singleline) ||
             !Regex.IsMatch(entryHtml, "<html\\b[^>]*\\bdata-theme\\s*=\\s*(['\"])light\\1", RegexOptions.IgnoreCase | RegexOptions.Singleline) ||
             !Regex.IsMatch(entryHtml, "<html\\b[^>]*\\bdata-codex-window-type\\s*=\\s*(['\"])electron\\1", RegexOptions.IgnoreCase | RegexOptions.Singleline))
         {
-            throw new InvalidDataException("原生基础包 HTML 必须是无脚本的 Electron 静态入口，并声明 data-theme=light。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 HTML 必须是无脚本的 Electron 静态入口，并声明 data-theme=light。 "));
         }
 
         foreach (var declaredPart in parts)
@@ -233,7 +233,7 @@ public static class BasePackageReader
             var marker = $"data-skin-part\\s*=\\s*(['\"]){Regex.Escape(declaredPart)}\\1";
             if (!Regex.IsMatch(entryHtml, marker, RegexOptions.IgnoreCase | RegexOptions.Singleline))
             {
-                throw new InvalidDataException($"原生基础包 HTML 缺少 base.json 声明的 data-skin-part={declaredPart} 节点。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包 HTML 缺少 base.json 声明的 data-skin-part={0} 节点。 ", declaredPart));
             }
         }
 
@@ -244,7 +244,7 @@ public static class BasePackageReader
     {
         if (!root.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array || files.GetArrayLength() is 0 or > MaxFiles)
         {
-            throw new InvalidDataException($"base.json 的 files 必须包含 1 到 {MaxFiles} 个资源声明。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 的 files 必须包含 1 到 {0} 个资源声明。 ", MaxFiles));
         }
 
         var result = new List<(string Path, long Size, string Sha256)>(files.GetArrayLength());
@@ -254,31 +254,31 @@ public static class BasePackageReader
         {
             if (file.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException("base.json 的每个 files[] 项都必须是对象。 ");
+                throw new InvalidDataException(AppLocalization.Get("base.json 的每个 files[] 项都必须是对象。 "));
             }
 
             var path = NormalizeRelativePath(GetRequiredString(file, "path"));
             if (path.Equals("base.json", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException("files[] 不能包含 base.json 自身。 ");
+                throw new InvalidDataException(AppLocalization.Get("files[] 不能包含 base.json 自身。 "));
             }
 
             if (!seen.Add(path))
             {
-                throw new InvalidDataException($"base.json 中存在重复资源路径“{path}”。 ");
+                throw new InvalidDataException(AppLocalization.Format("base.json 中存在重复资源路径“{0}”。 ", path));
             }
 
             var size = GetInt64(file, "size");
             var sha256 = GetRequiredString(file, "sha256");
             if (size < 0 || size > MaxSingleFileBytes || sha256.Length != 64 || !sha256.All(Uri.IsHexDigit))
             {
-                throw new InvalidDataException($"base.json 中“{path}”的大小或 SHA-256 无效。 ");
+                throw new InvalidDataException(AppLocalization.Format("base.json 中“{0}”的大小或 SHA-256 无效。 ", path));
             }
 
             total = checked(total + size);
             if (total > MaxExpandedBytes)
             {
-                throw new InvalidDataException("base.json 声明的资源总大小超过 64 MB。 ");
+                throw new InvalidDataException(AppLocalization.Get("base.json 声明的资源总大小超过 64 MB。 "));
             }
 
             result.Add((path, size, sha256));
@@ -292,14 +292,14 @@ public static class BasePackageReader
         var values = ReadStringArray(root, propertyName);
         if (values.Count == 0)
         {
-            throw new InvalidDataException($"base.json 的 {propertyName} 不能为空。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 的 {0} 不能为空。 ", propertyName));
         }
 
         var normalized = values.Select(NormalizeRelativePath).ToArray();
         if (normalized.Distinct(PathComparer).Count() != normalized.Length ||
             (requireCss && normalized.Any(path => !Path.GetExtension(path).Equals(".css", StringComparison.OrdinalIgnoreCase))))
         {
-            throw new InvalidDataException($"base.json 的 {propertyName} 包含重复或无效路径。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 的 {0} 包含重复或无效路径。 ", propertyName));
         }
 
         return normalized;
@@ -309,7 +309,7 @@ public static class BasePackageReader
     {
         if (!root.TryGetProperty(propertyName, out var array) || array.ValueKind != JsonValueKind.Array || array.GetArrayLength() > MaxFiles)
         {
-            throw new InvalidDataException($"base.json 的 {propertyName} 必须是数组。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 的 {0} 必须是数组。 ", propertyName));
         }
 
         var values = new List<string>(array.GetArrayLength());
@@ -317,7 +317,7 @@ public static class BasePackageReader
         {
             if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
             {
-                throw new InvalidDataException($"base.json 的 {propertyName} 只能包含非空字符串。 ");
+                throw new InvalidDataException(AppLocalization.Format("base.json 的 {0} 只能包含非空字符串。 ", propertyName));
             }
 
             values.Add(item.GetString()!);
@@ -330,13 +330,13 @@ public static class BasePackageReader
     {
         if (string.IsNullOrWhiteSpace(path) || path.Contains('\\') || path.Contains(':') || path.StartsWith('/') || path.StartsWith("//", StringComparison.Ordinal))
         {
-            throw new InvalidDataException("原生基础包资源路径必须是安全的相对 POSIX 路径。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包资源路径必须是安全的相对 POSIX 路径。 "));
         }
 
         var parts = path.Split('/');
         if (parts.Any(part => part.Length == 0 || part is "." or ".." || part.Any(char.IsControl)))
         {
-            throw new InvalidDataException("原生基础包资源路径包含无效片段。 ");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包资源路径包含无效片段。 "));
         }
 
         return string.Join('/', parts);
@@ -347,7 +347,7 @@ public static class BasePackageReader
         if (!root.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String ||
             string.IsNullOrWhiteSpace(property.GetString()))
         {
-            throw new InvalidDataException($"base.json 缺少有效的 {propertyName}。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 缺少有效的 {0}。 ", propertyName));
         }
 
         return property.GetString()!;
@@ -357,7 +357,7 @@ public static class BasePackageReader
     {
         if (!root.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value))
         {
-            throw new InvalidDataException($"base.json 缺少有效的 {propertyName}。 ");
+            throw new InvalidDataException(AppLocalization.Format("base.json 缺少有效的 {0}。 ", propertyName));
         }
 
         return value;
@@ -367,7 +367,7 @@ public static class BasePackageReader
     {
         if (!root.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var value))
         {
-            throw new InvalidDataException("base.json 的 files[].size 必须是有效整数。 ");
+            throw new InvalidDataException(AppLocalization.Get("base.json 的 files[].size 必须是有效整数。 "));
         }
 
         return value;
@@ -392,7 +392,7 @@ public static class BasePackageReader
             copied += read;
             if (copied > MaxSingleFileBytes || copied > expectedSize)
             {
-                throw new InvalidDataException($"原生基础包文件“{path}”实际大小超过允许范围。 ");
+                throw new InvalidDataException(AppLocalization.Format("原生基础包文件“{0}”实际大小超过允许范围。 ", path));
             }
 
             destination.Write(buffer, 0, read);

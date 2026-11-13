@@ -11,6 +11,7 @@ internal sealed record ChangelogEntry(string Version, string DateLabel, string B
 internal static class ChangelogReader
 {
     internal const string EmbeddedResourceName = "SkinManager.Desktop.Resources.CHANGELOG.md";
+    internal const string EnglishEmbeddedResourceName = "SkinManager.Desktop.Resources.CHANGELOG.en.md";
 
     private static readonly Regex ReleaseHeading = new(
         @"^##\s+(?<version>\d+(?:\.\d+){2,3}(?:-[0-9A-Za-z.-]+)?)(?:\s*[·—–-]\s*(?<date>\d{4}-\d{2}-\d{2}))?\s*$",
@@ -19,10 +20,20 @@ internal static class ChangelogReader
     internal static IReadOnlyList<ChangelogEntry> ReadEmbedded(Assembly? assembly = null)
     {
         assembly ??= typeof(ChangelogReader).Assembly;
-        using var stream = assembly.GetManifestResourceStream(EmbeddedResourceName)
-                           ?? throw new InvalidDataException($"找不到内嵌更新日志资源：{EmbeddedResourceName}");
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return Parse(reader.ReadToEnd());
+        var resourceName = AppLocalization.IsEnglish ? EnglishEmbeddedResourceName : EmbeddedResourceName;
+        var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is null && AppLocalization.IsEnglish)
+        {
+            resourceName = EmbeddedResourceName;
+            stream = assembly.GetManifestResourceStream(resourceName);
+        }
+
+        using (stream ?? throw new InvalidDataException(
+                   AppLocalization.Format("找不到内嵌更新日志资源：{0}", resourceName)))
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return Parse(reader.ReadToEnd());
+        }
     }
 
     internal static IReadOnlyList<ChangelogEntry> Parse(string markdown)

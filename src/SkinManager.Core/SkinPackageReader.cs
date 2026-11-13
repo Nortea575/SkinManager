@@ -25,12 +25,12 @@ public static partial class SkinPackageReader
         var info = new FileInfo(path);
         if (!info.Exists)
         {
-            throw new FileNotFoundException("找不到 ZIP 文件。", path);
+            throw new FileNotFoundException(AppLocalization.Get("找不到 ZIP 文件。"), path);
         }
 
         if (info.Length > MaxArchiveBytes)
         {
-            throw new InvalidDataException("ZIP 文件超过 64 MB，无法导入。 ");
+            throw new InvalidDataException(AppLocalization.Get("ZIP 文件超过 64 MB，无法导入。 "));
         }
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -41,7 +41,7 @@ public static partial class SkinPackageReader
     {
         if (zipBytes.Length == 0 || zipBytes.Length > MaxArchiveBytes)
         {
-            throw new InvalidDataException("ZIP 文件为空或超过 64 MB。 ");
+            throw new InvalidDataException(AppLocalization.Get("ZIP 文件为空或超过 64 MB。 "));
         }
 
         using var stream = new MemoryStream(zipBytes.ToArray(), writable: false);
@@ -58,7 +58,7 @@ public static partial class SkinPackageReader
         ArgumentNullException.ThrowIfNull(files);
         if (files.Count == 0 || files.Count > MaxFiles)
         {
-            throw new InvalidDataException($"内存皮肤包文件数量必须在 1 到 {MaxFiles} 之间。 ");
+            throw new InvalidDataException(AppLocalization.Format("内存皮肤包文件数量必须在 1 到 {0} 之间。 ", MaxFiles));
         }
 
         long totalBytes = 0;
@@ -75,7 +75,7 @@ public static partial class SkinPackageReader
             totalBytes = checked(totalBytes + bytes.LongLength);
             if (totalBytes > MaxExpandedBytes)
             {
-                throw new InvalidDataException("内存皮肤包总大小超过 64 MB。 ");
+                throw new InvalidDataException(AppLocalization.Get("内存皮肤包总大小超过 64 MB。 "));
             }
 
             if (!ownedFiles.TryAdd(path, bytes))
@@ -93,7 +93,7 @@ public static partial class SkinPackageReader
         var selected = Path.GetFullPath(directory);
         if (!Directory.Exists(selected))
         {
-            throw new DirectoryNotFoundException("找不到所选皮肤文件夹。 ");
+            throw new DirectoryNotFoundException(AppLocalization.Get("找不到所选皮肤文件夹。 "));
         }
 
         RejectReparsePoint(selected, "所选文件夹不能是符号链接。 ");
@@ -108,7 +108,7 @@ public static partial class SkinPackageReader
         var selected = Path.GetFullPath(directory);
         if (!Directory.Exists(selected))
         {
-            throw new DirectoryNotFoundException("找不到皮肤文件夹。 ");
+            throw new DirectoryNotFoundException(AppLocalization.Get("找不到皮肤文件夹。 "));
         }
 
         RejectReparsePoint(selected, "皮肤文件夹不能是符号链接或重解析点。 ");
@@ -132,7 +132,7 @@ public static partial class SkinPackageReader
         }
         catch (DecoderFallbackException exception)
         {
-            throw new InvalidDataException("$.skin.json: 不是有效的 UTF-8 文本。 ", exception);
+            throw new InvalidDataException(AppLocalization.Get("$.skin.json: 不是有效的 UTF-8 文本。 "), exception);
         }
 
         JsonDocument document;
@@ -142,7 +142,7 @@ public static partial class SkinPackageReader
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException($"$.skin.json: JSON 格式错误（第 {exception.LineNumber + 1} 行）。", exception);
+            throw new InvalidDataException(AppLocalization.Format("$.skin.json: JSON 格式错误（第 {0} 行）。", exception.LineNumber + 1), exception);
         }
 
         using (document)
@@ -196,7 +196,7 @@ public static partial class SkinPackageReader
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         if (archive.Entries.Count == 0 || archive.Entries.Count > MaxZipEntries)
         {
-            throw new InvalidDataException($"ZIP 条目数量无效；最多支持 {MaxFiles} 个文件。 ");
+            throw new InvalidDataException(AppLocalization.Format("ZIP 条目数量无效；最多支持 {0} 个文件。 ", MaxFiles));
         }
 
         long declaredTotal = 0;
@@ -225,12 +225,12 @@ public static partial class SkinPackageReader
             declaredTotal = checked(declaredTotal + entry.Length);
             if (declaredTotal > MaxExpandedBytes)
             {
-                throw new InvalidDataException("ZIP 解压后总大小超过 64 MB。 ");
+                throw new InvalidDataException(AppLocalization.Get("ZIP 解压后总大小超过 64 MB。 "));
             }
 
             if (files.Count >= MaxFiles)
             {
-                throw new InvalidDataException($"ZIP 文件数量超过 {MaxFiles} 个。 ");
+                throw new InvalidDataException(AppLocalization.Format("ZIP 文件数量超过 {0} 个。 ", MaxFiles));
             }
 
             if (files.ContainsKey(path))
@@ -282,7 +282,7 @@ public static partial class SkinPackageReader
                 total = checked(total + info.Length);
                 if (total > MaxExpandedBytes || files.Count >= MaxFiles)
                 {
-                    throw new InvalidDataException("皮肤文件夹超过文件数量或总大小上限。 ");
+                    throw new InvalidDataException(AppLocalization.Get("皮肤文件夹超过文件数量或总大小上限。 "));
                 }
 
                 if (files.ContainsKey(path))
@@ -311,17 +311,17 @@ public static partial class SkinPackageReader
             .Any(file => Path.GetFileName(file).Equals("skin.json", StringComparison.OrdinalIgnoreCase))).ToArray();
         if (candidates.Length != 1)
         {
-            throw new InvalidDataException("所选文件夹或其中唯一一层包装目录必须包含 skin.json。 ");
+            throw new InvalidDataException(AppLocalization.Get("所选文件夹或其中唯一一层包装目录必须包含 skin.json。 "));
         }
 
         if (Directory.EnumerateFiles(selected).Any())
         {
-            throw new InvalidDataException("包装目录外不能包含皮肤文件。 ");
+            throw new InvalidDataException(AppLocalization.Get("包装目录外不能包含皮肤文件。 "));
         }
 
         if (childDirectories.Length != 1)
         {
-            throw new InvalidDataException("只支持皮肤文件夹或唯一的一层包装目录。 ");
+            throw new InvalidDataException(AppLocalization.Get("只支持皮肤文件夹或唯一的一层包装目录。 "));
         }
 
         return candidates[0];
@@ -333,13 +333,13 @@ public static partial class SkinPackageReader
             path.EndsWith("/skin.json", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (manifests.Length != 1)
         {
-            throw new InvalidDataException("ZIP 根目录或唯一的一层包装目录中必须包含 skin.json。 ");
+            throw new InvalidDataException(AppLocalization.Get("ZIP 根目录或唯一的一层包装目录中必须包含 skin.json。 "));
         }
 
         var prefix = manifests[0][..^"skin.json".Length];
         if (prefix.Length > 0 && prefix.TrimEnd('/').Contains('/'))
         {
-            throw new InvalidDataException("只支持根目录或单层包装目录中的 skin.json。 ");
+            throw new InvalidDataException(AppLocalization.Get("只支持根目录或单层包装目录中的 skin.json。 "));
         }
 
         if (prefix.Length == 0)
@@ -352,7 +352,7 @@ public static partial class SkinPackageReader
         {
             if (!pair.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException("单层包装目录外还包含文件，无法确定皮肤包根目录。 ");
+                throw new InvalidDataException(AppLocalization.Get("单层包装目录外还包含文件，无法确定皮肤包根目录。 "));
             }
 
             var childPath = pair.Key[prefix.Length..];
@@ -399,7 +399,7 @@ public static partial class SkinPackageReader
         }
         catch (DecoderFallbackException exception)
         {
-            throw new InvalidDataException("$.skin.json: 不是有效的 UTF-8 文本。 ", exception);
+            throw new InvalidDataException(AppLocalization.Get("$.skin.json: 不是有效的 UTF-8 文本。 "), exception);
         }
 
         JsonDocument document;
@@ -409,7 +409,7 @@ public static partial class SkinPackageReader
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException($"$.skin.json: JSON 格式错误（第 {exception.LineNumber + 1} 行）。", exception);
+            throw new InvalidDataException(AppLocalization.Format("$.skin.json: JSON 格式错误（第 {0} 行）。", exception.LineNumber + 1), exception);
         }
 
         using (document)
@@ -682,7 +682,7 @@ public static partial class SkinPackageReader
                 throw Invalid(path, "shadow 必须是完整 shadow 对象、none 或同类型令牌引用。");
             }
 
-            throw Invalid(path, $"应为 {DescribeKind(expected)}，不接受字符串。");
+            throw InvalidFormat(path, "应为 {0}，不接受字符串。", DescribeKind(expected));
         }
 
         if (element.ValueKind == JsonValueKind.Number && expected is SkinValueKind.Length or SkinValueKind.Number or SkinValueKind.Ratio)
@@ -700,7 +700,7 @@ public static partial class SkinPackageReader
             return SkinValue.ShadowValue(ReadShadow(element, path));
         }
 
-        throw Invalid(path, $"应为 {DescribeKind(expected)}。");
+        throw InvalidFormat(path, "应为 {0}。", DescribeKind(expected));
     }
 
     private static SkinValue CreateNumberValue(SkinValueKind kind, double value, string path)
@@ -837,7 +837,7 @@ public static partial class SkinPackageReader
     {
         if (element.ValueKind != JsonValueKind.Number || !element.TryGetDouble(out var value) || !double.IsFinite(value) || value < minimum || value > maximum)
         {
-            throw Invalid(path, $"必须是 {minimum} 到 {maximum} 之间的有限数字。");
+            throw InvalidFormat(path, "必须是 {0} 到 {1} 之间的有限数字。", minimum, maximum);
         }
 
         return value;
@@ -847,7 +847,7 @@ public static partial class SkinPackageReader
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > maximum || value.Any(char.IsControl))
         {
-            throw Invalid(path, $"不能为空、不能含控制字符且最多 {maximum} 个字符。");
+            throw InvalidFormat(path, "不能为空、不能含控制字符且最多 {0} 个字符。", maximum);
         }
     }
 
@@ -868,7 +868,7 @@ public static partial class SkinPackageReader
     {
         if (background?.Properties.TryGetValue("image", out var image) == true && image.Text is not null && !files.ContainsKey(image.Text))
         {
-            throw Invalid($"{path}.image", $"皮肤包缺少背景图片“{image.Text}”。");
+            throw InvalidFormat($"{path}.image", "皮肤包缺少背景图片“{0}”。", image.Text);
         }
     }
 
@@ -896,7 +896,7 @@ public static partial class SkinPackageReader
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
         ".gif" => "image/gif",
-        _ => throw new ArgumentException("图片资源必须是 PNG、JPG、JPEG 或 GIF 文件。", nameof(imagePath))
+        _ => throw new ArgumentException(AppLocalization.Get("图片资源必须是 PNG、JPG、JPEG 或 GIF 文件。"), nameof(imagePath))
     };
 
     public static GifImageInfo ReadGifInfo(ReadOnlySpan<byte> bytes)
@@ -904,7 +904,7 @@ public static partial class SkinPackageReader
         if (bytes.Length < 14 ||
             !(bytes[..6].SequenceEqual("GIF87a"u8) || bytes[..6].SequenceEqual("GIF89a"u8)))
         {
-            throw new InvalidDataException("不是有效的 GIF87a 或 GIF89a 文件头。 ");
+            throw new InvalidDataException(AppLocalization.Get("不是有效的 GIF87a 或 GIF89a 文件头。 "));
         }
 
         var width = BinaryPrimitives.ReadUInt16LittleEndian(bytes[6..8]);
@@ -912,7 +912,7 @@ public static partial class SkinPackageReader
         if (width == 0 || height == 0 || width > MaxImageDimension || height > MaxImageDimension ||
             (uint)width * height > MaxImagePixels)
         {
-            throw new InvalidDataException("GIF 逻辑画布尺寸无效或过大。 ");
+            throw new InvalidDataException(AppLocalization.Get("GIF 逻辑画布尺寸无效或过大。 "));
         }
 
         var screenPacked = bytes[10];
@@ -928,7 +928,7 @@ public static partial class SkinPackageReader
             globalColorTableEntries = 1 << ((screenPacked & 0x07) + 1);
             if (backgroundColorIndex >= globalColorTableEntries)
             {
-                throw new InvalidDataException("GIF 逻辑画布背景颜色索引无效。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 逻辑画布背景颜色索引无效。 "));
             }
 
             var tableLength = 3 * globalColorTableEntries;
@@ -953,7 +953,7 @@ public static partial class SkinPackageReader
             {
                 if (offset != bytes.Length || frameCount == 0)
                 {
-                    throw new InvalidDataException("GIF 结束标记位置无效，或文件不包含图像帧。 ");
+                    throw new InvalidDataException(AppLocalization.Get("GIF 结束标记位置无效，或文件不包含图像帧。 "));
                 }
 
                 return firstFrame;
@@ -963,7 +963,7 @@ public static partial class SkinPackageReader
             {
                 if (offset >= bytes.Length)
                 {
-                    throw new InvalidDataException("GIF 扩展块不完整。 ");
+                    throw new InvalidDataException(AppLocalization.Get("GIF 扩展块不完整。 "));
                 }
 
                 var label = bytes[offset++];
@@ -971,7 +971,7 @@ public static partial class SkinPackageReader
                 {
                     if (offset + 6 > bytes.Length || bytes[offset++] != 4)
                     {
-                        throw new InvalidDataException("GIF 图形控制扩展块不完整。 ");
+                        throw new InvalidDataException(AppLocalization.Get("GIF 图形控制扩展块不完整。 "));
                     }
 
                     currentFrameHasTransparency = (bytes[offset] & 0x01) != 0;
@@ -979,7 +979,7 @@ public static partial class SkinPackageReader
                     offset += 4;
                     if (bytes[offset++] != 0)
                     {
-                        throw new InvalidDataException("GIF 图形控制扩展块缺少结束字节。 ");
+                        throw new InvalidDataException(AppLocalization.Get("GIF 图形控制扩展块缺少结束字节。 "));
                     }
 
                     continue;
@@ -997,12 +997,12 @@ public static partial class SkinPackageReader
 
             if (introducer != 0x2c)
             {
-                throw new InvalidDataException("GIF 数据块标记无效。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 数据块标记无效。 "));
             }
 
             if (offset + 9 > bytes.Length)
             {
-                throw new InvalidDataException("GIF 图像描述符不完整。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 图像描述符不完整。 "));
             }
 
             var left = BinaryPrimitives.ReadUInt16LittleEndian(bytes[offset..(offset + 2)]);
@@ -1013,13 +1013,13 @@ public static partial class SkinPackageReader
             offset += 9;
             if (frameWidth == 0 || frameHeight == 0 || (uint)left + frameWidth > width || (uint)top + frameHeight > height)
             {
-                throw new InvalidDataException("GIF 图像帧超出逻辑画布范围。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 图像帧超出逻辑画布范围。 "));
             }
 
             var hasLocalColorTable = (framePacked & 0x80) != 0;
             if (!hasGlobalColorTable && !hasLocalColorTable)
             {
-                throw new InvalidDataException("GIF 图像帧缺少全局或局部颜色表。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 图像帧缺少全局或局部颜色表。 "));
             }
 
             var localColorTableEntries = 0;
@@ -1033,18 +1033,18 @@ public static partial class SkinPackageReader
             var frameColorTableEntries = hasLocalColorTable ? localColorTableEntries : globalColorTableEntries;
             if (currentFrameHasTransparency && currentFrameTransparentIndex >= frameColorTableEntries)
             {
-                throw new InvalidDataException("GIF 图形控制扩展的透明颜色索引无效。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 图形控制扩展的透明颜色索引无效。 "));
             }
 
             if (offset >= bytes.Length || bytes[offset++] is < 2 or > 8)
             {
-                throw new InvalidDataException("GIF LZW 数据码宽度无效。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF LZW 数据码宽度无效。 "));
             }
 
             var dataBytes = SkipGifSubBlocks(bytes, ref offset, 0, "GIF 图像数据不完整。");
             if (dataBytes == 0)
             {
-                throw new InvalidDataException("GIF 图像帧缺少压缩数据。 ");
+                throw new InvalidDataException(AppLocalization.Get("GIF 图像帧缺少压缩数据。 "));
             }
 
             if (frameCount++ == 0)
@@ -1071,14 +1071,14 @@ public static partial class SkinPackageReader
             currentFrameTransparentIndex = 0;
         }
 
-        throw new InvalidDataException("GIF 文件缺少结束标记。 ");
+        throw new InvalidDataException(AppLocalization.Get("GIF 文件缺少结束标记。 "));
     }
 
     private static void SkipGifBytes(ReadOnlySpan<byte> bytes, ref int offset, int count, string error)
     {
         if (count < 0 || offset > bytes.Length - count)
         {
-            throw new InvalidDataException(error);
+            throw new InvalidDataException(AppLocalization.Get(error));
         }
 
         offset += count;
@@ -1092,7 +1092,7 @@ public static partial class SkinPackageReader
         {
             if (offset >= bytes.Length)
             {
-                throw new InvalidDataException(error);
+                throw new InvalidDataException(AppLocalization.Get(error));
             }
 
             var length = bytes[offset++];
@@ -1100,7 +1100,7 @@ public static partial class SkinPackageReader
             {
                 if (isFirstBlock && firstBlockLength > 0)
                 {
-                    throw new InvalidDataException(error);
+                    throw new InvalidDataException(AppLocalization.Get(error));
                 }
 
                 return totalLength;
@@ -1108,7 +1108,7 @@ public static partial class SkinPackageReader
 
             if (isFirstBlock && firstBlockLength > 0 && length != firstBlockLength)
             {
-                throw new InvalidDataException(error);
+                throw new InvalidDataException(AppLocalization.Get(error));
             }
 
             SkipGifBytes(bytes, ref offset, length, error);
@@ -1154,14 +1154,14 @@ public static partial class SkinPackageReader
         if (bytes.Length < 45 || !bytes.AsSpan(0, 8).SequenceEqual(signature) ||
             BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)) != 13 || !bytes.AsSpan(12, 4).SequenceEqual("IHDR"u8))
         {
-            throw new InvalidDataException("不是完整 PNG 或缺少有效 IHDR。");
+            throw new InvalidDataException(AppLocalization.Get("不是完整 PNG 或缺少有效 IHDR。"));
         }
 
         var width = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(16, 4));
         var height = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(20, 4));
         if (width == 0 || height == 0 || (ulong)width * height > 50_000_000UL || width > 16_000 || height > 16_000)
         {
-            throw new InvalidDataException("PNG 尺寸无效或过大。");
+            throw new InvalidDataException(AppLocalization.Get("PNG 尺寸无效或过大。"));
         }
 
         var hasData = false;
@@ -1173,7 +1173,7 @@ public static partial class SkinPackageReader
             var chunkSize = (ulong)length + 12;
             if (chunkSize > (ulong)(bytes.Length - offset))
             {
-                throw new InvalidDataException("PNG 内容不完整。");
+                throw new InvalidDataException(AppLocalization.Get("PNG 内容不完整。"));
             }
 
             var type = bytes.AsSpan(offset + 4, 4);
@@ -1193,7 +1193,7 @@ public static partial class SkinPackageReader
 
         if (!hasData || !hasEnd)
         {
-            throw new InvalidDataException("PNG 缺少图像数据或结束标记。");
+            throw new InvalidDataException(AppLocalization.Get("PNG 缺少图像数据或结束标记。"));
         }
     }
 
@@ -1201,7 +1201,7 @@ public static partial class SkinPackageReader
     {
         if (bytes.Length < 12 || bytes[0] != 0xff || bytes[1] != 0xd8 || bytes[^2] != 0xff || bytes[^1] != 0xd9)
         {
-            throw new InvalidDataException("JPEG 缺少起止标记。");
+            throw new InvalidDataException(AppLocalization.Get("JPEG 缺少起止标记。"));
         }
 
         var hasFrame = false;
@@ -1213,7 +1213,7 @@ public static partial class SkinPackageReader
         {
             if (bytes[index] != 0xff)
             {
-                throw new InvalidDataException("JPEG 标记结构无效。");
+                throw new InvalidDataException(AppLocalization.Get("JPEG 标记结构无效。"));
             }
 
             while (index < bytes.Length && bytes[index] == 0xff)
@@ -1240,20 +1240,20 @@ public static partial class SkinPackageReader
 
             if (index + 2 > bytes.Length)
             {
-                throw new InvalidDataException("JPEG 段长度无效。");
+                throw new InvalidDataException(AppLocalization.Get("JPEG 段长度无效。"));
             }
 
             var segmentLength = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(index, 2));
             if (segmentLength < 2 || index + segmentLength > bytes.Length)
             {
-                throw new InvalidDataException("JPEG 段内容不完整。");
+                throw new InvalidDataException(AppLocalization.Get("JPEG 段内容不完整。"));
             }
 
             if (marker is 0xc0 or 0xc1 or 0xc2 or 0xc3 or 0xc5 or 0xc6 or 0xc7 or 0xc9 or 0xca or 0xcb or 0xcd or 0xce or 0xcf)
             {
                 if (segmentLength < 8)
                 {
-                    throw new InvalidDataException("JPEG 尺寸段无效。");
+                    throw new InvalidDataException(AppLocalization.Get("JPEG 尺寸段无效。"));
                 }
 
                 height = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(index + 3, 2));
@@ -1266,7 +1266,7 @@ public static partial class SkinPackageReader
 
         if (!hasFrame || !hasScan || width == 0 || height == 0 || (long)width * height > 50_000_000L)
         {
-            throw new InvalidDataException("JPEG 缺少有效图像尺寸或扫描数据。");
+            throw new InvalidDataException(AppLocalization.Get("JPEG 缺少有效图像尺寸或扫描数据。"));
         }
     }
 
@@ -1322,24 +1322,27 @@ public static partial class SkinPackageReader
     {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new InvalidDataException(message);
+            throw new InvalidDataException(AppLocalization.Get(message));
         }
     }
 
     private static Dictionary<string, SkinValue> EmptyTokens() => new(StringComparer.Ordinal);
     private static Dictionary<string, ComponentStyle> EmptyComponents() => new(StringComparer.Ordinal);
 
-    private static InvalidDataException Invalid(string path, string message) => new($"{path}: {message}");
+    private static InvalidDataException Invalid(string path, string message) => new($"{path}: {AppLocalization.Get(message)}");
+
+    private static InvalidDataException InvalidFormat(string path, string source, params object?[] arguments) =>
+        new($"{path}: {AppLocalization.Format(source, arguments)}");
 
     private static string DescribeKind(SkinValueKind kind) => kind switch
     {
-        SkinValueKind.Color => "CSS 颜色",
-        SkinValueKind.Length => "px 长度数字",
-        SkinValueKind.Number => "数字",
-        SkinValueKind.Ratio => "0 到 1 之间的数字",
-        SkinValueKind.FontFamily => "系统字体名称",
-        SkinValueKind.Shadow => "shadow 对象",
-        _ => "有效值"
+        SkinValueKind.Color => AppLocalization.Get("CSS 颜色"),
+        SkinValueKind.Length => AppLocalization.Get("px 长度数字"),
+        SkinValueKind.Number => AppLocalization.Get("数字"),
+        SkinValueKind.Ratio => AppLocalization.Get("0 到 1 之间的数字"),
+        SkinValueKind.FontFamily => AppLocalization.Get("系统字体名称"),
+        SkinValueKind.Shadow => AppLocalization.Get("shadow 对象"),
+        _ => AppLocalization.Get("有效值")
     };
 
     private static string JoinPath(string path, string name) =>

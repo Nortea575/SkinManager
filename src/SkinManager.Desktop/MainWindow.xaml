@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:desktop="clr-namespace:SkinManager.Desktop"
-        Title="ChatGPT 皮肤管理器"
+        xmlns:local="clr-namespace:SkinManager.Desktop"
+        Title="{local:Loc 'ChatGPT 皮肤管理器'}"
         Width="1240" Height="840" MinWidth="960" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowSurface}"
@@ -18,7 +19,7 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="ToolTip" Value="单击选择；拖动卡片可调整顺序" />
+            <Setter Property="ToolTip" Value="{local:Loc '单击选择；拖动卡片可调整顺序'}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <EventSetter Event="MouseEnter" Handler="SkinListItem_MouseEnter" />
             <EventSetter Event="MouseLeave" Handler="SkinListItem_MouseLeave" />
@@ -83,11 +84,11 @@
                 <Image Source="{Binding RelativeSource={RelativeSource AncestorType={x:Type Window}}, Path=Icon}"
                        Width="28" Height="28"
                        Margin="0,0,9,0" Stretch="Uniform" />
-                <TextBlock Text="SkinManager" FontSize="19" Style="{StaticResource SectionTitle}"
+                <TextBlock Text="{local:Loc 'SkinManager'}" FontSize="19" Style="{StaticResource SectionTitle}"
                            VerticalAlignment="Center" />
                 <TextBlock x:Name="AppVersionLabel" Text="" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                            VerticalAlignment="Center" Margin="8,2,0,0" />
-                <TextBlock x:Name="BusyText" Text="正在导入皮肤…" FontSize="12"
+                <TextBlock x:Name="BusyText" Text="{local:Loc '正在导入皮肤…'}" FontSize="12"
                        Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right"
                        VerticalAlignment="Center" Margin="14,0,0,0" MaxWidth="190"
                        TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
@@ -95,31 +96,31 @@
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                         VerticalAlignment="Center">
                 <Button x:Name="SupportAuthorButton" Margin="0,0,6,0" Padding="9,5"
-                        Click="SupportAuthorButton_Click" ToolTip="查看作者说明和支持方式进展。"
-                        AutomationProperties.Name="支持作者">
+                        Click="SupportAuthorButton_Click" ToolTip="{local:Loc '查看作者说明和支持方式进展。'}"
+                        AutomationProperties.Name="{local:Loc '支持作者'}">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M12,3 C10.2,3 8.8,4.4 8.8,6.1 C8.8,7 9.2,7.8 9.9,8.4 C7,8.9 5,11.1 5,13.8 C5,16.7 7.7,18.5 12,18.5 C16.3,18.5 19,16.7 19,13.8 C19,11.1 17,8.9 14.1,8.4 C14.8,7.8 15.2,7 15.2,6.1 C15.2,4.4 13.8,3 12,3 Z M10.2,13.1 C10.2,14.1 9.4,14.9 8.4,14.9 M13.8,13.1 C13.8,14.1 14.6,14.9 15.6,14.9"
                               Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.35"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
-                        <TextBlock Text="支持作者" VerticalAlignment="Center" />
+                        <TextBlock Text="{local:Loc '支持作者'}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
                 <Button x:Name="MarketEntryButton" Margin="0,0,6,0" Padding="9,5"
                         Click="MarketEntryButton_Click"
-                        ToolTip="浏览、预览并下载市场皮肤。"
-                        AutomationProperties.Name="打开皮肤市场">
+                        ToolTip="{local:Loc '浏览、预览并下载市场皮肤。'}"
+                        AutomationProperties.Name="{local:Loc '打开皮肤市场'}">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M2,3 L4,3 L5,5 L17,5 L15.5,12 L7,12 L5,5 M8,15 A1.2,1.2 0 1 0 8,17.4 A1.2,1.2 0 1 0 8,15 M14,15 A1.2,1.2 0 1 0 14,17.4 A1.2,1.2 0 1 0 14,15"
                               Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
-                        <TextBlock Text="皮肤市场" VerticalAlignment="Center" />
+                        <TextBlock Text="{local:Loc '皮肤市场'}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
                 <Button x:Name="UpdateEntryButton" Padding="9,5" MaxWidth="164"
                         Margin="0,0,6,0" Click="UpdateEntryButton_Click"
                         ToolTip="{Binding Content, RelativeSource={RelativeSource Self}}"
-                        AutomationProperties.Name="版本与更新">
+                        AutomationProperties.Name="{local:Loc '版本与更新'}">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -129,7 +130,7 @@
                         <Path Data="M3,7 A6,6 0 0 1 14,4 L16,6 M16,6 L16,2 M16,6 L12,6 M17,11 A6,6 0 0 1 6,14 L4,12 M4,12 L4,16 M4,12 L8,12"
                               Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round" Fill="Transparent" Width="18" Height="18" Stretch="Uniform" />
-                        <TextBlock x:Name="UpdateEntryLabel" Grid.Column="2" Text="版本与更新"
+                        <TextBlock x:Name="UpdateEntryLabel" Grid.Column="2" Text="{local:Loc '版本与更新'}"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                    TextWrapping="NoWrap"
                                    ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
@@ -137,14 +138,14 @@
                 </Button>
                 <Button x:Name="SettingsEntryButton" Margin="0,0,0,0" Padding="9,5"
                         Click="SettingsEntryButton_Click"
-                        ToolTip="管理应用设置与兼容性选项。"
-                        AutomationProperties.Name="设置">
+                        ToolTip="{local:Loc '管理应用设置与兼容性选项。'}"
+                        AutomationProperties.Name="{local:Loc '设置'}">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M12,2 L20,5 V11 C20,16 16.5,19 12,21 C7.5,19 4,16 4,11 V5 Z M9,12 L11,14 L15,10"
                               Stroke="{DynamicResource SecondaryText}" StrokeThickness="1.4" StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"
                               Width="18" Height="18" Stretch="Uniform" Margin="0,0,6,0" />
-                        <TextBlock Text="设置" VerticalAlignment="Center" />
+                        <TextBlock Text="{local:Loc '设置'}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -181,21 +182,21 @@
                     <Grid Grid.Row="0" Height="28">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse Width="7" Height="7" Fill="{DynamicResource Accent}" Margin="1,0,8,0" />
-                            <TextBlock Text="皮肤库" FontSize="16" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="{local:Loc '皮肤库'}" FontSize="16" Style="{StaticResource SectionTitle}" />
                         </StackPanel>
-                        <TextBlock x:Name="SkinCountText" Text="本地皮肤" FontSize="11"
+                        <TextBlock x:Name="SkinCountText" Text="{local:Loc '本地皮肤'}" FontSize="11"
                                    Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right"
                                    VerticalAlignment="Center" />
                     </Grid>
                     <Grid Grid.Row="2" Height="36">
                         <TextBox x:Name="SearchBox" VerticalContentAlignment="Center"
                                  TextChanged="SearchBox_TextChanged"
-                                 AutomationProperties.Name="搜索皮肤" />
-                        <TextBlock x:Name="SearchHint" Text="搜索名称或 ID" FontSize="12"
+                                 AutomationProperties.Name="{local:Loc '搜索皮肤'}" />
+                        <TextBlock x:Name="SearchHint" Text="{local:Loc '搜索名称或 ID'}" FontSize="12"
                                    Foreground="{DynamicResource SecondaryText}" Margin="13,0,0,0"
                                    VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Grid>
-                    <TextBlock x:Name="SortStatusText" Grid.Row="3" Text="拖动皮肤卡片调整顺序（单击选择）" FontSize="11"
+                    <TextBlock x:Name="SortStatusText" Grid.Row="3" Text="{local:Loc '拖动皮肤卡片调整顺序（单击选择）'}" FontSize="11"
                                Foreground="{DynamicResource SecondaryText}" Margin="2,3,0,5"
                                TextTrimming="CharacterEllipsis" />
                     <Grid Grid.Row="4">
@@ -212,7 +213,7 @@
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                                  KeyboardNavigation.TabNavigation="Continue"
-                                 AutomationProperties.Name="皮肤列表">
+                                 AutomationProperties.Name="{local:Loc '皮肤列表'}">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid>
@@ -226,7 +227,7 @@
                                             <Grid>
                                                 <Image x:Name="ThumbnailImage" Source="{Binding Thumbnail}"
                                                        Stretch="UniformToFill" />
-                                                <TextBlock x:Name="ThumbnailPlaceholder" Text="无背景图" Visibility="Collapsed"
+                                                <TextBlock x:Name="ThumbnailPlaceholder" Text="{local:Loc '无背景图'}" Visibility="Collapsed"
                                                            FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             </Grid>
@@ -257,15 +258,15 @@
                         <StackPanel x:Name="ListEmptyState" Visibility="Collapsed"
                                     VerticalAlignment="Center" HorizontalAlignment="Center"
                                     Margin="8" MaxWidth="230">
-                            <TextBlock x:Name="ListEmptyTitle" Text="暂无本地皮肤" FontSize="12"
+                            <TextBlock x:Name="ListEmptyTitle" Text="{local:Loc '暂无本地皮肤'}" FontSize="12"
                                        Foreground="{DynamicResource SecondaryText}" TextAlignment="Center" />
-                            <TextBlock x:Name="ListEmptyText" Text="从市场浏览并下载皮肤，或导入 ZIP 包和皮肤文件夹。"
+                            <TextBlock x:Name="ListEmptyText" Text="{local:Loc '从市场浏览并下载皮肤，或导入 ZIP 包和皮肤文件夹。'}"
                                        FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,12" />
-                            <Button x:Name="ListEmptyMarketButton" Content="浏览皮肤市场"
+                            <Button x:Name="ListEmptyMarketButton" Content="{local:Loc '浏览皮肤市场'}"
                                     Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center"
                                     Margin="0,0,0,6" Click="MarketEntryButton_Click" />
-                            <Button x:Name="ListEmptyImportButton" Content="导入皮肤"
+                            <Button x:Name="ListEmptyImportButton" Content="{local:Loc '导入皮肤'}"
                                     HorizontalAlignment="Center" Click="ImportButton_Click" />
                         </StackPanel>
                     </Grid>
@@ -275,11 +276,11 @@
                             <ColumnDefinition Width="8" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button x:Name="NewSkinButton" Grid.Column="0" Content="新建皮肤"
-                                Click="NewSkinButton_Click" AutomationProperties.Name="新建皮肤" />
-                        <Button x:Name="ImportButton" Grid.Column="2" Content="导入皮肤"
+                        <Button x:Name="NewSkinButton" Grid.Column="0" Content="{local:Loc '新建皮肤'}"
+                                Click="NewSkinButton_Click" AutomationProperties.Name="{local:Loc '新建皮肤'}" />
+                        <Button x:Name="ImportButton" Grid.Column="2" Content="{local:Loc '导入皮肤'}"
                                 Style="{StaticResource PrimaryButton}" Click="ImportButton_Click"
-                                AutomationProperties.Name="导入皮肤" />
+                                AutomationProperties.Name="{local:Loc '导入皮肤'}" />
                     </Grid>
                 </Grid>
                 </Grid>
@@ -299,14 +300,14 @@
                 <Border x:Name="DetailsEmptyState" Grid.Row="0" Background="Transparent"
                         BorderThickness="0" Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400" Margin="24">
-                            <TextBlock x:Name="DetailsEmptyTitle" Text="还没有可预览的皮肤" FontSize="25"
+                            <TextBlock x:Name="DetailsEmptyTitle" Text="{local:Loc '还没有可预览的皮肤'}" FontSize="25"
                                    Style="{StaticResource PageTitle}" TextAlignment="Center" />
-                        <TextBlock x:Name="DetailsEmptyMessage" Text="浏览市场皮肤或导入本地皮肤包，查看背景图、配色和聊天布局预览。"
+                        <TextBlock x:Name="DetailsEmptyMessage" Text="{local:Loc '浏览市场皮肤或导入本地皮肤包，查看背景图、配色和聊天布局预览。'}"
                                    FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                    TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,14" />
-                        <Button Content="打开皮肤市场" Style="{StaticResource PrimaryButton}"
+                        <Button Content="{local:Loc '打开皮肤市场'}" Style="{StaticResource PrimaryButton}"
                                 HorizontalAlignment="Center" Margin="0,0,0,6" Click="MarketEntryButton_Click" />
-                        <Button Content="导入皮肤" HorizontalAlignment="Center" Click="ImportButton_Click" />
+                        <Button Content="{local:Loc '导入皮肤'}" HorizontalAlignment="Center" Click="ImportButton_Click" />
                     </StackPanel>
                 </Border>
 
@@ -315,7 +316,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition x:Name="PreviewRow" Height="*" MinHeight="150" />
+                    <RowDefinition x:Name="PreviewRow" Height="*" MinHeight="130" />
                     <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -331,20 +332,20 @@
                                        Margin="0,2,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button x:Name="EditSkinButton" Content="编辑" Margin="0,0,5,0" Padding="9,5"
-                                    Click="EditSkinButton_Click" AutomationProperties.Name="编辑皮肤" />
-                            <Button x:Name="OriginalButton" Content="原图" Margin="0,0,5,0" Padding="9,5"
-                                    Click="OriginalButton_Click" ToolTip="查看原始背景图" />
-                            <Button x:Name="MoreActionsButton" Content="更多" Padding="9,5"
+                            <Button x:Name="EditSkinButton" Content="{local:Loc '编辑'}" Margin="0,0,5,0" Padding="9,5"
+                                    Click="EditSkinButton_Click" AutomationProperties.Name="{local:Loc '编辑皮肤'}" />
+                            <Button x:Name="OriginalButton" Content="{local:Loc '原图'}" Margin="0,0,5,0" Padding="9,5"
+                                    Click="OriginalButton_Click" ToolTip="{local:Loc '查看原始背景图'}" />
+                            <Button x:Name="MoreActionsButton" Content="{local:Loc '更多'}" Padding="9,5"
                                     Click="MoreActionsButton_Click"
-                                    ToolTip="导出或删除当前皮肤">
+                                    ToolTip="{local:Loc '导出或删除当前皮肤'}">
                                 <Button.ContextMenu>
                                     <ContextMenu Opened="MoreActionsContextMenu_Opened">
-                        <MenuItem x:Name="CreateCopyMenuItem" Header="以此为基础创建" Click="CreateCopyButton_Click" />
+                        <MenuItem x:Name="CreateCopyMenuItem" Header="{local:Loc '以此为基础创建'}" Click="CreateCopyButton_Click" />
                         <Separator />
-                                        <MenuItem x:Name="ExportMenuItem" Header="导出皮肤…" Click="ExportButton_Click" />
+                                        <MenuItem x:Name="ExportMenuItem" Header="{local:Loc '导出皮肤…'}" Click="ExportButton_Click" />
                                         <Separator />
-                                        <MenuItem x:Name="DeleteMenuItem" Header="删除皮肤…" Tag="Danger"
+                                        <MenuItem x:Name="DeleteMenuItem" Header="{local:Loc '删除皮肤…'}" Tag="Danger"
                                                   Click="DeleteButton_Click"
                                                   Foreground="{DynamicResource DangerText}" />
                                     </ContextMenu>
@@ -356,12 +357,18 @@
                     <Expander x:Name="PreviewSettingsExpander" Grid.Row="1" IsExpanded="False"
                               Margin="0,0,0,7">
                         <Expander.Header>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="预览选项" FontSize="13" FontWeight="SemiBold" />
-                                <TextBlock Text="外观、场景、侧栏和原版对照只影响预览；透明度也会用于下一次应用。"
+                            <Grid VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{local:Loc '预览选项'}" FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" MinWidth="0"
+                                           Text="{local:Loc '外观、场景、侧栏和原版对照只影响预览；透明度也会用于下一次应用。'}"
                                            FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="10,0,0,0"
-                                           TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            </Grid>
                         </Expander.Header>
                         <Border Margin="0,5,0,0" Padding="0"
                                 Background="Transparent" BorderThickness="0">
@@ -371,56 +378,56 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Text="场景、外观、侧栏与原版对照只用于预览；透明度会同步用于下一次皮肤应用。"
+                            <TextBlock Grid.Row="0" Text="{local:Loc '场景、外观、侧栏与原版对照只用于预览；透明度会同步用于下一次皮肤应用。'}"
                                        FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                        Margin="0,0,0,6" TextWrapping="Wrap" />
                             <WrapPanel Grid.Row="1" VerticalAlignment="Center">
-                                <TextBlock Text="场景" FontSize="13" Foreground="{DynamicResource SecondaryText}"
+                                <TextBlock Text="{local:Loc '场景'}" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
                                 <ComboBox x:Name="PreviewSceneBox" Width="96" SelectedIndex="0"
-                                          SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="预览页面">
-                                    <ComboBoxItem Content="首页" Tag="home" />
-                                    <ComboBoxItem Content="对话" Tag="conversation" />
+                                          SelectionChanged="PreviewOptions_SelectionChanged" AutomationProperties.Name="{local:Loc '预览页面'}">
+                                    <ComboBoxItem Content="{local:Loc '首页'}" Tag="home" />
+                                    <ComboBoxItem Content="{local:Loc '对话'}" Tag="conversation" />
                                 </ComboBox>
-                                <TextBlock Text="外观" FontSize="13" Foreground="{DynamicResource SecondaryText}"
+                                <TextBlock Text="{local:Loc '外观'}" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="12,0,6,0" />
                                 <ComboBox x:Name="PreviewAppearanceBox" Width="112" Margin="0,0,10,0"
                                           SelectedIndex="0" SelectionChanged="PreviewOptions_SelectionChanged"
-                                          AutomationProperties.Name="预览明暗">
-                                    <ComboBoxItem Content="跟随皮肤" Tag="skin" />
-                                    <ComboBoxItem Content="浅色" Tag="light" />
-                                    <ComboBoxItem Content="深色" Tag="dark" />
-                                    <ComboBoxItem Content="跟随系统" Tag="system" />
+                                          AutomationProperties.Name="{local:Loc '预览明暗'}">
+                                    <ComboBoxItem Content="{local:Loc '跟随皮肤'}" Tag="skin" />
+                                    <ComboBoxItem Content="{local:Loc '浅色'}" Tag="light" />
+                                    <ComboBoxItem Content="{local:Loc '深色'}" Tag="dark" />
+                                    <ComboBoxItem Content="{local:Loc '跟随系统'}" Tag="system" />
                                 </ComboBox>
-                                <CheckBox x:Name="PreviewSidebarCheckBox" Content="侧栏" IsChecked="True"
+                                <CheckBox x:Name="PreviewSidebarCheckBox" Content="{local:Loc '侧栏'}" IsChecked="True"
                                           Margin="0,0,12,0" VerticalAlignment="Center"
                                           Checked="PreviewOptions_ToggleChanged" Unchecked="PreviewOptions_ToggleChanged"
-                                          AutomationProperties.Name="显示侧栏" />
-                                <CheckBox x:Name="PreviewOriginalBaseCheckBox" Content="原版对照"
+                                          AutomationProperties.Name="{local:Loc '显示侧栏'}" />
+                                <CheckBox x:Name="PreviewOriginalBaseCheckBox" Content="{local:Loc '原版对照'}"
                                           VerticalAlignment="Center" Checked="PreviewOptions_ToggleChanged"
-                                          Unchecked="PreviewOptions_ToggleChanged" AutomationProperties.Name="原版对照" />
+                                          Unchecked="PreviewOptions_ToggleChanged" AutomationProperties.Name="{local:Loc '原版对照'}" />
                             </WrapPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="应用透明度" FontSize="13" Foreground="{DynamicResource SecondaryText}"
+                                <TextBlock Text="{local:Loc '应用透明度'}" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,7,0" />
-                                <CheckBox x:Name="PreviewTransparencyFollowCheckBox" Content="跟随主题" IsChecked="True"
+                                <CheckBox x:Name="PreviewTransparencyFollowCheckBox" Content="{local:Loc '跟随主题'}" IsChecked="True"
                                           VerticalAlignment="Center" Margin="0,0,7,0"
                                           Checked="PreviewOptions_ToggleChanged" Unchecked="PreviewOptions_ToggleChanged"
-                                          AutomationProperties.Name="面板透明度跟随主题" />
-                                <TextBox x:Name="PreviewTransparencyInput" Text="30" Width="50" Height="32"
+                                          AutomationProperties.Name="{local:Loc '面板透明度跟随主题'}" />
+                                <TextBox x:Name="PreviewTransparencyInput" Text="{local:Loc '30'}" Width="50" Height="32"
                                          Padding="6,0" TextAlignment="Right" IsEnabled="False"
                                          LostKeyboardFocus="PreviewTransparencyInput_LostKeyboardFocus"
                                          PreviewKeyDown="PreviewTransparencyInput_KeyDown"
                                          TextChanged="PreviewTransparencyInput_TextChanged"
-                                         ToolTip="输入 0 到 100 的整数；不改变壁纸或遮罩。0% 不透明，100% 全透明。"
-                                         AutomationProperties.Name="面板透明度百分比" />
-                                <TextBlock Text="%" FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                         ToolTip="{local:Loc '输入 0 到 100 的整数；不改变壁纸或遮罩。0% 不透明，100% 全透明。'}"
+                                         AutomationProperties.Name="{local:Loc '面板透明度百分比'}" />
+                                <TextBlock Text="{local:Loc '%'}" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="4,0,8,0" />
-                                <TextBlock x:Name="PreviewTransparencyValue" Text="主题值" FontSize="12"
+                                <TextBlock x:Name="PreviewTransparencyValue" Text="{local:Loc '主题值'}" FontSize="12"
                                            Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center" />
                                 <TextBlock x:Name="PreviewTransparencyError" FontSize="12" Foreground="{DynamicResource ErrorText}"
                                            Margin="9,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
-                                           AutomationProperties.Name="面板透明度输入错误" />
+                                           AutomationProperties.Name="{local:Loc '面板透明度输入错误'}" />
                             </WrapPanel>
                         </Grid>
                         </Border>
@@ -433,18 +440,18 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="PreviewHeading" Text="预览" FontSize="16" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PreviewHeading" Text="{local:Loc '预览'}" FontSize="16" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
                         <TextBlock x:Name="PreviewStatus" Grid.Column="1" FontSize="11"
                                    Foreground="{DynamicResource SecondaryText}" TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center" Margin="10,0,8,0" Visibility="Visible"
-                                   AutomationProperties.Name="预览状态" />
+                                   AutomationProperties.Name="{local:Loc '预览状态'}" />
                         <TextBlock x:Name="PreviewBaseVersion" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
                                    FontSize="10" Foreground="{DynamicResource SecondaryText}"
                                    TextTrimming="CharacterEllipsis" MaxWidth="185" Margin="6,0,8,0"
-                                   ToolTip="依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。" />
-                        <Button x:Name="PreviewPowerButton" Grid.Column="3" Content="关闭预览"
+                                   ToolTip="{local:Loc '依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。'}" />
+                        <Button x:Name="PreviewPowerButton" Grid.Column="3" Content="{local:Loc '关闭预览'}"
                                 HorizontalAlignment="Right" Padding="8,4" MinHeight="30"
-                                Click="PreviewPowerButton_Click" ToolTip="释放本地预览浏览器内存" />
+                                Click="PreviewPowerButton_Click" ToolTip="{local:Loc '释放本地预览浏览器内存'}" />
                     </Grid>
                     <Grid x:Name="PreviewClosedHeader" Grid.Row="2" Visibility="Collapsed"
                           Margin="1,0,0,0">
@@ -452,18 +459,18 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="本地预览已关闭" FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                        <TextBlock Text="{local:Loc '本地预览已关闭'}" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                    VerticalAlignment="Center" />
-                        <Button x:Name="PreviewReopenButton" Grid.Column="1" Content="重新打开预览" Padding="9,4"
-                                Click="PreviewPowerButton_Click" AutomationProperties.Name="重新打开预览" />
+                        <Button x:Name="PreviewReopenButton" Grid.Column="1" Content="{local:Loc '重新打开预览'}" Padding="9,4"
+                                Click="PreviewPowerButton_Click" AutomationProperties.Name="{local:Loc '重新打开预览'}" />
                     </Grid>
 
                     <Border x:Name="PreviewContainer" Grid.Row="3"
                             BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="14"
                             Background="{DynamicResource PanelSurface}" ClipToBounds="True">
-                        <Grid x:Name="PreviewViewport" MinHeight="150" ClipToBounds="True"
+                        <Grid x:Name="PreviewViewport" MinHeight="130" ClipToBounds="True"
                               Background="{DynamicResource PanelSurface}" SizeChanged="PreviewViewport_SizeChanged"
-                              AutomationProperties.Name="皮肤实时预览视口">
+                              AutomationProperties.Name="{local:Loc '皮肤实时预览视口'}">
                             <Grid x:Name="PreviewBrowserHost">
                                 <wv2:WebView2 x:Name="PreviewBrowser" HorizontalAlignment="Stretch"
                                               VerticalAlignment="Stretch" Visibility="Collapsed" />
@@ -484,13 +491,13 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="皮肤信息" FontSize="12" FontWeight="SemiBold" />
+                            <TextBlock Text="{local:Loc '皮肤信息'}" FontSize="12" FontWeight="SemiBold" />
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <TextBlock x:Name="SelectedAppearance" FontSize="11" Foreground="{DynamicResource SecondaryText}"
                                            TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="SelectedImageDimensions" FontSize="11"
                                            Foreground="{DynamicResource SecondaryText}" Margin="10,0,0,0"
-                                           TextTrimming="CharacterEllipsis" ToolTip="背景图片像素尺寸；未提供背景图时显示“无背景图”" />
+                                           TextTrimming="CharacterEllipsis" ToolTip="{local:Loc '背景图片像素尺寸；未提供背景图时显示“无背景图”'}" />
                             </StackPanel>
                         </Grid>
                         <Grid x:Name="ColorSection" Grid.Row="1" Margin="0,3,0,0">
@@ -498,12 +505,12 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="配色" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
+                            <TextBlock Text="{local:Loc '配色'}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"
                                        Margin="0,0,8,0" />
                             <ScrollViewer x:Name="ColorItemsScrollViewer" Grid.Column="1"
                                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           VerticalAlignment="Top" MaxHeight="64" MinWidth="0"
-                                          AutomationProperties.Name="皮肤配色">
+                                          AutomationProperties.Name="{local:Loc '皮肤配色'}">
                                 <ItemsControl x:Name="ColorItems">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
@@ -540,56 +547,63 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center" MinWidth="0">
-                                <TextBlock Text="连接与应用" FontSize="13" FontWeight="SemiBold" />
-                                <TextBlock x:Name="RuntimeSelectedSkinText" Text="先选择要应用的皮肤" FontSize="14"
-                                           FontWeight="SemiBold" Margin="0,2,0,3" TextTrimming="CharacterEllipsis" />
-                                <Grid MinWidth="0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="目标窗口" FontSize="12" Foreground="{DynamicResource SecondaryText}"
-                                               VerticalAlignment="Center" Margin="0,0,6,0" />
-                                    <TextBlock x:Name="RuntimeTargetText" Grid.Column="1" Text="自动查找调试版"
-                                               FontSize="13" MinWidth="0" TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center"
-                                               ToolTip="自动查找当前可用的 Codex 调试版；也可在“选择窗口”中选择。" />
-                                    <TextBlock x:Name="RuntimeConnectedTargetLabel" Grid.Column="2" Text="当前连接"
-                                               FontSize="12" Foreground="{DynamicResource SecondaryText}"
-                                               VerticalAlignment="Center" Margin="12,0,6,0" />
-                                    <TextBlock x:Name="RuntimeConnectedTargetText" Grid.Column="3" Text="未连接"
-                                               FontSize="13" MaxWidth="90" FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                                               ToolTip="当前皮肤管理器连接到的 Codex 实例。"
-                                               AutomationProperties.Name="当前连接的桌面应用实例" />
-                                </Grid>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                                <Button x:Name="SelectRuntimeTargetButton" Content="选择窗口" Padding="10,6"
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{local:Loc '连接与应用'}" FontSize="13" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <TextBlock x:Name="RuntimeSelectedSkinText" Grid.Column="1"
+                                           Text="{local:Loc '先选择要应用的皮肤'}" FontSize="14" FontWeight="SemiBold"
+                                           Margin="10,0,0,0" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            </Grid>
+                            <Grid Grid.Row="1" Margin="0,3,0,0" MinWidth="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{local:Loc '目标窗口'}" FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="RuntimeTargetText" Grid.Column="1" Text="{local:Loc '自动查找调试版'}"
+                                           FontSize="13" MinWidth="0" TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           ToolTip="{local:Loc '自动查找当前可用的 Codex 调试版；也可在“选择窗口”中选择。'}" />
+                                <TextBlock x:Name="RuntimeConnectedTargetLabel" Grid.Column="2" Text="{local:Loc '当前连接'}"
+                                           FontSize="12" Foreground="{DynamicResource SecondaryText}"
+                                           VerticalAlignment="Center" Margin="12,0,6,0" />
+                                <TextBlock x:Name="RuntimeConnectedTargetText" Grid.Column="3" Text="{local:Loc '未连接'}"
+                                           FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                                           ToolTip="{local:Loc '当前皮肤管理器连接到的 Codex 实例。'}"
+                                           AutomationProperties.Name="{local:Loc '当前连接的桌面应用实例'}" />
+                            </Grid>
+                            <WrapPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,5,0,0">
+                                <Button x:Name="SelectRuntimeTargetButton" Content="{local:Loc '选择窗口'}" Padding="10,6"
                                         Margin="0,0,6,0" Click="SelectRuntimeTargetButton_Click"
-                                        ToolTip="查看正在运行的 Codex 实例并选择连接目标。" />
+                                        ToolTip="{local:Loc '查看正在运行的 Codex 实例并选择连接目标。'}" />
                                 <Button x:Name="ApplyRuntimeButton" Style="{StaticResource PrimaryButton}"
                                         MinWidth="132" Padding="12,7" Click="ApplyRuntimeButton_Click"
-                                        AutomationProperties.Name="启动并应用或更新皮肤">
-                                    <TextBlock x:Name="RuntimePrimaryActionText" Text="启动并应用" />
+                                        AutomationProperties.Name="{local:Loc '启动并应用或更新皮肤'}">
+                                    <TextBlock x:Name="RuntimePrimaryActionText" Text="{local:Loc '启动并应用'}" />
                                 </Button>
-                                <Button x:Name="RemoveRuntimeButton" Content="恢复原生" Margin="6,0,0,0"
+                                <Button x:Name="RemoveRuntimeButton" Content="{local:Loc '恢复原生'}" Margin="6,0,0,0"
                                         Padding="10,6" Click="RemoveRuntimeButton_Click"
-                                        AutomationProperties.Name="恢复原生外观"
-                                        ToolTip="只移除皮肤外观；已保存的固定简体中文设置保持不变。" />
-                                <Button x:Name="CancelRuntimeActionButton" Content="取消操作" Margin="6,0,0,0"
+                                        AutomationProperties.Name="{local:Loc '恢复原生外观'}"
+                                        ToolTip="{local:Loc '只移除皮肤外观，并恢复原生页面。'}" />
+                                <Button x:Name="CancelRuntimeActionButton" Content="{local:Loc '取消操作'}" Margin="6,0,0,0"
                                         Padding="10,6" Visibility="Collapsed"
                                         Click="CancelRuntimeActionButton_Click" />
-                            </StackPanel>
+                            </WrapPanel>
                         </Grid>
-                        <Grid Grid.Row="1" Margin="0,6,0,0">
+                        <Grid Grid.Row="1" Margin="0,3,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="8" />
                                 <ColumnDefinition Width="Auto" />
@@ -598,31 +612,31 @@
                             <Ellipse x:Name="RuntimeStatusIndicator" Width="8" Height="8"
                                      Grid.Column="0" Fill="{DynamicResource SecondaryText}"
                                      VerticalAlignment="Center" />
-                            <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="未连接" FontSize="13"
+                            <TextBlock x:Name="RuntimeStatusText" Grid.Column="1" Text="{local:Loc '未连接'}" FontSize="13"
                                        FontWeight="SemiBold" Margin="7,0,10,0" VerticalAlignment="Center"
-                                       AutomationProperties.Name="桌面应用连接与应用状态" />
+                                       AutomationProperties.Name="{local:Loc '桌面应用连接与应用状态'}" />
                             <TextBlock x:Name="RuntimeStatusMessage" Grid.Column="2"
-                                       Text="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。"
+                                       Text="{local:Loc '选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。'}"
                                        FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                        TextWrapping="Wrap" VerticalAlignment="Center"
-                                       ToolTip="选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。" />
+                                       ToolTip="{local:Loc '选择皮肤并选择 Codex 窗口，或在没有实例时启动调试版。'}" />
                         </Grid>
-                        <Expander x:Name="AdvancedSettingsExpander" Grid.Row="2" Header="高级设置"
-                                  IsExpanded="False" Margin="0,6,0,0">
+                        <Expander x:Name="AdvancedSettingsExpander" Grid.Row="2" Header="{local:Loc '高级设置'}"
+                                  IsExpanded="False" Margin="0,3,0,0">
                             <WrapPanel Margin="0,7,0,2" VerticalAlignment="Center">
-                                <TextBlock Text="端口" FontSize="13" Foreground="{DynamicResource SecondaryText}"
+                                <TextBlock Text="{local:Loc '端口'}" FontSize="13" Foreground="{DynamicResource SecondaryText}"
                                            VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <TextBox x:Name="RuntimePortInput" Text="9335" Width="72" Height="34"
+                                <TextBox x:Name="RuntimePortInput" Text="{local:Loc '9335'}" Width="72" Height="34"
                                          Padding="6,0" TextAlignment="Right" MaxLength="5"
-                                         ToolTip="仅在需要手动指定循环地址调试端口时修改。默认9335。"
-                                         AutomationProperties.Name="桌面应用连接端口"
+                                         ToolTip="{local:Loc '仅在需要手动指定循环地址调试端口时修改。默认9335。'}"
+                                         AutomationProperties.Name="{local:Loc '桌面应用连接端口'}"
                                          TextChanged="RuntimePortInput_TextChanged" />
-                                <Button x:Name="LaunchDebugButton" Content="只启动调试版" Margin="8,0,6,0"
+                                <Button x:Name="LaunchDebugButton" Content="{local:Loc '只启动调试版'}" Margin="8,0,6,0"
                                         Padding="10,6" Click="LaunchDebugButton_Click"
-                                        ToolTip="启动并核验调试版目标，按保存设置同步界面语言；不应用皮肤，也不会自动关闭或重启已运行的应用。" />
-                                <Button x:Name="LocateConnectedWindowButton" Content="定位已连接窗口"
+                                        ToolTip="{local:Loc '启动并核验调试版目标；不应用皮肤，也不会关闭或重启已运行的应用。'}" />
+                                <Button x:Name="LocateConnectedWindowButton" Content="{local:Loc '定位已连接窗口'}"
                                         Padding="10,6" Click="LocateConnectedWindowButton_Click"
-                                        ToolTip="按当前连接的进程身份定位窗口。" />
+                                        ToolTip="{local:Loc '按当前连接的进程身份定位窗口。'}" />
                             </WrapPanel>
                         </Expander>
                     </Grid>

@@ -43,10 +43,8 @@ public partial class MainWindow : Window
     private readonly string _previewProfileDirectory;
     private readonly RuntimeController _runtimeController = new();
     private RuntimeApplyWorkflow _runtimeApplyWorkflow;
-    private readonly CompatibilitySettingsStore _compatibilitySettingsStore;
     private readonly IStartupPreferencesService _startupPreferencesService;
     private readonly bool _launchedByAutostart;
-    private readonly SemaphoreSlim _compatibilityConfigureGate = new(1, 1);
     private readonly bool _readRuntimeStatusOnLoad;
     private readonly SemaphoreSlim _previewDisplayGate = new(1, 1);
     private readonly ObservableCollection<SkinCard> _skins = [];
@@ -72,6 +70,8 @@ public partial class MainWindow : Window
     private bool _editorPreviewFlushRequested;
     private bool _editorPreviewUpdateInProgress;
     private bool _showingOriginalGif;
+    private string? _previewStatusSource;
+    private bool _previewStatusPersistent;
     private bool _runtimeActionCancellable;
     private bool _isEditing;
     private bool _previewClosed;
@@ -99,12 +99,6 @@ public partial class MainWindow : Window
     private bool _windowClosed;
     private CancellationTokenSource? _runtimeActionCancellation;
     private bool _settingInstancePort;
-    private RuntimeCompatibilityOptions _compatibilityOptions = new();
-    private bool _compatibilitySettingsLoaded;
-    private string? _compatibilitySettingsLoadError;
-    private RuntimeCompatibilityResult? _lastCompatibilityResult;
-    private Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> _configureCompatibility = null!;
-    private bool _startupCompatibilityReconciled;
     private bool _suppressLastSelectedSkinPersistence;
     private bool _startupAutostartPending;
     private bool _isMissingStartupSkin;
@@ -154,7 +148,6 @@ public partial class MainWindow : Window
             progress: QueueRuntimeProgress,
             confirmDebugModeSwitch: confirmDebugModeSwitch ?? ConfirmDebugModeSwitchAsync);
         _launchedByAutostart = launchedByAutostart;
-        _configureCompatibility = _runtimeController.ConfigureCompatibilityAsync;
         _confirmInstanceClose = confirmInstanceClose;
         _confirmInstanceForceClose = confirmInstanceForceClose;
         _runtimeStatusReader = runtimeStatusReader;
@@ -174,19 +167,14 @@ public partial class MainWindow : Window
             "PreviewBrowser"));
         _startupPreferencesService = startupPreferencesService ?? StartupPreferencesService.CreatePreview(
             previewProfileDirectory ?? Path.Combine(Path.GetTempPath(), "SkinManager-preview", Guid.NewGuid().ToString("N")));
-        var compatibilitySettingsPath = previewProfileDirectory is null
-            ? null
-            : Path.Combine(_previewProfileDirectory, "compatibility-settings.json");
-        _compatibilitySettingsStore = new CompatibilitySettingsStore(compatibilitySettingsPath);
-        TryLoadCompatibilitySettings();
         _previewRenderer = new ThemePreviewRenderer(PreviewBrowser, _previewProfileDirectory, basePackage);
         _editorPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _editorPreviewTimer.Tick += EditorPreviewTimer_Tick;
         _runtimeStatusRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _runtimeStatusRefreshTimer.Tick += RuntimeStatusRefreshTimer_Tick;
-        PreviewBaseVersion.Text = $"原生静态样板 · {basePackage.SourceVersion}";
-        PreviewViewport.ToolTip = $"本地原生样板 {basePackage.SourceVersion} · 离线静态结构预览";
-        PreviewBaseVersion.ToolTip = $"依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{basePackage.SourceVersion}";
+        PreviewBaseVersion.Text = AppLocalization.Format("原生静态样板 · {0}", basePackage.SourceVersion);
+        PreviewViewport.ToolTip = AppLocalization.Format("本地原生样板 {0} · 离线静态结构预览", basePackage.SourceVersion);
+        PreviewBaseVersion.ToolTip = AppLocalization.Format("依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{0}", basePackage.SourceVersion);
         AppVersionLabel.Text = UpdateCoordinator.ReadCurrentVersionTag();
         UpdateUpdateEntryLabel();
         if (_updateCoordinator is not null)
@@ -213,11 +201,13 @@ public partial class MainWindow : Window
         SkinEditor.BackgroundFocusModeChanged += SkinEditor_BackgroundFocusModeChanged;
         SkinEditor.EditorModeChanged += SkinEditor_EditorModeChanged;
         Closing += MainWindow_Closing;
+        AppLocalization.LanguageChanged += MainWindow_AppLocalization_LanguageChanged;
         Closed += (_, _) =>
         {
             _windowClosed = true;
             _startupLifetimeCancellation.Cancel();
             AppThemeService.ThemeChanged -= MainWindow_ThemeChanged;
+            AppLocalization.LanguageChanged -= MainWindow_AppLocalization_LanguageChanged;
             _runtimeActionCancellation?.Cancel();
             if (_updateCoordinator is not null)
             {
@@ -246,7 +236,7 @@ public partial class MainWindow : Window
         SkinList.ItemsSource = _skinsView;
         UpdateSortStatus();
         UpdateListEmptyState();
-        ShowNoSelection("皮肤库还是空的", "从市场浏览并下载皮肤，或导入本地皮肤包。");
+        ShowNoSelection(AppLocalization.Get("皮肤库还是空的"), AppLocalization.Get("从市场浏览并下载皮肤，或导入本地皮肤包。"));
         UpdateRuntimeControls();
     }
 
@@ -259,7 +249,7 @@ public partial class MainWindow : Window
         {
             if (fromAutostart)
             {
-                SetStartupStatus("开机应用未执行：当前没有可用的上次皮肤。请在管理器中选择皮肤后重试。");
+                SetStartupStatus(AppLocalization.Get("开机应用未执行：当前没有可用的上次皮肤。请在管理器中选择皮肤后重试。"));
             }
 
             return;
@@ -269,7 +259,7 @@ public partial class MainWindow : Window
         {
             if (fromAutostart)
             {
-                SetStartupStatus("开机应用未执行：调试端口无效，请在设置中修正后重试。");
+                SetStartupStatus(AppLocalization.Get("开机应用未执行：调试端口无效，请在设置中修正后重试。"));
             }
 
             return;
@@ -300,50 +290,15 @@ public partial class MainWindow : Window
             DisplayRuntimeStatus(
                 status,
                 status.State == RuntimeStatusState.Error
-                    ? fromAutostart ? "开机应用未完成。请查看原因后重试。" : "本次操作未完成。请查看原因后重试。"
+                    ? fromAutostart ? AppLocalization.Get("开机应用未完成。请查看原因后重试。") : AppLocalization.Get("本次操作未完成。请查看原因后重试。")
                     : status.AppliedTargetCount > 0
                         ? fromAutostart
-                            ? $"开机已应用上次选择的皮肤：{package.Name}。"
-                            : $"当前皮肤：{package.Name}，已应用到 {status.AppliedTargetCount} 个页面。"
+                            ? AppLocalization.Format("开机已应用上次选择的皮肤：{0}。", package.Name)
+                            : AppLocalization.Format("当前皮肤：{0}，已应用到 {1} 个页面。", package.Name, status.AppliedTargetCount)
                         : fromAutostart
-                            ? $"Codex 已连接，但页面尚未就绪；上次选择的皮肤“{package.Name}”尚未应用。"
-                            : $"Codex 已连接，当前页面尚未就绪；皮肤“{package.Name}”尚未应用。",
+                            ? AppLocalization.Format("Codex 已连接，但页面尚未就绪；上次选择的皮肤“{0}”尚未应用。", package.Name)
+                            : AppLocalization.Format("Codex 已连接，当前页面尚未就绪；皮肤“{0}”尚未应用。", package.Name),
                 protectRuntimeResult: status.State == RuntimeStatusState.Error);
-            if (status.State == RuntimeStatusState.Connected && _compatibilitySettingsLoaded)
-            {
-                RuntimeCompatibilityResult? compatibilityResult = status.CompatibilityResult;
-                if (compatibilityResult is null)
-                {
-                    try
-                    {
-                        compatibilityResult = await ConfigureCompatibilityForCurrentTargetAsync(
-                            _compatibilityOptions,
-                            cancellation.Token,
-                            callerOwnsBusyState: true);
-                    }
-                    catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-                    {
-                        compatibilityResult = new RuntimeCompatibilityResult(
-                            RuntimeCompatibilityState.Pending,
-                            status.Endpoint,
-                            status.AppliedTargetCount > 0
-                                ? "皮肤已应用；语言状态确认已取消。已保存设置会在下次连接后重试。"
-                                : "Codex 连接已建立，皮肤尚未应用；语言状态确认已取消。已保存设置会在下次连接后重试。",
-                            status.IsDebugPortOpen,
-                            status.ConnectedInstance);
-                    }
-                }
-
-                _lastCompatibilityResult = compatibilityResult ?? new RuntimeCompatibilityResult(
-                    RuntimeCompatibilityState.Pending,
-                    status.Endpoint,
-                    status.AppliedTargetCount > 0
-                        ? "皮肤已应用；当前实例的语言状态尚未确认。"
-                        : "Codex 连接已建立，皮肤尚未应用；当前实例的语言状态尚未确认。",
-                    status.IsDebugPortOpen,
-                    status.ConnectedInstance);
-                _settingsWindow?.UpdateRuntimePreference(_lastCompatibilityResult);
-            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -352,8 +307,8 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             SetRuntimeError(exception.Message, fromAutostart
-                ? "开机应用未完成。请查看原因后重试。"
-                : "本次操作未完成。请查看原因后重试。");
+                ? AppLocalization.Get("开机应用未完成。请查看原因后重试。")
+                : AppLocalization.Get("本次操作未完成。请查看原因后重试。"));
         }
         finally
         {
@@ -412,218 +367,19 @@ public partial class MainWindow : Window
             RemoveScript = SkinRuntimeCompiler.BuildRemoveScript(),
             Endpoint = endpoint ?? $"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}",
             ExpectedInstance = selected?.Identity,
-            Compatibility = _compatibilitySettingsLoaded ? _compatibilityOptions : null
+            Compatibility = null
         };
     }
-
-    private void TryLoadCompatibilitySettings()
-    {
-        try
-        {
-            _compatibilityOptions = _compatibilitySettingsStore.Load();
-            _compatibilitySettingsLoaded = true;
-            _compatibilitySettingsLoadError = null;
-        }
-        catch (Exception exception)
-        {
-            _compatibilityOptions = new RuntimeCompatibilityOptions();
-            _compatibilitySettingsLoaded = false;
-            _compatibilitySettingsLoadError = exception.Message;
-        }
-    }
-
-    private RuntimeCompatibilityOptions ReloadCompatibilitySettings()
-    {
-        _compatibilityOptions = _compatibilitySettingsStore.Load();
-        _compatibilitySettingsLoaded = true;
-        _compatibilitySettingsLoadError = null;
-        return _compatibilityOptions;
-    }
-
-    private async Task<RuntimeCompatibilityResult?> SaveAndConfigureCompatibilityAsync(
-        RuntimeCompatibilityOptions options,
-        CancellationToken cancellationToken)
-    {
-        if (_runtimeOperationInProgress)
-        {
-            throw new InvalidOperationException("管理器正在执行其他操作，请完成后重试。");
-        }
-
-        SetRuntimeOperationInProgress(true, "正在保存并同步界面语言设置…");
-        try
-        {
-            _compatibilitySettingsStore.Save(options);
-            _compatibilityOptions = options;
-            _compatibilitySettingsLoaded = true;
-            _compatibilitySettingsLoadError = null;
-            var result = await ConfigureCompatibilityForCurrentTargetAsync(options, cancellationToken, callerOwnsBusyState: true);
-            _lastCompatibilityResult = result;
-            return result;
-        }
-        finally
-        {
-            SetRuntimeOperationInProgress(false);
-        }
-    }
-
-    private async Task<RuntimeCompatibilityResult?> ConfigureCompatibilityForCurrentTargetAsync(
-        RuntimeCompatibilityOptions options,
-        CancellationToken cancellationToken,
-        bool callerOwnsBusyState = false)
-    {
-        if (!_compatibilitySettingsLoaded)
-        {
-            return null;
-        }
-
-        var candidate = GetCompatibilityTarget();
-        if (candidate is null)
-        {
-            return null;
-        }
-
-        var endpoint = candidate.Value.Endpoint;
-        if (_codexInstanceService is null)
-        {
-            var missingService = new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Pending,
-                endpoint,
-                "无法核验 Codex 实例；请使用“选择窗口”刷新并重新选择目标。",
-                false,
-                candidate.Value.Identity);
-            _lastCompatibilityResult = missingService;
-            _settingsWindow?.UpdateRuntimePreference(missingService);
-            return missingService;
-        }
-
-        if (_runtimeOperationInProgress && !callerOwnsBusyState)
-        {
-            var deferred = new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Pending,
-                endpoint,
-                "管理器正在执行其他操作；设置已保存，将在下一次连接时应用。",
-                false,
-                candidate.Value.Identity);
-            _lastCompatibilityResult = deferred;
-            _settingsWindow?.UpdateRuntimePreference(deferred);
-            return deferred;
-        }
-
-        var ownsBusyState = false;
-        if (!callerOwnsBusyState)
-        {
-            SetRuntimeOperationInProgress(true, "正在同步界面语言设置…");
-            ownsBusyState = true;
-        }
-
-        var acquiredGate = false;
-        try
-        {
-            await _compatibilityConfigureGate.WaitAsync(cancellationToken);
-            acquiredGate = true;
-            var instances = await _codexInstanceService.GetInstancesAsync(cancellationToken);
-            var target = instances.FirstOrDefault(instance => SameProcessIdentity(instance.Identity, candidate.Value.Identity));
-            if (target is not
-                { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort, DebugEndpoint: { } verifiedEndpoint } ||
-                debugPort != candidate.Value.Port)
-            {
-                var unavailable = new RuntimeCompatibilityResult(
-                    RuntimeCompatibilityState.Pending,
-                    endpoint,
-                    "所选 Codex 实例已退出或端口尚未就绪；设置已保存，刷新实例后可重试。",
-                    false,
-                    candidate.Value.Identity);
-                _lastCompatibilityResult = unavailable;
-                _settingsWindow?.UpdateRuntimePreference(unavailable);
-                return unavailable;
-            }
-
-            endpoint = GetActiveEndpointFor(candidate.Value.Identity, candidate.Value.Port) ?? verifiedEndpoint;
-
-            var request = new RuntimeCompatibilityRequest
-            {
-                Endpoint = endpoint,
-                ExpectedInstance = target.Identity,
-                Options = options
-            };
-            var result = await _configureCompatibility(request, cancellationToken);
-            _lastCompatibilityResult = result;
-            _settingsWindow?.UpdateRuntimePreference(result);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            var failed = new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Failed,
-                endpoint,
-                exception.Message,
-                false,
-                candidate.Value.Identity);
-            _lastCompatibilityResult = failed;
-            _settingsWindow?.UpdateRuntimePreference(failed);
-            return failed;
-        }
-        finally
-        {
-            if (acquiredGate)
-            {
-                _compatibilityConfigureGate.Release();
-            }
-            if (ownsBusyState)
-            {
-                SetRuntimeOperationInProgress(false);
-            }
-        }
-    }
-
-    private (CodexProcessIdentity Identity, int Port, string Endpoint)? GetCompatibilityTarget()
-    {
-        if (_lastRuntimeStatus is
-            { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } endpointText } &&
-            Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) &&
-            endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback && endpoint.Port is >= 1 and <= 65535 &&
-            TryReadRuntimePort(out var selectedPort) && endpoint.Port == selectedPort &&
-            (_selectedConnectionInstance is null || SameProcessIdentity(_selectedConnectionInstance.Identity, connectedIdentity)))
-        {
-            return (connectedIdentity, endpoint.Port, endpoint.ToString());
-        }
-
-        if (_selectedConnectionInstance is
-            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int selectedDebugPort, DebugEndpoint: { } selectedEndpoint } selected)
-        {
-            return (selected.Identity, selectedDebugPort, selectedEndpoint);
-        }
-
-        return null;
-    }
-
-    private string? GetActiveEndpointFor(CodexProcessIdentity identity, int port) =>
-        _lastRuntimeStatus is
-            { State: RuntimeStatusState.Connected, ConnectedInstance: { } connectedIdentity, Endpoint: { } endpointText } &&
-            SameProcessIdentity(connectedIdentity, identity) &&
-            TryReadRuntimeStatusPort(_lastRuntimeStatus, out var connectedPort) && connectedPort == port &&
-            Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) &&
-            endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback
-                ? endpoint.ToString()
-                : null;
 
     private static bool SameProcessIdentity(CodexProcessIdentity left, CodexProcessIdentity right) =>
         left.ProcessId == right.ProcessId &&
         left.StartedAtUtc.UtcDateTime == right.StartedAtUtc.UtcDateTime &&
         string.Equals(Path.GetFullPath(left.ExecutablePath), Path.GetFullPath(right.ExecutablePath), StringComparison.OrdinalIgnoreCase);
 
-    internal void SetCompatibilityConfiguratorForTesting(
-        Func<RuntimeCompatibilityRequest, CancellationToken, Task<RuntimeCompatibilityResult>> configure) =>
-        _configureCompatibility = configure;
-
     internal void SetRuntimeApplyWorkflowForTesting(RuntimeApplyWorkflow workflow) =>
         _runtimeApplyWorkflow = workflow;
 
-    private async Task<RuntimeStatus> StartOrConnectAndConfigureCompatibilityAsync(int port, CancellationToken cancellationToken)
+    private async Task<RuntimeStatus> StartOrConnectAsync(int port, CancellationToken cancellationToken)
     {
         var activeInstance = GetActiveConnectionInstance(port, out var hasActiveConnection);
         var status = await _runtimeApplyWorkflow.StartOrConnectAsync(
@@ -640,46 +396,8 @@ public partial class MainWindow : Window
         }
 
         Interlocked.Increment(ref _runtimeStatusSequence);
-        DisplayRuntimeStatus(status, "Codex 调试目标已核验；没有应用皮肤。");
-        if (!_compatibilitySettingsLoaded)
-        {
-            var unavailableMessage = $"调试目标已就绪；未能读取兼容设置，因此没有同步界面语言。{_compatibilitySettingsLoadError} 尚未应用皮肤。";
-            var unavailable = new RuntimeStatus(
-                RuntimeStatusState.Connected,
-                null,
-                status.Endpoint,
-                unavailableMessage,
-                true,
-                0,
-                status.ConnectedInstance);
-            DisplayRuntimeStatus(unavailable);
-            return unavailable;
-        }
-
-        var result = await ConfigureCompatibilityForCurrentTargetAsync(
-            _compatibilityOptions,
-            cancellationToken,
-            callerOwnsBusyState: true);
-        var compatibilityMessage = result switch
-        {
-            { State: RuntimeCompatibilityState.Applied } => "简体中文设置已应用。",
-            { State: RuntimeCompatibilityState.Disabled } disabled => $"固定语言已关闭：{disabled.Message ?? "当前目标已响应关闭设置。"}",
-            { State: RuntimeCompatibilityState.Pending } pending => $"界面语言待处理：{pending.Message ?? "目标暂不可用。"}",
-            { State: RuntimeCompatibilityState.Unsupported } unsupported => $"当前目标不支持界面语言设置：{unsupported.Message ?? "宿主接口不可用。"}",
-            { State: RuntimeCompatibilityState.TimedOut } timedOut => $"等待界面语言状态超时：{timedOut.Message ?? "请在兼容设置中重试。"}",
-            { State: RuntimeCompatibilityState.Failed } failed => $"界面语言设置未完成：{failed.Message ?? "请在兼容设置中重试。"}",
-            _ => "界面语言设置已保存；连接状态待确认。"
-        };
-        var completed = new RuntimeStatus(
-            RuntimeStatusState.Connected,
-            null,
-            status.Endpoint,
-            $"调试目标已核验。{compatibilityMessage} 未应用皮肤。",
-            true,
-            0,
-            status.ConnectedInstance);
-        DisplayRuntimeStatus(completed);
-        return completed;
+        DisplayRuntimeStatus(status, AppLocalization.Get("Codex 调试目标已核验；尚未应用皮肤。"));
+        return status;
     }
 
     private async void LaunchDebugButton_Click(object sender, RoutedEventArgs e)
@@ -689,14 +407,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var operationGeneration = BeginRuntimeOperation("正在核验调试目标并同步界面语言…");
+        var operationGeneration = BeginRuntimeOperation("正在核验 Codex 调试目标…");
         try
         {
-            await StartOrConnectAndConfigureCompatibilityAsync(port, CancellationToken.None);
+            await StartOrConnectAsync(port, CancellationToken.None);
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "调试版未能启动或界面语言未能同步。请检查“选择窗口”与兼容设置后重试。");
+            SetRuntimeError(exception.Message, AppLocalization.Get("未能启动 Codex 调试版。请检查连接目标和端口后重试。"));
         }
         finally
         {
@@ -719,13 +437,13 @@ public partial class MainWindow : Window
             DisplayRuntimeStatus(
                 stopped,
                 stopped.State == RuntimeStatusState.Error
-                    ? "未能恢复原生外观。请确认桌面应用仍在运行后重试。"
-                    : "原生外观已恢复。管理器连接已断开。调试端口仍由桌面应用管理。",
+                    ? AppLocalization.Get("未能恢复原生外观。请确认桌面应用仍在运行后重试。")
+                    : AppLocalization.Get("原生外观已恢复。管理器连接已断开。调试端口仍由桌面应用管理。"),
                 protectRuntimeResult: stopped.State == RuntimeStatusState.Error);
         }
         catch (Exception exception)
         {
-            SetRuntimeError(exception.Message, "未能恢复原生外观。请确认桌面应用仍在运行后重试。");
+            SetRuntimeError(exception.Message, AppLocalization.Get("未能恢复原生外观。请确认桌面应用仍在运行后重试。"));
         }
         finally
         {
@@ -760,14 +478,6 @@ public partial class MainWindow : Window
         _selectedConnectionInstance = null;
         UpdateRuntimeTargetSummary();
         UpdateRuntimeControls();
-        if (_lastCompatibilityResult is not null &&
-            (!TryReadRuntimePort(out var selectedPort) ||
-             !Uri.TryCreate(_lastCompatibilityResult.Endpoint, UriKind.Absolute, out var configuredEndpoint) ||
-             configuredEndpoint.Port != selectedPort))
-        {
-            _lastCompatibilityResult = null;
-            _settingsWindow?.UpdateRuntimePreference(null);
-        }
     }
 
     private void UpdateRuntimeTargetSummary()
@@ -778,11 +488,17 @@ public partial class MainWindow : Window
         }
 
         var targetText = _selectedConnectionInstance is { Kind: CodexInstanceKind.Debug, DebugPort: int debugPort } instance
-            ? $"{(string.IsNullOrWhiteSpace(instance.WindowTitle) ? "调试版 Codex" : instance.WindowTitle)} · PID {instance.Identity.ProcessId} · {instance.DebugEndpoint ?? $"端口 {debugPort}"}{(instance.CanConnect && !instance.IsExitResidual ? string.Empty : " · 暂不可连接")}"
-            : $"自动查找调试版 · 端口 {RuntimePortInput.Text.Trim()}";
+            ? AppLocalization.Format("{0} · PID {1} · {2}{3}",
+                string.IsNullOrWhiteSpace(instance.WindowTitle) ? AppLocalization.Get("调试版 Codex") : instance.WindowTitle,
+                instance.Identity.ProcessId,
+                instance.DebugEndpoint ?? AppLocalization.Format("端口 {0}", debugPort),
+                instance.CanConnect && !instance.IsExitResidual ? string.Empty : AppLocalization.Get(" · 暂不可连接"))
+            : AppLocalization.Format("自动查找调试版 · 端口 {0}", RuntimePortInput.Text.Trim());
         RuntimeTargetText.Text = targetText;
         RuntimeTargetText.ToolTip = _selectedConnectionInstance is { } selected
-            ? $"{targetText}\n{selected.Identity.ExecutablePath}\n启动时间：{selected.Identity.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}{(string.IsNullOrWhiteSpace(selected.ConnectionMessage) ? string.Empty : $"\n{selected.ConnectionMessage}")}"
+            ? AppLocalization.Format("{0}\n{1}\n启动时间：{2}{3}", targetText, selected.Identity.ExecutablePath,
+                selected.Identity.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", AppLocalization.Culture),
+                string.IsNullOrWhiteSpace(selected.ConnectionMessage) ? string.Empty : $"\n{AppLocalization.Get(selected.ConnectionMessage)}")
             : targetText;
 
         var hasLiveConnectionIdentity = _lastRuntimeStatus is
@@ -803,14 +519,16 @@ public partial class MainWindow : Window
         var connected = hasLiveConnectionIdentity
             ? _lastRuntimeStatus?.ConnectedInstance
             : _lastRuntimeStatus?.State == RuntimeStatusState.Stopped ? null : _lastConnectedInstance;
-        RuntimeConnectedTargetLabel.Text = hasLiveConnectionIdentity
-            ? "当前连接"
-            : connected is null ? "当前连接" : "上次确认";
-        var connectedText = connected is null ? "未连接" : $"PID {connected.ProcessId}";
+        RuntimeConnectedTargetLabel.Text = AppLocalization.Get(hasLiveConnectionIdentity || connected is null ? "当前连接" : "上次确认");
+        var connectedText = connected is null ? AppLocalization.Get("未连接") : AppLocalization.Format("PID {0}", connected.ProcessId);
         RuntimeConnectedTargetText.Text = connectedText;
         RuntimeConnectedTargetText.ToolTip = connected is null
-            ? "运行状态尚未报告连接实例。"
-            : $"{(hasLiveConnectionIdentity ? "当前连接" : "上次确认连接")}: PID {connected.ProcessId}\n{connected.ExecutablePath}\n启动时间：{connected.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+            ? AppLocalization.Get("运行状态尚未报告连接实例。")
+            : AppLocalization.Format("{0}: PID {1}\n{2}\n启动时间：{3}",
+                AppLocalization.Get(hasLiveConnectionIdentity ? "当前连接" : "上次确认连接"),
+                connected.ProcessId,
+                connected.ExecutablePath,
+                connected.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", AppLocalization.Culture));
     }
 
     private async void SelectRuntimeTargetButton_Click(object sender, RoutedEventArgs e)
@@ -830,7 +548,7 @@ public partial class MainWindow : Window
         };
         var accepted = dialog.ShowDialog() == true;
         if (accepted && dialog.SelectedForConnection is
-            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort, DebugEndpoint: { } debugEndpoint } instance)
+            { CanConnect: true, Kind: CodexInstanceKind.Debug, IsExitResidual: false, DebugPort: int debugPort } instance)
         {
             Interlocked.Increment(ref _runtimeStatusSequence);
             _selectedConnectionInstance = instance;
@@ -838,37 +556,8 @@ public partial class MainWindow : Window
             RuntimePortInput.Text = debugPort.ToString(CultureInfo.InvariantCulture);
             _settingInstancePort = false;
             UpdateRuntimeTargetSummary();
-            _lastCompatibilityResult = null;
-            _settingsWindow?.UpdateRuntimePreference(null);
-            RuntimeStatusMessage.Text = "已选择调试实例。界面语言会在该目标连接后单独配置；应用皮肤仍需点击主操作。";
+            RuntimeStatusMessage.Text = AppLocalization.Get("已选择调试实例。点击主操作后才会连接并应用皮肤。");
             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
-
-            if (_compatibilitySettingsLoaded)
-            {
-                SetRuntimeOperationInProgress(true, "正在核验目标并同步界面语言…");
-                try
-                {
-                    await ConfigureCompatibilityForCurrentTargetAsync(
-                        _compatibilityOptions,
-                        CancellationToken.None,
-                        callerOwnsBusyState: true);
-                }
-                catch (Exception exception)
-                {
-                    var failed = new RuntimeCompatibilityResult(
-                        RuntimeCompatibilityState.Failed,
-                        debugEndpoint,
-                        exception.Message,
-                        false,
-                        instance.Identity);
-                    _lastCompatibilityResult = failed;
-                    _settingsWindow?.UpdateRuntimePreference(failed);
-                }
-                finally
-                {
-                    SetRuntimeOperationInProgress(false);
-                }
-            }
         }
 
         if (_readRuntimeStatusOnLoad &&
@@ -977,6 +666,57 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MainWindow_AppLocalization_LanguageChanged(object? sender, EventArgs e)
+    {
+        if (_windowClosed)
+            return;
+
+        void RefreshLocalizedUi()
+        {
+            if (_windowClosed)
+                return;
+
+            UpdateRuntimeTargetSummary();
+            UpdateRuntimeControls();
+            UpdateTransparencyControls();
+            UpdateUpdateEntryLabel();
+            UpdateLibraryWarning();
+            UpdateListEmptyState();
+            UpdateSortStatus();
+            SkinList.Items.Refresh();
+            PreviewHeading.Text = AppLocalization.Get(_isEditing ? "草稿预览" : "预览");
+            PreviewPowerButton.Content = AppLocalization.Get(_previewClosed ? "打开预览" : "关闭预览");
+            PreviewPowerButton.ToolTip = AppLocalization.Get(_previewClosed ? "重新打开本地离线预览" : "释放本地预览浏览器内存");
+            PreviewBaseVersion.Text = AppLocalization.Format("原生静态样板 · {0}", _basePackage.SourceVersion);
+            PreviewViewport.ToolTip = AppLocalization.Format("本地原生样板 {0} · 离线静态结构预览", _basePackage.SourceVersion);
+            PreviewBaseVersion.ToolTip = AppLocalization.Format(
+                "依据本地原生静态样板构建的结构预览，不是当前运行的真实客户端截图。来源版本：{0}",
+                _basePackage.SourceVersion);
+
+            if (_selectedPackage is { } package)
+                RefreshSelectedPackageLabels(package);
+
+            if (_previewStatusSource is not null)
+                SetPreviewStatus(_previewStatusSource, _previewStatusPersistent);
+
+            if (_lastRuntimeStatus is { } status)
+            {
+                DisplayRuntimeStatus(status,
+                    preserveRuntimeResult: status.State == RuntimeStatusState.Error,
+                    localizedStateMessage: status.State != RuntimeStatusState.Error);
+            }
+            else if (!string.IsNullOrWhiteSpace(_startupStatusMessage))
+            {
+                SetStartupStatus(_startupStatusMessage);
+            }
+        }
+
+        if (Dispatcher.CheckAccess())
+            RefreshLocalizedUi();
+        else
+            _ = Dispatcher.BeginInvoke(new Action(RefreshLocalizedUi));
+    }
+
     private void MarketEntryButton_Click(object sender, RoutedEventArgs e) => OpenMarketWindow();
 
     private void SettingsEntryButton_Click(object sender, RoutedEventArgs e)
@@ -993,13 +733,6 @@ public partial class MainWindow : Window
         }
 
         var window = new SettingsWindow(
-            _compatibilityOptions,
-            _compatibilitySettingsLoaded,
-            _compatibilitySettingsLoadError,
-            _lastCompatibilityResult,
-            SaveAndConfigureCompatibilityAsync,
-            ReloadCompatibilitySettings,
-            StartDebugClientFromCompatibilityAsync,
             codexConfigReadabilityService: _codexConfigReadabilityService,
             startupPreferencesService: _startupPreferencesService)
         {
@@ -1014,37 +747,6 @@ public partial class MainWindow : Window
             }
         };
         window.Show();
-    }
-
-    private async Task<RuntimeStatus> StartDebugClientFromCompatibilityAsync()
-    {
-        if (_runtimeOperationInProgress)
-        {
-            return new RuntimeStatus(RuntimeStatusState.Error, null, null,
-                "管理器正在执行其他操作，请完成后重试。", null);
-        }
-
-        if (!TryReadRuntimePort(out var port))
-        {
-            return new RuntimeStatus(RuntimeStatusState.Error, null, null,
-                "端口无效。请检查高级设置中的端口。", null);
-        }
-
-        Interlocked.Increment(ref _runtimeStatusSequence);
-        SetRuntimeOperationInProgress(true, "正在核验调试目标并同步界面语言…");
-        try
-        {
-            return await StartOrConnectAndConfigureCompatibilityAsync(port, CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            SetRuntimeError(exception.Message, "未能启动 Codex 调试版或同步界面语言。请检查“选择窗口”与兼容设置。");
-            return new RuntimeStatus(RuntimeStatusState.Error, null, null, exception.Message, null);
-        }
-        finally
-        {
-            SetRuntimeOperationInProgress(false);
-        }
     }
 
     internal SkinMarketWindow? OpenMarketWindow(SkinMarketClient? clientOverride = null)
@@ -1096,7 +798,7 @@ public partial class MainWindow : Window
     {
         if (_runtimeOperationInProgress || _isBusy || _isEditing)
         {
-            throw new InvalidOperationException("管理器正在处理其他操作。请完成后重试安装。");
+            throw new InvalidOperationException(AppLocalization.Get("管理器正在处理其他操作。请完成后重试安装。"));
         }
 
         SetBusy(true);
@@ -1123,7 +825,7 @@ public partial class MainWindow : Window
         }
 
         LocateConnectedWindowButton.IsEnabled = false;
-        RuntimeStatusMessage.Text = $"正在定位当前连接 PID {connectedIdentity.ProcessId}…";
+        RuntimeStatusMessage.Text = AppLocalization.Format("正在定位当前连接 PID {0}…", connectedIdentity.ProcessId);
         RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
         try
         {
@@ -1131,7 +833,7 @@ public partial class MainWindow : Window
             var connectedInstance = instances.FirstOrDefault(instance => instance.Identity == connectedIdentity);
             if (connectedInstance is null)
             {
-                RuntimeStatusMessage.Text = $"当前连接 PID {connectedIdentity.ProcessId} 已不在实例列表中。请刷新连接状态或重新选择实例。";
+                RuntimeStatusMessage.Text = AppLocalization.Format("当前连接 PID {0} 已不在实例列表中。请刷新连接状态或重新选择实例。", connectedIdentity.ProcessId);
                 RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
                 return;
             }
@@ -1139,16 +841,16 @@ public partial class MainWindow : Window
             var result = await instanceService.LocateAsync(connectedInstance);
             RuntimeStatusMessage.Text = result switch
             {
-                CodexLocateResult.Located => $"已定位当前连接实例 PID {connectedIdentity.ProcessId}。",
-                CodexLocateResult.NoWindow => $"当前连接实例 PID {connectedIdentity.ProcessId} 没有可见窗口。",
-                CodexLocateResult.ForegroundDenied => $"已找到当前连接实例 PID {connectedIdentity.ProcessId}，但 Windows 未允许切换前台。",
-                _ => $"无法定位当前连接实例 PID {connectedIdentity.ProcessId}。"
+                CodexLocateResult.Located => AppLocalization.Format("已定位当前连接实例 PID {0}。", connectedIdentity.ProcessId),
+                CodexLocateResult.NoWindow => AppLocalization.Format("当前连接实例 PID {0} 没有可见窗口。", connectedIdentity.ProcessId),
+                CodexLocateResult.ForegroundDenied => AppLocalization.Format("已找到当前连接实例 PID {0}，但 Windows 未允许切换前台。", connectedIdentity.ProcessId),
+                _ => AppLocalization.Format("无法定位当前连接实例 PID {0}。", connectedIdentity.ProcessId)
             };
             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
         }
         catch (Exception exception)
         {
-            RuntimeStatusMessage.Text = $"定位当前连接窗口失败：{exception.Message}";
+            RuntimeStatusMessage.Text = AppLocalization.Format("定位当前连接窗口失败：{0}", exception.Message);
             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
         }
         finally
@@ -1164,7 +866,7 @@ public partial class MainWindow : Window
             return true;
         }
 
-        SetRuntimeError("端口必须是 1 到 65535 之间的整数。", "请输入有效的本地调试端口。");
+        SetRuntimeError(AppLocalization.Get("端口必须是 1 到 65535 之间的整数。"), AppLocalization.Get("请输入有效的本地调试端口。"));
         RuntimePortInput.Focus();
         RuntimePortInput.SelectAll();
         return false;
@@ -1189,12 +891,12 @@ public partial class MainWindow : Window
         _runtimeActionCancellable = inProgress && cancellable && _runtimeActionCancellation is not null;
         if (!inProgress)
         {
-            CancelRuntimeActionButton.Content = "取消操作";
+            CancelRuntimeActionButton.Content = AppLocalization.Get("取消操作");
         }
         if (!string.IsNullOrWhiteSpace(message))
         {
-            RuntimeStatusMessage.Text = message;
-            RuntimeStatusMessage.ToolTip = message;
+            RuntimeStatusMessage.Text = AppLocalization.Get(message);
+            RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
         }
 
         UpdateRuntimeControls();
@@ -1226,11 +928,11 @@ public partial class MainWindow : Window
         var hasActiveConnection = currentPortMatches;
         RuntimeSelectedSkinText.Text = _selectedPackage is { } package
             ? package.Name
-            : "尚未选择皮肤；可以先启动调试版 Codex";
-        RuntimePrimaryActionText.Text = RuntimeConnectionViewState.GetPrimaryActionLabel(
+            : AppLocalization.Get("尚未选择皮肤；可以先启动调试版 Codex");
+        RuntimePrimaryActionText.Text = AppLocalization.Get(RuntimeConnectionViewState.GetPrimaryActionLabel(
             hasActiveConnection,
             _selectedConnectionInstance is not null,
-            _selectedPackage is not null);
+            _selectedPackage is not null));
         AutomationProperties.SetName(ApplyRuntimeButton, RuntimePrimaryActionText.Text);
         EditSkinButton.IsEnabled = !_isBusy && !_isEditing && _selectedPackage is not null;
     }
@@ -1242,9 +944,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        RuntimeStatusMessage.Text = "正在取消操作；结果待确认。管理器不会关闭 Codex，也不会自动恢复皮肤。";
+        RuntimeStatusMessage.Text = AppLocalization.Get("正在取消操作；结果待确认。管理器不会关闭 Codex，也不会自动恢复皮肤。");
         RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
-        CancelRuntimeActionButton.Content = "正在取消…";
+        CancelRuntimeActionButton.Content = AppLocalization.Get("正在取消…");
         CancelRuntimeActionButton.IsEnabled = false;
         _runtimeActionCancellation.Cancel();
     }
@@ -1253,8 +955,8 @@ public partial class MainWindow : Window
     {
         RuntimeStatusIndicator.SetResourceReference(Ellipse.FillProperty, "WarningText");
         RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, "WarningText");
-        RuntimeStatusText.Text = "已取消，结果待确认";
-        RuntimeStatusMessage.Text = "操作已取消。管理器不会关闭 Codex，也不会自动恢复皮肤；请稍后查看连接状态。";
+        RuntimeStatusText.Text = AppLocalization.Get("已取消，结果待确认");
+        RuntimeStatusMessage.Text = AppLocalization.Get("操作已取消。管理器不会关闭 Codex，也不会自动恢复皮肤；请稍后查看连接状态。");
         RuntimeStatusText.ToolTip = RuntimeStatusMessage.Text;
         RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
     }
@@ -1266,7 +968,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var draft = SkinCreation.Create($"skin-{Guid.NewGuid():N}"[..13], "新建皮肤", SkinAppearance.Light);
+        var draft = SkinCreation.Create($"skin-{Guid.NewGuid():N}"[..13], AppLocalization.Get("新建皮肤"), SkinAppearance.Light);
         EnterEditor(draft, isNew: true);
     }
 
@@ -1278,7 +980,7 @@ public partial class MainWindow : Window
         }
 
         var id = CreateUniqueCopyId(package.Id);
-        var draft = SkinCreation.CreateCopy(package, id, $"{package.Name} 副本");
+        var draft = SkinCreation.CreateCopy(package, id, AppLocalization.Format("{0} 副本", package.Name));
         EnterEditor(draft, isNew: true);
     }
 
@@ -1320,7 +1022,7 @@ public partial class MainWindow : Window
         OriginalImageLayer.Visibility = Visibility.Collapsed;
         OriginalImageLayer.Opacity = 1;
         OriginalImageSource.Source = null;
-        OriginalButton.Content = "原图";
+        OriginalButton.Content = AppLocalization.Get("原图");
         if (PreviewOriginalBaseCheckBox.IsChecked == true)
         {
             PreviewOriginalBaseCheckBox.IsChecked = false;
@@ -1335,8 +1037,8 @@ public partial class MainWindow : Window
         TransitionVisibility(RuntimeControlsBorder, Visibility.Collapsed, 135);
         TransitionVisibility(SelectedMetadata, Visibility.Collapsed, 135);
         TransitionVisibility(ColorSection, Visibility.Collapsed, 135);
-        PreviewHeading.Text = "草稿预览";
-        PreviewStatus.Text = "正在加载本地草稿…";
+        PreviewHeading.Text = AppLocalization.Get("草稿预览");
+        PreviewStatus.Text = AppLocalization.Get("正在加载本地草稿…");
         PreviewStatus.Visibility = Visibility.Visible;
         ImportButton.IsEnabled = false;
         NewSkinButton.IsEnabled = false;
@@ -1382,7 +1084,7 @@ public partial class MainWindow : Window
             ? Visibility.Visible : Visibility.Collapsed, 145);
         TransitionVisibility(DetailsEmptyState, _selectedPackage is null ? Visibility.Visible : Visibility.Collapsed, 155);
         TransitionVisibility(DetailsScroll, _selectedPackage is null ? Visibility.Collapsed : Visibility.Visible, 145);
-        PreviewHeading.Text = "预览";
+        PreviewHeading.Text = AppLocalization.Get("预览");
         ImportButton.IsEnabled = !_isBusy;
         NewSkinButton.IsEnabled = !_isBusy;
         EditSkinButton.IsEnabled = !_isBusy && _selectedPackage is not null;
@@ -1645,14 +1347,14 @@ public partial class MainWindow : Window
             {
                 if (SkinEditor.IsNew || asCopy)
                 {
-                    SkinEditor.SetValidationError($"皮肤 ID“{package.Id}”已经存在，请修改 ID 后再保存。新建皮肤和副本不会替换已有内容。");
+                    SkinEditor.SetValidationError(AppLocalization.Format("皮肤 ID“{0}”已经存在，请修改 ID 后再保存。新建皮肤和副本不会替换已有内容。", package.Id));
                     return false;
                 }
 
                 var answer = MessageBox.Show(
                     this,
-                    $"皮肤 ID“{package.Id}”已经存在。确认后会替换现有皮肤。",
-                    "替换现有皮肤？",
+                    AppLocalization.Format("皮肤 ID“{0}”已经存在。确认后会替换现有皮肤。", package.Id),
+                    AppLocalization.Get("替换现有皮肤？"),
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question,
                     MessageBoxResult.No);
@@ -1698,8 +1400,8 @@ public partial class MainWindow : Window
 
         var answer = MessageBox.Show(
             this,
-            "当前草稿有未保存的修改。是否先保存？",
-            "保留草稿修改？",
+            AppLocalization.Get("当前草稿有未保存的修改。是否先保存？"),
+            AppLocalization.Get("保留草稿修改？"),
             MessageBoxButton.YesNoCancel,
             MessageBoxImage.Question,
             MessageBoxResult.Cancel);
@@ -1720,7 +1422,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        CancelPendingAutostartForUserInput("开机应用已取消：管理器正在关闭。");
+        CancelPendingAutostartForUserInput(AppLocalization.Get("开机应用已取消：管理器正在关闭。"));
         _runtimeActionCancellation?.Cancel();
         e.Cancel = true;
         if (_closePreparationInProgress)
@@ -1731,7 +1433,7 @@ public partial class MainWindow : Window
         _closePreparationInProgress = true;
         try
         {
-            if (!await TryPrepareToCloseAsync("关闭管理器"))
+            if (!await TryPrepareToCloseAsync(AppLocalization.Get("关闭管理器")))
             {
                 return;
             }
@@ -1752,11 +1454,11 @@ public partial class MainWindow : Window
             return true;
         }
 
-        var prompt = $"当前制作器有未保存的修改。是否先保存再{action}？";
+        var prompt = AppLocalization.Format("当前制作器有未保存的修改。是否先保存再{0}？", action);
         var answer = _editorClosePrompt?.Invoke(prompt) ?? MessageBox.Show(
             this,
             prompt,
-            "保留草稿修改？",
+            AppLocalization.Get("保留草稿修改？"),
             MessageBoxButton.YesNoCancel,
             MessageBoxImage.Question,
             MessageBoxResult.Cancel);
@@ -1791,9 +1493,9 @@ public partial class MainWindow : Window
     private void UpdateUpdateEntryLabel()
     {
         var fullLabel = _updateCoordinator?.UpdateEntryLabel ??
-                        $"版本与更新 · {UpdateCoordinator.ReadCurrentVersionTag()}";
-        UpdateEntryLabel.Text = fullLabel.StartsWith("版本与更新 · ", StringComparison.Ordinal)
-            ? "版本与更新"
+                        AppLocalization.Format("版本与更新 · {0}", UpdateCoordinator.ReadCurrentVersionTag());
+        UpdateEntryLabel.Text = fullLabel.StartsWith(AppLocalization.Get("版本与更新 · "), StringComparison.Ordinal)
+            ? AppLocalization.Get("版本与更新")
             : fullLabel;
         UpdateEntryLabel.ToolTip = fullLabel;
         UpdateEntryButton.ToolTip = fullLabel;
@@ -1826,24 +1528,24 @@ public partial class MainWindow : Window
         var downloaded = coordinator?.DownloadedUpdate;
         if (coordinator is null || downloaded is null || _installerLauncher is null)
         {
-            coordinator?.ReportInstallFailure("没有可用的安装器或已验证的更新包。可以重新下载后重试。");
+            coordinator?.ReportInstallFailure(AppLocalization.Get("没有可用的安装器或已验证的更新包。可以重新下载后重试。"));
             return false;
         }
 
         if (_isBusy || _runtimeOperationInProgress || _closePreparationInProgress || _allowWindowClose)
         {
-            coordinator.ReportInstallFailure("管理器正在保存或连接皮肤。操作完成后可以重试。");
+            coordinator.ReportInstallFailure(AppLocalization.Get("管理器正在保存或连接皮肤。操作完成后可以重试。"));
             return false;
         }
 
-        if (!await TryPrepareToCloseAsync("安装更新并关闭管理器"))
+        if (!await TryPrepareToCloseAsync(AppLocalization.Get("安装更新并关闭管理器")))
         {
             return false;
         }
 
         if (_isBusy || _runtimeOperationInProgress)
         {
-            coordinator.ReportInstallFailure("管理器正在保存或连接皮肤。操作完成后可以重试。");
+            coordinator.ReportInstallFailure(AppLocalization.Get("管理器正在保存或连接皮肤。操作完成后可以重试。"));
             return false;
         }
 
@@ -1853,7 +1555,7 @@ public partial class MainWindow : Window
             await coordinator.ValidateAsync(downloaded);
             if (!_installerLauncher.Launch(downloaded.FilePath, AppContext.BaseDirectory))
             {
-                coordinator.ReportInstallFailure("Windows 没有启动安装程序。可以重试安装。");
+                coordinator.ReportInstallFailure(AppLocalization.Get("Windows 没有启动安装程序。可以重试安装。"));
                 return false;
             }
 
@@ -1866,7 +1568,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            coordinator.ReportInstallFailure($"{exception.Message} 可以重新下载后重试。");
+            coordinator.ReportInstallFailure(AppLocalization.Format("{0} 可以重新下载后重试。", AppLocalization.Get(exception.Message)));
             return false;
         }
         finally
@@ -1910,7 +1612,7 @@ public partial class MainWindow : Window
         _showingOriginalGif = false;
         OriginalImageSource.Source = null;
         OriginalImageLayer.Visibility = Visibility.Collapsed;
-        OriginalButton.Content = "查看原图";
+        OriginalButton.Content = AppLocalization.Get("查看原图");
         PreviewBrowser.IsVisibleChanged -= PreviewBrowser_IsVisibleChanged;
         if (_previewRenderer is { } renderer)
         {
@@ -1928,8 +1630,8 @@ public partial class MainWindow : Window
         PreviewContainer.Visibility = Visibility.Collapsed;
         PreviewRow.MinHeight = 0;
         PreviewRow.Height = new GridLength(0);
-        PreviewPowerButton.Content = "打开预览";
-        PreviewPowerButton.ToolTip = "重新打开本地离线预览";
+        PreviewPowerButton.Content = AppLocalization.Get("打开预览");
+        PreviewPowerButton.ToolTip = AppLocalization.Get("重新打开本地离线预览");
         SetPreviewStatus("本地预览已关闭");
     }
 
@@ -1950,10 +1652,10 @@ public partial class MainWindow : Window
         PreviewClosedHeader.Visibility = Visibility.Collapsed;
         PreviewActiveHeader.Visibility = Visibility.Visible;
         PreviewContainer.Visibility = Visibility.Visible;
-        PreviewRow.MinHeight = 150;
+        PreviewRow.MinHeight = 130;
         PreviewRow.Height = new GridLength(1, GridUnitType.Star);
-        PreviewPowerButton.Content = "关闭预览";
-        PreviewPowerButton.ToolTip = "释放本地预览浏览器内存";
+        PreviewPowerButton.Content = AppLocalization.Get("关闭预览");
+        PreviewPowerButton.ToolTip = AppLocalization.Get("释放本地预览浏览器内存");
         var browser = new WebView2
         {
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -2005,7 +1707,8 @@ public partial class MainWindow : Window
         RuntimeStatus status,
         string? fallbackMessage = null,
         bool preserveRuntimeResult = false,
-        bool protectRuntimeResult = false)
+        bool protectRuntimeResult = false,
+        bool localizedStateMessage = false)
     {
         _lastRuntimeStatus = status;
         UpdateRuntimeTargetSummary();
@@ -2021,11 +1724,15 @@ public partial class MainWindow : Window
                 status.ConnectedInstance,
                 status.CompatibilityResult)
             : status;
-        var viewState = RuntimeConnectionViewState.From(viewStatus);
+        var viewState = RuntimeConnectionViewState.From(
+            viewStatus,
+            preferStateSummary: localizedStateMessage && status.State != RuntimeStatusState.Error);
         RuntimeStatusIndicator.SetResourceReference(Ellipse.FillProperty, viewState.BrushResourceKey);
         RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, viewState.BrushResourceKey);
-        RuntimeStatusText.Text = viewState.StatusLabel;
-        var message = string.IsNullOrWhiteSpace(status.Message) ? fallbackMessage ?? viewState.Message : status.Message;
+        RuntimeStatusText.Text = AppLocalization.Get(viewState.StatusLabel);
+        var message = localizedStateMessage || string.IsNullOrWhiteSpace(status.Message)
+            ? AppLocalization.Get(fallbackMessage ?? viewState.Message)
+            : AppLocalization.Get(status.Message);
         if (protectRuntimeResult && status.State == RuntimeStatusState.Error)
         {
             _protectedRuntimeResultMessage = message;
@@ -2064,8 +1771,8 @@ public partial class MainWindow : Window
             PlacementTarget = sender as UIElement ?? ImportButton,
             Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
         };
-        var zipItem = new MenuItem { Header = "从 ZIP 包导入" };
-        var folderItem = new MenuItem { Header = "从文件夹导入" };
+        var zipItem = new MenuItem { Header = AppLocalization.Get("从 ZIP 包导入") };
+        var folderItem = new MenuItem { Header = AppLocalization.Get("从文件夹导入") };
         zipItem.Click += async (_, _) => await ImportZipAsync();
         folderItem.Click += async (_, _) => await ImportFolderAsync();
         menu.Items.Add(zipItem);
@@ -2077,8 +1784,8 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "选择皮肤 ZIP 包",
-            Filter = "皮肤 ZIP 包 (*.zip)|*.zip",
+            Title = AppLocalization.Get("选择皮肤 ZIP 包"),
+            Filter = AppLocalization.Get("皮肤 ZIP 包 (*.zip)|*.zip"),
             Multiselect = false,
             CheckFileExists = true
         };
@@ -2094,7 +1801,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFolderDialog
         {
-            Title = "选择皮肤文件夹",
+            Title = AppLocalization.Get("选择皮肤文件夹"),
             Multiselect = false
         };
         if (dialog.ShowDialog(this) != true)
@@ -2120,7 +1827,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            ShowOperationError("导入失败", exception);
+            ShowOperationError(AppLocalization.Get("导入失败"), exception);
         }
         finally
         {
@@ -2139,18 +1846,18 @@ public partial class MainWindow : Window
             }
             catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or FormatException or InvalidOperationException)
             {
-                throw new InvalidDataException("背景图片无法由系统图像解码器读取。请使用有效的 PNG 或 JPG 文件后重试。", exception);
+                throw new InvalidDataException(AppLocalization.Get("背景图片无法由系统图像解码器读取。请使用有效的 PNG 或 JPG 文件后重试。"), exception);
             }
         }
 
         var replace = false;
         if (_store.ContainsId(package.Id))
         {
-            var prompt = $"皮肤 ID“{package.Id}”已经存在。确认后会用“{package.Name}”替换现有皮肤。";
+            var prompt = AppLocalization.Format("皮肤 ID“{0}”已经存在。确认后会用“{1}”替换现有皮肤。", package.Id, package.Name);
             var answer = _importReplacePrompt?.Invoke(prompt) ?? MessageBox.Show(
                 promptOwner ?? this,
                 prompt,
-                "替换现有皮肤？",
+                AppLocalization.Get("替换现有皮肤？"),
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question,
                 MessageBoxResult.No);
@@ -2195,8 +1902,8 @@ public partial class MainWindow : Window
 
         var dialog = new SaveFileDialog
         {
-            Title = "导出皮肤 ZIP 包",
-            Filter = "皮肤 ZIP 包 (*.zip)|*.zip",
+            Title = AppLocalization.Get("导出皮肤 ZIP 包"),
+            Filter = AppLocalization.Get("皮肤 ZIP 包 (*.zip)|*.zip"),
             FileName = $"{_selectedPackage.Id}.zip",
             DefaultExt = ".zip",
             AddExtension = true,
@@ -2210,11 +1917,11 @@ public partial class MainWindow : Window
         try
         {
         _store.ExportZip(_selectedPackage.Id, dialog.FileName, overwriteExisting: true);
-            MessageBox.Show(this, "皮肤包已导出。", "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, AppLocalization.Get("皮肤包已导出。"), AppLocalization.Get("导出完成"), MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception exception)
         {
-            ShowOperationError("导出失败", exception);
+            ShowOperationError(AppLocalization.Get("导出失败"), exception);
         }
     }
 
@@ -2228,8 +1935,8 @@ public partial class MainWindow : Window
         var package = _selectedPackage;
         var answer = MessageBox.Show(
             this,
-            $"确定从皮肤库中删除“{package.Name}”吗？\n\n这不会影响原始导入文件。",
-            "删除皮肤？",
+            AppLocalization.Format("确定从皮肤库中删除“{0}”吗？\n\n这不会影响原始导入文件。", package.Name),
+            AppLocalization.Get("删除皮肤？"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);
@@ -2245,7 +1952,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            ShowOperationError("删除失败", exception);
+            ShowOperationError(AppLocalization.Get("删除失败"), exception);
         }
     }
 
@@ -2278,7 +1985,7 @@ public partial class MainWindow : Window
                 {
                     _showingOriginal = true;
                     _showingOriginalGif = true;
-                    OriginalButton.Content = "返回聊天预览";
+                    OriginalButton.Content = AppLocalization.Get("返回聊天预览");
                     await _previewDisplayGate.WaitAsync();
                     try
                     {
@@ -2299,7 +2006,7 @@ public partial class MainWindow : Window
                     {
                         if (transition == _originalTransitionSequence)
                         {
-                            SetPreviewStatus($"GIF 原图预览失败：{exception.Message}", persistent: true);
+                            SetPreviewStatus(AppLocalization.Format("GIF 原图预览失败：{0}", AppLocalization.Get(exception.Message)), persistent: true);
                         }
                     }
                     finally
@@ -2314,7 +2021,7 @@ public partial class MainWindow : Window
 
                     _showingOriginal = false;
                     _showingOriginalGif = false;
-                    OriginalButton.Content = "查看原图";
+                    OriginalButton.Content = AppLocalization.Get("查看原图");
                 }
             }
 
@@ -2324,13 +2031,13 @@ public partial class MainWindow : Window
             }
             catch (Exception exception) when (exception is IOException or NotSupportedException or ArgumentException or FormatException or InvalidOperationException)
             {
-                ShowOperationError("查看原图失败", exception);
+                ShowOperationError(AppLocalization.Get("查看原图失败"), exception);
                 return;
             }
 
             _showingOriginal = true;
             _showingOriginalGif = false;
-            OriginalButton.Content = "返回聊天预览";
+            OriginalButton.Content = AppLocalization.Get("返回聊天预览");
             if (!_previewClosed)
             {
                 PreviewBrowser.Visibility = Visibility.Collapsed;
@@ -2345,7 +2052,7 @@ public partial class MainWindow : Window
         }
 
         _showingOriginal = false;
-        OriginalButton.Content = "查看原图";
+        OriginalButton.Content = AppLocalization.Get("查看原图");
         if (_showingOriginalGif)
         {
             _showingOriginalGif = false;
@@ -2382,7 +2089,7 @@ public partial class MainWindow : Window
                 }
                 catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException or ArgumentException)
                 {
-                    SetPreviewStatus($"恢复聊天预览失败：{exception.Message}", persistent: true);
+                    SetPreviewStatus(AppLocalization.Format("恢复聊天预览失败：{0}", AppLocalization.Get(exception.Message)), persistent: true);
                 }
                 finally
                 {
@@ -2476,7 +2183,7 @@ public partial class MainWindow : Window
         if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var transparency) ||
             transparency is < 0 or > 100)
         {
-            PreviewTransparencyError.Text = "请输入 0 到 100 的整数。";
+            PreviewTransparencyError.Text = AppLocalization.Get("请输入 0 到 100 的整数。");
             PreviewTransparencyError.Visibility = Visibility.Visible;
             return;
         }
@@ -2531,7 +2238,7 @@ public partial class MainWindow : Window
             PreviewTransparencyInput.IsEnabled = false;
             if (PreviewTransparencyValue is not null)
             {
-                PreviewTransparencyValue.Text = "编辑中使用草稿默认值";
+                PreviewTransparencyValue.Text = AppLocalization.Get("编辑中使用草稿默认值");
             }
 
             if (PreviewTransparencyError is not null)
@@ -2549,7 +2256,7 @@ public partial class MainWindow : Window
             PreviewTransparencyInput.Text = defaultTransparency ?? string.Empty;
             if (PreviewTransparencyValue is not null)
             {
-                PreviewTransparencyValue.Text = defaultTransparency is null ? "由皮肤决定" : "主题默认";
+                PreviewTransparencyValue.Text = defaultTransparency is null ? AppLocalization.Get("由皮肤决定") : AppLocalization.Get("主题默认");
             }
         }
         else if (PreviewTransparencyValue is not null)
@@ -2696,14 +2403,14 @@ public partial class MainWindow : Window
             if (hasSavedSkin)
             {
                 _isMissingStartupSkin = true;
-                _startupStatusMessage = $"上次选择的皮肤“{savedSkinId}”已删除或不可用。请在管理器中选择其他皮肤。";
+        _startupStatusMessage = AppLocalization.Format("上次选择的皮肤“{0}”已删除或不可用。请在管理器中选择其他皮肤。", savedSkinId);
                 return;
             }
 
             if (_launchedByAutostart && preferences.ShouldApplyLastSelectedSkinOnAutostart)
             {
                 _isMissingStartupSkin = true;
-                _startupStatusMessage = "开机应用未执行：尚无已记录的上次皮肤。请手动打开管理器并选择一款已保存皮肤。";
+                _startupStatusMessage = AppLocalization.Get("开机应用未执行：尚无已记录的上次皮肤。请手动打开管理器并选择一款已保存皮肤。");
                 return;
             }
 
@@ -2711,7 +2418,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            _startupStatusMessage = $"开机应用未执行：无法读取启动设置。{exception.Message}";
+            _startupStatusMessage = AppLocalization.Format("开机应用未执行：无法读取启动设置。{0}", AppLocalization.Get(exception.Message));
         }
     }
 
@@ -2725,14 +2432,14 @@ public partial class MainWindow : Window
         if (!string.Equals(_selectedPackage?.Id, _startupAutostartSkinId, StringComparison.OrdinalIgnoreCase))
         {
             _startupAutostartPending = false;
-            SetStartupStatus("开机应用已取消：上次选择的皮肤未能恢复，请手动选择并应用。");
+            SetStartupStatus(AppLocalization.Get("开机应用已取消：上次选择的皮肤未能恢复，请手动选择并应用。"));
             return;
         }
 
         if (_runtimeOperationInProgress || _isBusy || _isEditing)
         {
             _startupAutostartPending = false;
-            SetStartupStatus("开机应用未执行：管理器当前有其他操作，请稍后手动应用。");
+            SetStartupStatus(AppLocalization.Get("开机应用未执行：管理器当前有其他操作，请稍后手动应用。"));
             return;
         }
 
@@ -2748,15 +2455,15 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+            SetStartupStatus(AppLocalization.Format("无法保存上次选择的皮肤：{0}", AppLocalization.Get(exception.Message)));
         }
     }
 
     private void SetStartupStatus(string message)
     {
         _protectedRuntimeResultMessage = message;
-        RuntimeStatusMessage.Text = message;
-        RuntimeStatusMessage.ToolTip = message;
+        RuntimeStatusMessage.Text = AppLocalization.Get(message);
+        RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
     }
 
     private void CancelPendingAutostartForUserInput(string message)
@@ -2772,10 +2479,10 @@ public partial class MainWindow : Window
     }
 
     private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e) =>
-        CancelPendingAutostartForUserInput("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。");
+        CancelPendingAutostartForUserInput(AppLocalization.Get("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。"));
 
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e) =>
-        CancelPendingAutostartForUserInput("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。");
+        CancelPendingAutostartForUserInput(AppLocalization.Get("开机应用已取消：检测到手动操作，可使用“应用皮肤”继续。"));
 
     private void MainWindow_Activated(object? sender, EventArgs e)
     {
@@ -2843,7 +2550,7 @@ public partial class MainWindow : Window
                                 RuntimeStatusState.Stopped,
                                 null,
                                 null,
-                                $"{health.Message} 可重新启动或使用“选择窗口”选择目标。",
+                                AppLocalization.Format("{0} 可重新启动或使用“选择窗口”选择目标。", AppLocalization.Get(health.Message)),
                                 null);
                         }
                     }
@@ -2854,25 +2561,13 @@ public partial class MainWindow : Window
                     DisplayRuntimeStatus(status, preserveRuntimeResult: true);
                 }
 
-                if (CanApplyRuntimeRefresh(sequence) &&
-                    _readRuntimeStatusOnLoad && _runtimeStatusReader is null &&
-                    !_startupCompatibilityReconciled &&
-                    status.State == RuntimeStatusState.Connected &&
-                    status.ConnectedInstance is not null &&
-                    _compatibilitySettingsLoaded)
-                {
-                    _startupCompatibilityReconciled = true;
-                    await ConfigureCompatibilityForCurrentTargetAsync(
-                        _compatibilityOptions,
-                        CancellationToken.None);
-                }
             }
         }
         catch (Exception exception)
         {
             if (CanApplyRuntimeRefresh(sequence))
             {
-                SetRuntimeError(exception.Message, "无法读取当前连接状态。");
+                SetRuntimeError(exception.Message, AppLocalization.Get("无法读取当前连接状态。"));
             }
         }
         finally
@@ -2947,7 +2642,7 @@ public partial class MainWindow : Window
         _previewErrorMessage = exception.Message;
         PreviewBrowser.Visibility = Visibility.Collapsed;
         OriginalImageLayer.Visibility = Visibility.Collapsed;
-        SetPreviewStatus(_showingOriginal ? null : "皮肤文件预览暂不可用。仍可继续管理皮肤。", persistent: true);
+        SetPreviewStatus(_showingOriginal ? null : AppLocalization.Get("皮肤文件预览暂不可用。仍可继续管理皮肤。"), persistent: true);
         PreviewStatus.ToolTip = exception.Message;
         QueuePreviewActivityUpdate();
     }
@@ -3105,10 +2800,10 @@ public partial class MainWindow : Window
 
         if (list.SelectedItem is null)
         {
-            ShowNoSelection(_skins.Count == 0 ? "皮肤库还是空的" : "没有匹配的皮肤",
+            ShowNoSelection(_skins.Count == 0 ? AppLocalization.Get("皮肤库还是空的") : AppLocalization.Get("没有匹配的皮肤"),
                 _skins.Count == 0
-                    ? "导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。"
-                    : "试试其他名称或 ID，或者清空搜索内容。");
+                    ? AppLocalization.Get("导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。")
+                    : AppLocalization.Get("试试其他名称或 ID，或者清空搜索内容。"));
         }
 
         UpdateListEmptyState();
@@ -3133,7 +2828,7 @@ public partial class MainWindow : Window
                 ShowPackage(_store.LoadSkin(card.Entry.Id));
                 if (!_suppressLastSelectedSkinPersistence)
                 {
-                    CancelPendingAutostartForUserInput("开机应用已取消：检测到手动选择，可使用“应用皮肤”继续。");
+                    CancelPendingAutostartForUserInput(AppLocalization.Get("开机应用已取消：检测到手动选择，可使用“应用皮肤”继续。"));
                     var resolvedMissingSkin = _isMissingStartupSkin;
                     _isMissingStartupSkin = false;
                     _startupStatusMessage = null;
@@ -3147,29 +2842,29 @@ public partial class MainWindow : Window
                         _startupPreferencesService.RecordLastSelectedSkin(card.Entry.Id);
                         if (resolvedMissingSkin)
                         {
-                            RuntimeStatusMessage.Text = $"已选择皮肤“{card.Entry.Name}”；上次选择已更新。";
+                            RuntimeStatusMessage.Text = AppLocalization.Format("已选择皮肤“{0}”；上次选择已更新。", card.Entry.Name);
                             RuntimeStatusMessage.ToolTip = RuntimeStatusMessage.Text;
                         }
                     }
                     catch (Exception exception)
                     {
-                        SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+                        SetStartupStatus(AppLocalization.Format("无法保存上次选择的皮肤：{0}", AppLocalization.Get(exception.Message)));
                     }
                 }
             }
             catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
             {
-                ShowOperationError("无法打开皮肤", exception);
+                ShowOperationError(AppLocalization.Get("无法打开皮肤"), exception);
                 RefreshList();
             }
         }
         else if (_skins.Count == 0)
         {
-            ShowNoSelection("皮肤库还是空的", "导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。 ");
+            ShowNoSelection(AppLocalization.Get("皮肤库还是空的"), AppLocalization.Get("导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。 "));
         }
         else
         {
-            ShowNoSelection("没有匹配的皮肤", "试试其他名称或 ID，或者清空搜索内容。 ");
+            ShowNoSelection(AppLocalization.Get("没有匹配的皮肤"), AppLocalization.Get("试试其他名称或 ID，或者清空搜索内容。 "));
         }
 
         UpdateListEmptyState();
@@ -3192,7 +2887,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _skinOrderPersistenceWarning = "无法读取或保存皮肤顺序；当前按名称显示。";
+            _skinOrderPersistenceWarning = AppLocalization.Get("无法读取或保存皮肤顺序；当前按名称显示。");
             orderedIds = catalog.Select(entry => entry.Id).ToArray();
         }
 
@@ -3209,7 +2904,7 @@ public partial class MainWindow : Window
                     var imageBytes = _store.ReadCatalogImage(entry);
                     if (imageBytes is not { Length: > 0 })
                     {
-                        throw new InvalidDataException("背景图片不存在。");
+                        throw new InvalidDataException(AppLocalization.Get("背景图片不存在。"));
                     }
 
                     var dpi = VisualTreeHelper.GetDpi(this);
@@ -3254,7 +2949,7 @@ public partial class MainWindow : Window
             }
             catch (Exception exception)
             {
-                SetStartupStatus($"无法保存上次选择的皮肤：{exception.Message}");
+            SetStartupStatus(AppLocalization.Format("无法保存上次选择的皮肤：{0}", AppLocalization.Get(exception.Message)));
             }
         }
 
@@ -3262,10 +2957,10 @@ public partial class MainWindow : Window
         UpdateLibraryWarning();
         if (selection is null)
         {
-            ShowNoSelection(_skins.Count == 0 ? "皮肤库还是空的" : "没有匹配的皮肤",
+            ShowNoSelection(_skins.Count == 0 ? AppLocalization.Get("皮肤库还是空的") : AppLocalization.Get("没有匹配的皮肤"),
                 _skins.Count == 0
-                    ? "导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。"
-                    : "试试其他名称或 ID，或者清空搜索内容。");
+                    ? AppLocalization.Get("导入一个皮肤包或皮肤文件夹，查看背景图、配色和聊天布局预览。")
+                    : AppLocalization.Get("试试其他名称或 ID，或者清空搜索内容。"));
         }
     }
 
@@ -3307,8 +3002,8 @@ public partial class MainWindow : Window
         var noMatches = !noSkins && !_skinsView.Cast<object>().Any();
         TransitionVisibility(SkinList, noSkins || noMatches ? Visibility.Collapsed : Visibility.Visible, 140);
         TransitionVisibility(ListEmptyState, noSkins || noMatches ? Visibility.Visible : Visibility.Collapsed, 150);
-        ListEmptyTitle.Text = noSkins ? "暂无本地皮肤" : "没有搜索结果";
-        ListEmptyText.Text = "试试其他名称或 ID，或者清空搜索内容。";
+        ListEmptyTitle.Text = AppLocalization.Get(noSkins ? "暂无本地皮肤" : "没有搜索结果");
+        ListEmptyText.Text = AppLocalization.Get("试试其他名称或 ID，或者清空搜索内容。");
         ListEmptyText.Visibility = noMatches ? Visibility.Visible : Visibility.Collapsed;
         ListEmptyMarketButton.Visibility = Visibility.Collapsed;
         ListEmptyImportButton.Visibility = Visibility.Collapsed;
@@ -3322,7 +3017,7 @@ public partial class MainWindow : Window
         _previewNeedsRefresh = true;
         _showingOriginal = false;
         _showingOriginalGif = false;
-        OriginalButton.Content = "查看原图";
+        OriginalButton.Content = AppLocalization.Get("查看原图");
         if (!preserveOriginalUntilPreviewReady)
         {
             OriginalImageLayer.Visibility = Visibility.Collapsed;
@@ -3330,8 +3025,8 @@ public partial class MainWindow : Window
         }
 
         SetPreviewStatus(_previewInitializationFailed
-            ? "皮肤文件预览暂不可用。仍可继续管理皮肤。"
-            : _previewInitialized ? "正在更新预览…" : "正在加载皮肤文件预览…",
+            ? AppLocalization.Get("皮肤文件预览暂不可用。仍可继续管理皮肤。")
+            : _previewInitialized ? AppLocalization.Get("正在更新预览…") : AppLocalization.Get("正在加载皮肤文件预览…"),
             persistent: _previewInitializationFailed);
         PreviewStatus.ToolTip = _previewErrorMessage;
         TransitionVisibility(DetailsEmptyState, Visibility.Collapsed, 135);
@@ -3339,10 +3034,11 @@ public partial class MainWindow : Window
 
         SelectedName.Text = package.Name;
         SelectedName.ToolTip = package.Name;
-        SelectedId.Text = $"ID  {package.Id} · 皮肤版本 {package.Version}";
-        SelectedAppearance.Text = $"适用外观：{TranslateAppearance(package.Appearance)} · 包格式：v{package.Definition.FormatVersion}";
+        SelectedId.Text = AppLocalization.Format("ID  {0} · 皮肤版本 {1}", package.Id, package.Version);
+        SelectedAppearance.Text = AppLocalization.Format("适用外观：{0} · 包格式：v{1}",
+            TranslateAppearance(package.Appearance), package.Definition.FormatVersion);
         SelectedImageDimensions.ToolTip = package.ImagePath;
-        SelectedImageDimensions.Text = "正在解析背景…";
+        SelectedImageDimensions.Text = AppLocalization.Get("正在解析背景…");
         OriginalImageSource.Source = null;
         _selectedImageAvailable = false;
         OriginalButton.IsEnabled = false;
@@ -3361,6 +3057,19 @@ public partial class MainWindow : Window
         {
             _ = RenderPreviewAsync(package);
         }
+    }
+
+    private void RefreshSelectedPackageLabels(SkinPackage package)
+    {
+        SelectedId.Text = AppLocalization.Format("ID  {0} · 皮肤版本 {1}", package.Id, package.Version);
+        SelectedAppearance.Text = AppLocalization.Format("适用外观：{0} · 包格式：v{1}",
+            TranslateAppearance(package.Appearance), package.Definition.FormatVersion);
+        PreviewHeading.Text = AppLocalization.Get(_isEditing ? "草稿预览" : "预览");
+        OriginalButton.Content = AppLocalization.Get(_showingOriginal ? "返回聊天预览" : "查看原图");
+        if (_previewNeedsRefresh)
+            SelectedImageDimensions.Text = AppLocalization.Get("正在解析背景…");
+        else if (_previewRenderer?.CurrentResolvedSkin is not null)
+            UpdateColorItemsFromResolvedSkin(package);
     }
 
     private void UpdateColorItemsFromResolvedSkin(SkinPackage package)
@@ -3390,7 +3099,7 @@ public partial class MainWindow : Window
         {
             OriginalImageSource.Source = null;
             _selectedImageAvailable = false;
-            SelectedImageDimensions.Text = "无背景图";
+            SelectedImageDimensions.Text = AppLocalization.Get("无背景图");
             OriginalButton.IsEnabled = !_isBusy && _selectedImageAvailable;
             return;
         }
@@ -3399,13 +3108,13 @@ public partial class MainWindow : Window
         {
             var dimensions = PreviewImageCropper.ReadDimensions(imageBytes);
             _selectedImageAvailable = true;
-            SelectedImageDimensions.Text = $"背景尺寸：{dimensions.Width} × {dimensions.Height} px";
+            SelectedImageDimensions.Text = AppLocalization.Format("背景尺寸：{0} × {1} px", dimensions.Width, dimensions.Height);
         }
         catch (Exception exception) when (exception is NotSupportedException or IOException or ArgumentException or FormatException or InvalidOperationException)
         {
             OriginalImageSource.Source = null;
             _selectedImageAvailable = false;
-            SelectedImageDimensions.Text = "背景图片无法读取";
+            SelectedImageDimensions.Text = AppLocalization.Get("背景图片无法读取");
             _imageReadWarning = true;
             UpdateLibraryWarning();
         }
@@ -3616,6 +3325,8 @@ public partial class MainWindow : Window
 
     private void SetPreviewStatus(string? text, bool persistent = false)
     {
+        _previewStatusSource = text;
+        _previewStatusPersistent = persistent;
         var sequence = ++_previewStatusSequence;
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -3642,7 +3353,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        PreviewStatus.Text = text;
+        PreviewStatus.Text = AppLocalization.Get(text);
         PreviewStatus.Visibility = Visibility.Visible;
         if (persistent || !_interactionMotionReady || !UiAnimationsEnabled)
         {
@@ -3788,7 +3499,7 @@ public partial class MainWindow : Window
         _showingOriginal = false;
         UpdateTransparencyControls();
         _selectedImageAvailable = false;
-        OriginalButton.Content = "查看原图";
+        OriginalButton.Content = AppLocalization.Get("查看原图");
         OriginalButton.IsEnabled = false;
         ColorItems.ItemsSource = null;
         TransitionVisibility(ColorSection, Visibility.Collapsed, 130);
@@ -3893,17 +3604,17 @@ public partial class MainWindow : Window
         var warnings = new List<string>();
         if (!string.IsNullOrWhiteSpace(_store.LastLoadWarning))
         {
-            warnings.Add(_store.LastLoadWarning);
+            warnings.Add(AppLocalization.Get(_store.LastLoadWarning));
         }
 
         if (_imageReadWarning)
         {
-            warnings.Add("有皮肤图片无法解码；原文件已保留，请重新导入有效 PNG 或 JPG。 ");
+            warnings.Add(AppLocalization.Get("有皮肤图片无法解码；原文件已保留，请重新导入有效 PNG 或 JPG。 "));
         }
 
         if (!string.IsNullOrWhiteSpace(_skinOrderPersistenceWarning))
         {
-            warnings.Add(_skinOrderPersistenceWarning);
+            warnings.Add(AppLocalization.Get(_skinOrderPersistenceWarning));
         }
 
         LibraryWarningText.Text = string.Join(" ", warnings);
@@ -3914,7 +3625,7 @@ public partial class MainWindow : Window
     {
         if (!CssColorParser.TryParse(value, out var rgba))
         {
-            throw new FormatException($"无法显示不受支持的 CSS 颜色“{value}”。");
+            throw new FormatException(AppLocalization.Format("无法显示不受支持的 CSS 颜色“{0}”。", value));
         }
 
         var color = Color.FromArgb(rgba.Alpha, rgba.Red, rgba.Green, rgba.Blue);
@@ -3925,16 +3636,16 @@ public partial class MainWindow : Window
 
     private static string TranslateAppearance(SkinAppearance appearance) => appearance switch
     {
-        SkinAppearance.Light => "浅色",
-        SkinAppearance.Dark => "深色",
-        SkinAppearance.System => "跟随系统",
+        SkinAppearance.Light => AppLocalization.Get("浅色"),
+        SkinAppearance.Dark => AppLocalization.Get("深色"),
+        SkinAppearance.System => AppLocalization.Get("跟随系统"),
         _ => appearance.ToString()
     };
 
-    private static string TranslateColorName(string key) =>
+    private static string TranslateColorName(string key) => AppLocalization.Get(
         SkinDefinitionCatalog.TryGetToken(key, out var definition)
             ? definition.PaletteLabel ?? definition.Label
-            : key.StartsWith("color.", StringComparison.OrdinalIgnoreCase) ? key[6..] : key;
+            : key.StartsWith("color.", StringComparison.OrdinalIgnoreCase) ? key[6..] : key);
 
     private static int ColorOrder(string key) =>
         SkinDefinitionCatalog.TryGetToken(key, out var definition) ? definition.PaletteOrder : int.MaxValue;
@@ -3943,11 +3654,11 @@ public partial class MainWindow : Window
     {
         var message = exception switch
         {
-            InvalidDataException => exception.Message.Trim(),
-            DuplicateSkinException => exception.Message.Trim(),
-            UnauthorizedAccessException => "没有权限访问该文件或皮肤库。请检查目录权限后重试。",
-            IOException => exception.Message.Trim(),
-            _ => "操作未完成。请检查所选文件后重试。"
+            InvalidDataException => AppLocalization.Get(exception.Message.Trim()),
+            DuplicateSkinException => AppLocalization.Get(exception.Message.Trim()),
+            UnauthorizedAccessException => AppLocalization.Get("没有权限访问该文件或皮肤库。请检查目录权限后重试。"),
+            IOException => AppLocalization.Get(exception.Message.Trim()),
+            _ => AppLocalization.Get("操作未完成。请检查所选文件后重试。")
         };
         MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
     }

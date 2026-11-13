@@ -1,4 +1,4 @@
-#define ProductVersion "1.1.4-beta.1"
+#define ProductVersion "1.1.4-beta.2"
 
 [Setup]
 AppId={{6FBD8E7A-8A61-4DB8-BD4A-4F2E43110B67}
@@ -10,6 +10,8 @@ VersionInfoVersion=1.1.4.0
 VersionInfoProductVersion=1.1.4.0
 VersionInfoProductTextVersion={#ProductVersion}
 VersionInfoDescription=SkinManager Setup
+ShowLanguageDialog=yes
+LanguageDetectionMethod=none
 VersionInfoProductName=SkinManager
 VersionInfoCompany=SkinManager
 VersionInfoOriginalFileName=SkinManager-Setup-{#ProductVersion}.exe
@@ -32,10 +34,33 @@ RestartApplications=no
 ChangesAssociations=no
 
 [Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
+[CustomMessages]
+english.CreateDesktopShortcut=Create a desktop shortcut
+english.AdditionalShortcuts=Additional shortcuts:
+english.StopFailureRecovered=The background skin agent could not confirm that the current page was restored. Setup or uninstall has been canceled. Open SkinManager, disconnect the skin, and try again.
+english.StopFailureTimeout=Timed out while waiting for the background skin agent to exit. Setup or uninstall has been canceled. Close SkinManager and try again.
+english.StopFailure=Stopping the background skin agent failed (exit code %1). Setup or uninstall has been canceled. Close SkinManager and try again.
+english.StopAgentLaunchFailed=Could not start the command to stop the background skin agent. Uninstall has been canceled. Close SkinManager and try again.
+english.StopAgentPrepareFailed=Could not start SkinManager.Agent.exe to stop the background skin agent in this folder. Close SkinManager and try again.
+english.RemoveSkinLibraryPrompt=Remove the skin library? Selecting Yes deletes default skins, imported skins, and user changes in this folder. Selecting No keeps the entire skin library.
+english.SkinLibraryPathNotConfirmed=Could not confirm that the skin library is inside the installation folder. To avoid deleting another path, the library was kept.
+english.SkinLibraryDeleteIncomplete=Could not delete the entire skin library. Some files remain at:
+chinesesimp.CreateDesktopShortcut=创建桌面快捷方式
+chinesesimp.AdditionalShortcuts=附加快捷方式：
+chinesesimp.StopFailureRecovered=皮肤后台未能确认已恢复当前页面。安装或卸载已中止；请打开 SkinManager，断开连接后再重试。
+chinesesimp.StopFailureTimeout=等待皮肤后台退出超时。安装或卸载已中止；请关闭 SkinManager 后再重试。
+chinesesimp.StopFailure=停止皮肤后台失败（退出代码 %1）。安装或卸载已中止；请关闭 SkinManager 后再重试。
+chinesesimp.StopAgentLaunchFailed=无法启动皮肤后台停止命令。卸载已中止；请关闭 SkinManager 后重试。
+chinesesimp.StopAgentPrepareFailed=无法启动 SkinManager.Agent.exe 来停止本目录中的皮肤后台。请关闭 SkinManager 后重试。
+chinesesimp.RemoveSkinLibraryPrompt=是否删除皮肤库？选择“是”会删除此目录中的默认皮肤、导入皮肤和用户修改；选择“否”会保留整个皮肤库。
+chinesesimp.SkinLibraryPathNotConfirmed=无法确认皮肤库位于安装目录中。为避免删除其他路径，皮肤库已保留。
+chinesesimp.SkinLibraryDeleteIncomplete=未能完整删除皮肤库，仍有文件保留在：
+
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopShortcut}"; GroupDescription: "{cm:AdditionalShortcuts}"; Flags: unchecked
 
 [Files]
 Source: "..\..\artifacts\publish\installer-stage\SkinManager.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -78,11 +103,11 @@ end;
 function StopFailureMessage(ExitCode: Integer): String;
 begin
   if ExitCode = 2 then
-    Result := '皮肤后台未能确认已恢复当前页面。安装或卸载已中止；请打开 SkinManager，断开连接后再重试。'
+    Result := CustomMessage('StopFailureRecovered')
   else if ExitCode = 3 then
-    Result := '等待皮肤后台退出超时。安装或卸载已中止；请关闭 SkinManager 后再重试。'
+    Result := CustomMessage('StopFailureTimeout')
   else
-    Result := '停止皮肤后台失败（退出代码 ' + IntToStr(ExitCode) + '）。安装或卸载已中止；请关闭 SkinManager 后再重试。';
+    Result := FmtMessage(CustomMessage('StopFailure'), [IntToStr(ExitCode)]);
 end;
 
 function NormalizeAbsolutePath(const Path: String): String;
@@ -118,7 +143,7 @@ var
 begin
   Result := '';
   if not StopInstalledAgent(ExitCode) then
-    Result := '无法启动 SkinManager.Agent.exe 来停止本目录中的皮肤后台。请关闭 SkinManager 后重试。'
+    Result := CustomMessage('StopAgentPrepareFailed')
   else if ExitCode <> 0 then
     Result := StopFailureMessage(ExitCode);
 end;
@@ -129,7 +154,7 @@ var
 begin
   Result := StopInstalledAgent(ExitCode);
   if not Result then
-    MsgBox('无法启动皮肤后台停止命令。卸载已中止；请关闭 SkinManager 后重试。', mbError, MB_OK)
+    MsgBox(CustomMessage('StopAgentLaunchFailed'), mbError, MB_OK)
   else if ExitCode <> 0 then begin
     MsgBox(StopFailureMessage(ExitCode), mbError, MB_OK);
     Result := False;
@@ -146,15 +171,15 @@ begin
     SkinPath := GetInstalledSkinPath;
     if (not UninstallSilent) and DirExists(SkinPath) then
       RemoveSkinLibrary := MsgBox(
-        '是否删除皮肤库？选择“是”会删除此目录中的默认皮肤、导入皮肤和用户修改；选择“否”会保留整个皮肤库。',
+        CustomMessage('RemoveSkinLibraryPrompt'),
         mbConfirmation,
         MB_YESNO or MB_DEFBUTTON2) = IDYES;
   end else if (CurUninstallStep = usPostUninstall) and RemoveSkinLibrary then begin
     SkinPath := GetInstalledSkinPath;
     if SkinPath = '' then
-      MsgBox('无法确认皮肤库位于安装目录中。为避免删除其他路径，皮肤库已保留。', mbError, MB_OK)
+      MsgBox(CustomMessage('SkinLibraryPathNotConfirmed'), mbError, MB_OK)
     else if DirExists(SkinPath) and not DelTree(SkinPath, True, True, True) then
-      MsgBox('未能完整删除皮肤库，仍有文件保留在：' + #13#10 + SkinPath, mbError, MB_OK)
+      MsgBox(CustomMessage('SkinLibraryDeleteIncomplete') + #13#10 + SkinPath, mbError, MB_OK)
     else begin
       AppPath := NormalizeAbsolutePath(ExpandConstant('{app}'));
       if not DirExists(SkinPath) then

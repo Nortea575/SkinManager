@@ -20,19 +20,24 @@ namespace SkinManager.Desktop;
 internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion) : INotifyPropertyChanged
 {
     private BitmapSource? _thumbnail;
-    private string _thumbnailLabel = string.IsNullOrWhiteSpace(item.EffectiveThumbnailUrl)
+    private string _thumbnailLabelSource = string.IsNullOrWhiteSpace(item.EffectiveThumbnailUrl)
         ? "未提供封面缩略图"
         : "正在加载封面缩略图…";
-    private string? _thumbnailError;
+    private string? _thumbnailErrorSource;
     private bool _hasThumbnailError;
     private bool _isThumbnailLoading;
     private int _likeCount = item.LikeCount;
     private bool _likedByMe = item.LikedByMe;
     private int _commentCount = item.CommentCount;
-    private string _installStatus = "未安装";
+    private string _installStatusSource = "未安装";
+    private object?[] _installStatusArguments = [];
+    private bool _isInstalled;
+    private bool _hasUpdate;
     private bool _canDownload;
-    private string _downloadButtonText = "下载并安装";
-    private string _operationStatus = string.Empty;
+    private string _downloadButtonTextSource = "下载并安装";
+    private object?[] _downloadButtonArguments = [];
+    private string _operationStatusSource = string.Empty;
+    private object?[] _operationStatusArguments = [];
     private bool _operationIsError;
     private double _downloadProgress;
     private Visibility _progressVisibility = Visibility.Collapsed;
@@ -44,16 +49,16 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
     public string Name => Item.Name;
     public string AppearanceLabel => Item.Appearance switch
     {
-        "light" => "浅色",
-        "dark" => "深色",
-        _ => "系统"
+        "light" => AppLocalization.Get("浅色"),
+        "dark" => AppLocalization.Get("深色"),
+        _ => AppLocalization.Get("系统")
     };
-    public string SummaryLabel => $"{AppearanceLabel}外观 · skin v{Item.SkinFormatVersion} · v{Item.Version}";
+    public string SummaryLabel => AppLocalization.Format("{0}外观 · skin v{1} · v{2}", AppearanceLabel, Item.SkinFormatVersion, Item.Version);
     public string Description => string.IsNullOrWhiteSpace(Item.EffectiveDescription)
-        ? "作者没有提供皮肤说明。"
+        ? AppLocalization.Get("作者没有提供皮肤说明。")
         : Item.EffectiveDescription;
     public string ShortDescription => string.IsNullOrWhiteSpace(Item.Description)
-        ? "作者没有提供简介。"
+        ? AppLocalization.Get("作者没有提供简介。")
         : Item.Description;
     public int LikeCount
     {
@@ -82,43 +87,37 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
             }
         }
     }
-    public string AuthorAndSocialLabel => string.Join(" · ", new[]
-    {
-        string.IsNullOrWhiteSpace(Item.Author) ? "作者未提供" : $"作者 {Item.Author}",
-        $"赞 {LikeCount}",
-        $"评论 {CommentCount}"
-    });
+    public string AuthorAndSocialLabel => AppLocalization.Format(
+        "{0} · 赞 {1} · 评论 {2}",
+        string.IsNullOrWhiteSpace(Item.Author) ? AppLocalization.Get("作者未提供") : AppLocalization.Format("作者 {0}", Item.Author),
+        LikeCount,
+        CommentCount);
     public string CompatibilityLabel => SkinMarketClient.IsManagerCompatible(
         Item.MinimumManagerVersion, managerVersion, out var message)
-        ? "兼容管理器"
+        ? AppLocalization.Get("兼容管理器")
         : message;
     public string DetailTechnical => string.Join("\n", new[]
     {
-        $"外观：{AppearanceLabel}",
-        $"皮肤版本：v{Item.Version} · skin 格式 v{Item.SkinFormatVersion}",
-        $"最低管理器版本：{Item.MinimumManagerVersion}",
-        $"安装包：{SkinMarketWindow.FormatSize(Item.Size)}",
-        $"兼容状态：{CompatibilityLabel}",
-        string.IsNullOrWhiteSpace(Item.UpdatedAt) ? string.Empty : $"更新时间：{SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt)}",
-        Item.Tags is { Count: > 0 } ? $"标签：{string.Join("、", Item.Tags.Select(tag => tag.Name))}" : string.Empty
+        AppLocalization.Format("外观：{0}", AppearanceLabel),
+        AppLocalization.Format("皮肤版本：v{0} · skin 格式 v{1}", Item.Version, Item.SkinFormatVersion),
+        AppLocalization.Format("最低管理器版本：{0}", Item.MinimumManagerVersion),
+        AppLocalization.Format("安装包：{0}", SkinMarketWindow.FormatSize(Item.Size)),
+        AppLocalization.Format("兼容状态：{0}", CompatibilityLabel),
+        string.IsNullOrWhiteSpace(Item.UpdatedAt) ? string.Empty : AppLocalization.Format("更新时间：{0}", SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt)),
+        Item.Tags is { Count: > 0 } ? AppLocalization.Format("标签：{0}", string.Join(AppLocalization.IsEnglish ? ", " : "、", Item.Tags.Select(tag => tag.Name))) : string.Empty
     }.Where(value => !string.IsNullOrWhiteSpace(value)));
     public string UpdatedLabel => string.IsNullOrWhiteSpace(Item.UpdatedAt)
         ? string.Empty
-        : $"更新于 {SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt)}";
+        : AppLocalization.Format("更新于 {0}", SkinMarketWindow.FormatUpdatedAt(Item.UpdatedAt));
     public bool HasWebsiteDetail => !string.IsNullOrWhiteSpace(Item.DetailUrl);
 
     public string InstallStatus
     {
-        get => _installStatus;
-        set
-        {
-            if (SetField(ref _installStatus, value))
-            {
-                OnPropertyChanged(nameof(InstallStatusLabel));
-            }
-        }
+        get => AppLocalization.Format(_installStatusSource, _installStatusArguments);
     }
-    public string InstallStatusLabel => $"{InstallStatus} · {CompatibilityLabel}";
+    public bool IsInstalled => _isInstalled;
+    public bool HasUpdate => _hasUpdate;
+    public string InstallStatusLabel => AppLocalization.Format("{0} · {1}", InstallStatus, CompatibilityLabel);
 
     public BitmapSource? Thumbnail
     {
@@ -134,13 +133,13 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
     public bool HasThumbnail => Thumbnail is not null;
     public string ThumbnailLabel
     {
-        get => _thumbnailLabel;
-        private set => SetField(ref _thumbnailLabel, value);
+        get => AppLocalization.Get(_thumbnailLabelSource);
+        private set => SetField(ref _thumbnailLabelSource, value);
     }
     public string? ThumbnailError
     {
-        get => _thumbnailError;
-        private set => SetField(ref _thumbnailError, value);
+        get => _thumbnailErrorSource is null ? null : AppLocalization.Get(_thumbnailErrorSource);
+        private set => SetField(ref _thumbnailErrorSource, value);
     }
     public bool HasThumbnailError
     {
@@ -166,13 +165,11 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
     }
     public string DownloadButtonText
     {
-        get => _downloadButtonText;
-        private set => SetField(ref _downloadButtonText, value);
+        get => AppLocalization.Format(_downloadButtonTextSource, _downloadButtonArguments);
     }
     public string OperationStatus
     {
-        get => _operationStatus;
-        private set => SetField(ref _operationStatus, value);
+        get => AppLocalization.Format(_operationStatusSource, _operationStatusArguments);
     }
     public bool OperationIsError
     {
@@ -222,17 +219,45 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
         ThumbnailLabel = "封面缩略图暂不可用";
     }
 
-    public void SetDownloadControls(bool canDownload, string buttonText, bool canCancel)
+    public void SetInstallStatus(string source, bool isInstalled = false, bool hasUpdate = false, params object?[] arguments)
+    {
+        _installStatusSource = source;
+        _installStatusArguments = arguments;
+        _isInstalled = isInstalled;
+        _hasUpdate = hasUpdate;
+        OnPropertyChanged(nameof(InstallStatus));
+        OnPropertyChanged(nameof(InstallStatusLabel));
+    }
+
+    public void SetDownloadControls(bool canDownload, string buttonText, bool canCancel, params object?[] arguments)
     {
         CanDownload = canDownload;
-        DownloadButtonText = buttonText;
+        _downloadButtonTextSource = buttonText;
+        _downloadButtonArguments = arguments;
+        OnPropertyChanged(nameof(DownloadButtonText));
         CancelVisibility = canCancel ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    public void SetOperationStatus(string text, bool isError = false)
+    public void SetOperationStatus(string source, bool isError = false, params object?[] arguments)
     {
-        OperationStatus = text;
+        _operationStatusSource = source;
+        _operationStatusArguments = arguments;
+        OnPropertyChanged(nameof(OperationStatus));
         OperationIsError = isError;
+    }
+
+    public void RefreshLocalization()
+    {
+        foreach (var propertyName in new[]
+        {
+            nameof(AppearanceLabel), nameof(SummaryLabel), nameof(Description), nameof(ShortDescription),
+            nameof(AuthorAndSocialLabel), nameof(CompatibilityLabel), nameof(DetailTechnical), nameof(UpdatedLabel),
+            nameof(InstallStatus), nameof(InstallStatusLabel), nameof(ThumbnailLabel), nameof(ThumbnailError),
+            nameof(DownloadButtonText), nameof(OperationStatus)
+        })
+        {
+            OnPropertyChanged(propertyName);
+        }
     }
 
     public void SetLikeState(bool liked, int likeCount)
@@ -282,6 +307,7 @@ public partial class SkinMarketWindow : Window
     private string? _failedItemId;
     private int _page = 1;
     private int _totalPages;
+    private int _catalogTotal;
     private long _catalogSequence;
     private double _catalogScrollOffset;
     private bool _isLoading;
@@ -323,6 +349,7 @@ public partial class SkinMarketWindow : Window
         };
         Closing += SkinMarketWindow_Closing;
         Closed += SkinMarketWindow_Closed;
+        AppLocalization.LanguageChanged += SkinMarketWindow_LanguageChanged;
         UpdateControls();
     }
 
@@ -398,8 +425,8 @@ public partial class SkinMarketWindow : Window
         CatalogEmptyState.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (_rows.Count == 0)
         {
-            CatalogEmptyTitle.Text = "正在读取市场目录";
-            CatalogEmptyMessage.Text = "请稍候。";
+            LocalizedUiText.SetText(CatalogEmptyTitle, "正在读取市场目录");
+            LocalizedUiText.SetText(CatalogEmptyMessage, "请稍候。");
             EmptyRetryButton.Visibility = Visibility.Collapsed;
         }
 
@@ -444,14 +471,14 @@ public partial class SkinMarketWindow : Window
 
             if (_rows.Count == 0)
             {
-                CatalogEmptyTitle.Text = "没有找到符合条件的皮肤";
-                CatalogEmptyMessage.Text = "调整搜索、外观或标签筛选，再刷新目录。";
+                LocalizedUiText.SetText(CatalogEmptyTitle, "没有找到符合条件的皮肤");
+                LocalizedUiText.SetText(CatalogEmptyMessage, "调整搜索、外观或标签筛选，再刷新目录。");
                 EmptyRetryButton.Visibility = Visibility.Collapsed;
                 SetCatalogStatus("市场目录中没有匹配结果。");
             }
             else
             {
-                SetCatalogStatus($"共读取 {result.Items.Count} 款皮肤。");
+                SetCatalogStatus("共读取 {0} 款皮肤。", arguments: [result.Items.Count]);
                 foreach (var row in _rows.ToArray())
                 {
                     _ = LoadThumbnailAsync(row, thumbnailToken);
@@ -488,8 +515,8 @@ public partial class SkinMarketWindow : Window
             if (_rows.Count == 0)
             {
                 CatalogEmptyState.Visibility = Visibility.Visible;
-                CatalogEmptyTitle.Text = "无法读取市场目录";
-                CatalogEmptyMessage.Text = message;
+                LocalizedUiText.SetText(CatalogEmptyTitle, "无法读取市场目录");
+                LocalizedUiText.SetText(CatalogEmptyMessage, message);
                 EmptyRetryButton.Visibility = Visibility.Visible;
             }
         }
@@ -504,8 +531,8 @@ public partial class SkinMarketWindow : Window
             if (_rows.Count == 0)
             {
                 CatalogEmptyState.Visibility = Visibility.Visible;
-                CatalogEmptyTitle.Text = "无法读取市场目录";
-                CatalogEmptyMessage.Text = "检查网络连接后刷新目录。";
+                LocalizedUiText.SetText(CatalogEmptyTitle, "无法读取市场目录");
+                LocalizedUiText.SetText(CatalogEmptyMessage, "检查网络连接后刷新目录。");
                 EmptyRetryButton.Visibility = Visibility.Visible;
             }
         }
@@ -533,7 +560,9 @@ public partial class SkinMarketWindow : Window
         try
         {
             TagBox.Items.Clear();
-            TagBox.Items.Add(new ComboBoxItem { Content = "全部标签", Tag = string.Empty });
+            var allTags = new ComboBoxItem { Tag = string.Empty };
+            LocalizedUiText.SetContent(allTags, "全部标签");
+            TagBox.Items.Add(allTags);
             foreach (var tag in tags)
             {
                 TagBox.Items.Add(new ComboBoxItem { Content = tag.Name, Tag = tag.Id });
@@ -569,7 +598,7 @@ public partial class SkinMarketWindow : Window
             var bytes = await _client.GetThumbnailImageAsync(row.Item, cancellationToken);
             if (bytes is null || bytes.Length == 0)
             {
-                throw new InvalidDataException("服务器没有返回封面缩略图。");
+                throw new InvalidDataException(AppLocalization.Get("服务器没有返回封面缩略图。"));
             }
 
             if (cancellationToken.IsCancellationRequested || _isClosed || !_rows.Contains(row))
@@ -617,7 +646,7 @@ public partial class SkinMarketWindow : Window
         var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
         if (decoder.Frames.Count == 0)
         {
-            throw new InvalidDataException("封面缩略图没有可读取的帧。");
+            throw new InvalidDataException(AppLocalization.Get("封面缩略图没有可读取的帧。"));
         }
 
         var frame = decoder.Frames[0];
@@ -625,7 +654,7 @@ public partial class SkinMarketWindow : Window
         var height = frame.PixelHeight;
         if (width <= 0 || height <= 0 || width > 16_000 || height > 16_000 || (long)width * height > 50_000_000)
         {
-            throw new InvalidDataException("封面缩略图尺寸无效或过大。");
+            throw new InvalidDataException(AppLocalization.Get("封面缩略图尺寸无效或过大。"));
         }
 
         var scale = Math.Min(1d, Math.Min(640d / width, 420d / height));
@@ -672,13 +701,15 @@ public partial class SkinMarketWindow : Window
         DetailsDescription.Text = row.Description;
         DetailsTechnical.Text = row.DetailTechnical;
         DetailsCounts.Text = row.AuthorAndSocialLabel;
-        DetailsAuthor.Text = string.IsNullOrWhiteSpace(row.Item.Author) ? "作者：未提供" : $"作者：{row.Item.Author}";
+        DetailsAuthor.Text = string.IsNullOrWhiteSpace(row.Item.Author)
+            ? AppLocalization.Get("作者：未提供")
+            : AppLocalization.Format("作者：{0}", row.Item.Author);
         DetailsLicense.Text = string.IsNullOrWhiteSpace(row.Item.LicenseNotes)
-            ? "版权与授权：未提供说明"
-            : $"版权与授权：{row.Item.LicenseNotes}";
+            ? AppLocalization.Get("版权与授权：未提供说明")
+            : AppLocalization.Format("版权与授权：{0}", row.Item.LicenseNotes);
         DetailsSubmitter.Text = string.IsNullOrWhiteSpace(row.Item.Submitter)
             ? string.Empty
-            : $"投稿人：{row.Item.Submitter}";
+            : AppLocalization.Format("投稿人：{0}", row.Item.Submitter);
         DetailsThumbnail.Source = row.Thumbnail;
         DetailsThumbnailPlaceholder.Visibility = row.HasThumbnail ? Visibility.Collapsed : Visibility.Visible;
         WebsiteDetailButton.Visibility = row.HasWebsiteDetail ? Visibility.Visible : Visibility.Collapsed;
@@ -720,6 +751,28 @@ public partial class SkinMarketWindow : Window
             DispatcherPriority.Loaded);
     }
 
+    private void SkinMarketWindow_LanguageChanged(object? sender, EventArgs e)
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() => SkinMarketWindow_LanguageChanged(sender, e)), DispatcherPriority.DataBind);
+            return;
+        }
+
+        foreach (var row in _rows)
+        {
+            row.RefreshLocalization();
+        }
+
+        UpdatePager(_catalogTotal);
+        UpdateControls();
+    }
+
     private async Task DownloadRowAsync(SkinMarketRow row)
     {
         if (_isClosed || _isDownloading)
@@ -740,8 +793,8 @@ public partial class SkinMarketWindow : Window
         _isDownloading = true;
         _canCancelDownload = true;
         row.SetDownloadProgress(0, visible: true);
-        row.SetOperationStatus($"正在下载 {FormatSize(row.Item.Size)}…");
-        SetCatalogStatus($"正在下载“{row.Name}”…");
+        row.SetOperationStatus("正在下载 {0}…", arguments: [FormatSize(row.Item.Size)]);
+        SetCatalogStatus("正在下载“{0}”…", arguments: [row.Name]);
         UpdateControls();
 
         var progress = new Progress<SkinMarketDownloadProgress>(value =>
@@ -754,7 +807,7 @@ public partial class SkinMarketWindow : Window
             var total = value.TotalBytes > 0 ? value.TotalBytes : row.Item.Size;
             var percentage = Math.Clamp(value.BytesReceived * 100d / total, 0, 100);
             row.SetDownloadProgress(percentage, visible: true);
-            row.SetOperationStatus($"正在下载 {FormatSize(value.BytesReceived)} / {FormatSize(total)}…");
+            row.SetOperationStatus("正在下载 {0} / {1}…", arguments: [FormatSize(value.BytesReceived), FormatSize(total)]);
         });
 
         try
@@ -779,7 +832,8 @@ public partial class SkinMarketWindow : Window
             {
                 _failedItemId = null;
                 RefreshInstalledVersions();
-                row.SetOperationStatus($"已将“{row.Name}” v{row.Item.Version}加入本地皮肤库。需要时可手动连接并应用。");
+                row.SetOperationStatus("已将“{0}” v{1}加入本地皮肤库。需要时可手动连接并应用。",
+                    arguments: [row.Name, row.Item.Version]);
                 SetCatalogStatus("皮肤已安装到本地库。");
             }
             else
@@ -821,7 +875,7 @@ public partial class SkinMarketWindow : Window
     {
         if (row.Item.SkinFormatVersion != 1)
         {
-            reason = $"该皮肤格式版本 {row.Item.SkinFormatVersion} 当前不受支持。";
+            reason = AppLocalization.Format("该皮肤格式版本 {0} 当前不受支持。", row.Item.SkinFormatVersion);
             return false;
         }
 
@@ -842,7 +896,7 @@ public partial class SkinMarketWindow : Window
             return false;
         }
 
-        if (row.InstallStatus.Equals($"已安装 v{row.Item.Version}", StringComparison.Ordinal))
+        if (row.IsInstalled)
         {
             reason = "此版本已安装。";
             return false;
@@ -886,13 +940,17 @@ public partial class SkinMarketWindow : Window
                 ? "正在下载…"
                 : _failedItemId?.Equals(row.Id, StringComparison.OrdinalIgnoreCase) == true
                     ? "重试下载"
-                    : row.InstallStatus.Equals($"已安装 v{row.Item.Version}", StringComparison.Ordinal)
+                    : row.IsInstalled
                         ? "已安装"
-                        : row.InstallStatus.StartsWith("有更新", StringComparison.Ordinal)
-                            ? $"更新到 v{row.Item.Version}"
+                        : row.HasUpdate
+                            ? "更新到 v{0}"
                             : "下载并安装";
             row.SetDownloadControls(downloadable && browsingEnabled, buttonText,
-                _canCancelDownload && ReferenceEquals(_downloadingRow, row));
+                _canCancelDownload && ReferenceEquals(_downloadingRow, row),
+                row.HasUpdate && !( _isDownloading && ReferenceEquals(_downloadingRow, row)) &&
+                _failedItemId?.Equals(row.Id, StringComparison.OrdinalIgnoreCase) != true
+                    ? [row.Item.Version]
+                    : []);
         }
 
         UpdateCommunityControls();
@@ -912,7 +970,7 @@ public partial class SkinMarketWindow : Window
         }
         catch (Exception exception)
         {
-            SetCatalogStatus($"目录已读取，但无法读取本地安装状态：{exception.Message}", isError: true);
+            SetCatalogStatus("目录已读取，但无法读取本地安装状态：{0}", isError: true, arguments: [exception.Message]);
             installed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -920,20 +978,20 @@ public partial class SkinMarketWindow : Window
         {
             if (!installed.TryGetValue(row.Id, out var installedVersion))
             {
-                row.InstallStatus = "未安装";
+                row.SetInstallStatus("未安装");
             }
             else if (installedVersion.Equals(row.Item.Version, StringComparison.Ordinal))
             {
-                row.InstallStatus = $"已安装 v{installedVersion}";
+                row.SetInstallStatus("已安装 v{0}", isInstalled: true, arguments: [installedVersion]);
             }
             else if (Version.TryParse(installedVersion, out var localVersion) &&
                      Version.TryParse(row.Item.Version, out var marketVersion) && marketVersion > localVersion)
             {
-                row.InstallStatus = $"有更新 · 本地 v{installedVersion}";
+                row.SetInstallStatus("有更新 · 本地 v{0}", hasUpdate: true, arguments: [installedVersion]);
             }
             else
             {
-                row.InstallStatus = $"本地 v{installedVersion}";
+                row.SetInstallStatus("本地 v{0}", arguments: [installedVersion]);
             }
         }
 
@@ -944,30 +1002,39 @@ public partial class SkinMarketWindow : Window
 
     private void UpdatePager(int total)
     {
-        CatalogCount.Text = $"{_rows.Count} 款";
-        PageText.Text = total == 0
-            ? "共 0 款"
-            : _totalPages > 0
-                ? $"第 {_page} / {_totalPages} 页 · 共 {total} 款"
-                : $"第 {_page} 页 · 共 {total} 款";
+        _catalogTotal = total;
+        LocalizedUiText.SetText(CatalogCount, "{0} 款", _rows.Count);
+        if (total == 0)
+        {
+            LocalizedUiText.SetText(PageText, "共 0 款");
+        }
+        else if (_totalPages > 0)
+        {
+            LocalizedUiText.SetText(PageText, "第 {0} / {1} 页 · 共 {2} 款", _page, _totalPages, total);
+        }
+        else
+        {
+            LocalizedUiText.SetText(PageText, "第 {0} 页 · 共 {1} 款", _page, total);
+        }
+
         UpdateControls();
     }
 
-    private void SetCatalogStatus(string text, bool isError = false)
+    private void SetCatalogStatus(string source, bool isError = false, params object?[] arguments)
     {
-        CatalogStatus.Text = text;
+        LocalizedUiText.SetText(CatalogStatus, source, arguments);
         CatalogStatus.SetResourceReference(TextBlock.ForegroundProperty, isError ? "ErrorText" : "SecondaryText");
-        CatalogStatus.ToolTip = text;
+        LocalizedUiText.SetToolTip(CatalogStatus, source, arguments);
     }
 
     private static string DescribeError(Exception exception) => exception switch
     {
-        HttpRequestException { StatusCode: { } statusCode } => $"市场请求失败（HTTP {(int)statusCode}）。刷新目录后重试。",
-        HttpRequestException => "无法连接市场服务器。检查网络连接后重试。",
-        TimeoutException => "市场请求超时，可以重试。",
+        HttpRequestException { StatusCode: { } statusCode } => AppLocalization.Format("市场请求失败（HTTP {0}）。刷新目录后重试。", (int)statusCode),
+        HttpRequestException => AppLocalization.Get("无法连接市场服务器。检查网络连接后重试。"),
+        TimeoutException => AppLocalization.Get("市场请求超时，可以重试。"),
         InvalidDataException => exception.Message,
-        OperationCanceledException => "操作已取消。",
-        _ => $"操作失败：{exception.Message}"
+        OperationCanceledException => AppLocalization.Get("操作已取消。"),
+        _ => AppLocalization.Format("操作失败：{0}", exception.Message)
     };
 
     private static string DescribeThumbnailError(Exception exception)
@@ -978,11 +1045,11 @@ public partial class SkinMarketWindow : Window
         var effective = inners.LastOrDefault() ?? exception;
         return effective switch
         {
-            HttpRequestException { StatusCode: { } statusCode } => $"缩略图请求失败（HTTP {(int)statusCode}）",
-            HttpRequestException or IOException => "图片连接中断，点击重试图片",
-            TimeoutException or TaskCanceledException => "图片读取超时，点击重试图片",
+            HttpRequestException { StatusCode: { } statusCode } => AppLocalization.Format("缩略图请求失败（HTTP {0}）", (int)statusCode),
+            HttpRequestException or IOException => AppLocalization.Get("图片连接中断，点击重试图片"),
+            TimeoutException or TaskCanceledException => AppLocalization.Get("图片读取超时，点击重试图片"),
             InvalidDataException => effective.Message,
-            _ => "封面缩略图暂时无法读取，点击重试图片"
+            _ => AppLocalization.Get("封面缩略图暂时无法读取，点击重试图片")
         };
     }
 
@@ -995,7 +1062,7 @@ public partial class SkinMarketWindow : Window
     {
         if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp))
         {
-            return timestamp.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.CurrentCulture);
+            return timestamp.ToLocalTime().ToString("yyyy-MM-dd", AppLocalization.Culture);
         }
 
         return value;
@@ -1053,14 +1120,14 @@ public partial class SkinMarketWindow : Window
 
         try
         {
-            var uri = SkinMarketClient.GetDetailUri(row.Item.DetailUrl);
+            var uri = MarketLanguageUri.ForMarketPage(SkinMarketClient.GetDetailUri(row.Item.DetailUrl));
             Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
         }
         catch (Exception exception) when (exception is InvalidDataException or Win32Exception or InvalidOperationException)
         {
             DetailsStatusText.Text = exception is InvalidDataException
-                ? "网站详情地址无效。"
-                : "无法打开网站详情，请检查系统浏览器设置。";
+                ? AppLocalization.Get("网站详情地址无效。")
+                : AppLocalization.Get("无法打开网站详情，请检查系统浏览器设置。");
             DetailsStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorText");
         }
     }
@@ -1179,6 +1246,7 @@ public partial class SkinMarketWindow : Window
 
     private void SkinMarketWindow_Closed(object? sender, EventArgs e)
     {
+        AppLocalization.LanguageChanged -= SkinMarketWindow_LanguageChanged;
         _ = DisposeCommunityAsync();
         _client.Dispose();
         _catalogCancellation?.Dispose();

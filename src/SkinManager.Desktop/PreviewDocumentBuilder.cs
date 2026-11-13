@@ -78,7 +78,7 @@ internal static class PreviewDocumentBuilder
     {
         "conversation" => "conversation",
         "home" or null or "" => "home",
-        _ => throw new InvalidDataException("预览场景必须是 home 或 conversation。")
+        _ => throw new InvalidDataException(AppLocalization.Get("预览场景必须是 home 或 conversation。"))
     };
 
     public static string NormalizeAppearance(string? appearance) => appearance?.Trim().ToLowerInvariant() switch
@@ -86,7 +86,7 @@ internal static class PreviewDocumentBuilder
         "dark" => "dark",
         "light" => "light",
         "system" or null or "" => "system",
-        _ => throw new InvalidDataException("预览外观必须是 system、light 或 dark。")
+        _ => throw new InvalidDataException(AppLocalization.Get("预览外观必须是 system、light 或 dark。"))
     };
 
     public static string EncodeRelativePath(string path) => string.Join('/',
@@ -144,7 +144,7 @@ internal static class PreviewDocumentBuilder
         var match = Regex.Match(html, "<html\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         if (!match.Success)
         {
-            throw new InvalidDataException("原生基础包 HTML 入口缺少 html 根元素。");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 HTML 入口缺少 html 根元素。"));
         }
 
         return html[..match.Index] + SetTagAttribute(match.Value, name, value) + html[(match.Index + match.Length)..];
@@ -183,7 +183,7 @@ internal static class PreviewDocumentBuilder
         var index = html.LastIndexOf("</head>", StringComparison.OrdinalIgnoreCase);
         if (index < 0)
         {
-            throw new InvalidDataException("原生基础包 HTML 入口缺少 head 结束标签。");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 HTML 入口缺少 head 结束标签。"));
         }
 
         return html.Insert(index, insertion);
@@ -194,7 +194,7 @@ internal static class PreviewDocumentBuilder
         var match = Regex.Match(html, "<head\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         if (!match.Success)
         {
-            throw new InvalidDataException("原生基础包 HTML 入口缺少 head 元素。");
+            throw new InvalidDataException(AppLocalization.Get("原生基础包 HTML 入口缺少 head 元素。"));
         }
 
         return html.Insert(match.Index + match.Length, insertion);

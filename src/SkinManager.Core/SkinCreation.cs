@@ -92,14 +92,14 @@ public static class SkinCreation
     {
         SkinAppearance.Light => 0.08,
         SkinAppearance.Dark => 0.35,
-        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, "只能指定 Light 或 Dark 外观。")
+        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, AppLocalization.Get("只能指定 Light 或 Dark 外观。"))
     };
 
     private static Palette GetPalette(SkinAppearance appearance) => appearance switch
     {
         SkinAppearance.Light => LightPalette,
         SkinAppearance.Dark => DarkPalette,
-        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, "只能指定 Light 或 Dark 外观。")
+        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, AppLocalization.Get("只能指定 Light 或 Dark 外观。"))
     };
 
     private static SkinAppearance? ReadAppearance(JsonNode? value) => value is JsonValue jsonValue &&
@@ -116,7 +116,7 @@ public static class SkinCreation
     {
         SkinAppearance.Light => "light",
         SkinAppearance.Dark => "dark",
-        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, "只能指定 Light 或 Dark 外观。")
+        _ => throw new ArgumentOutOfRangeException(nameof(appearance), appearance, AppLocalization.Get("只能指定 Light 或 Dark 外观。"))
     };
 
     private static void UpdateBuiltInColor(JsonObject tokens, string key, string previous, string next)

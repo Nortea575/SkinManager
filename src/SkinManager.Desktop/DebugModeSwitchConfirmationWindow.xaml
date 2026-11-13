@@ -1,7 +1,8 @@
 <Window x:Class="SkinManager.Desktop.DebugModeSwitchConfirmationWindow" x:ClassModifier="internal"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="切换到调试版 Codex" Width="520" Height="270" MinWidth="480" MinHeight="250"
+        xmlns:local="clr-namespace:SkinManager.Desktop"
+        Title="{local:Loc '切换到调试版 Codex'}" Width="520" Height="270" MinWidth="480" MinHeight="250"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"
         Background="{DynamicResource WindowSurface}"
         FontFamily="{StaticResource KlayBodyFont}"
@@ -12,15 +13,15 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="检测到普通版 Codex 正在运行" FontSize="20"
+            <TextBlock Text="{local:Loc '检测到普通版 Codex 正在运行'}" FontSize="20"
                        FontWeight="SemiBold" Style="{StaticResource PageTitle}" />
-            <TextBlock Text="继续后，SkinManager 会请求该窗口正常退出。确认退出并再次核对实例后，才会启动调试版。"
+            <TextBlock Text="{local:Loc '继续后，SkinManager 会请求该窗口正常退出。确认退出并再次核对实例后，才会启动调试版。'}"
                        FontSize="13" Foreground="{DynamicResource SecondaryText}"
                        TextWrapping="Wrap" LineHeight="21" Margin="0,12,0,0" />
         </StackPanel>
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="取消" Width="90" Margin="0,0,8,0" IsCancel="True" />
-            <Button x:Name="ConfirmButton" Content="正常退出并启动" MinWidth="150"
+            <Button Content="{local:Loc '取消'}" Width="90" Margin="0,0,8,0" IsCancel="True" />
+            <Button x:Name="ConfirmButton" Content="{local:Loc '正常退出并启动'}" MinWidth="150"
                     Style="{StaticResource PrimaryButton}" Click="ConfirmButton_Click" />
         </StackPanel>
     </Grid>

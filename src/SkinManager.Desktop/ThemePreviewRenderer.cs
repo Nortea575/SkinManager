@@ -233,12 +233,13 @@ public sealed class ThemePreviewRenderer : IDisposable
                   body.style.cssText = "margin:0;width:100vw;height:100vh;overflow:hidden;display:grid;place-items:center;background:transparent;";
                   const image = document.createElement("img");
                   image.id = "skin-manager-original-image";
-                  image.alt = "皮肤背景原图";
+                  image.alt = __ORIGINAL_IMAGE_ALT__;
                   image.src = imageUri;
                   image.style.cssText = "display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;";
                   body.appendChild(image);
                 })();
-                """.Replace("__ORIGINAL_IMAGE_URI__", JsonSerializer.Serialize(imageUri), StringComparison.Ordinal);
+                """.Replace("__ORIGINAL_IMAGE_URI__", JsonSerializer.Serialize(imageUri), StringComparison.Ordinal)
+                .Replace("__ORIGINAL_IMAGE_ALT__", JsonSerializer.Serialize(AppLocalization.Get("皮肤背景原图")), StringComparison.Ordinal);
             await core.ExecuteScriptAsync(script);
             if (!IsLatestDisplayRequest(requestSequence))
             {
@@ -612,7 +613,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         {
             if (background.ImageBytes is null || !document.Package!.Files.ContainsKey(imagePath))
             {
-                throw new InvalidDataException($"皮肤背景资源“{imagePath}”不存在于当前皮肤包中。");
+                throw new InvalidDataException(AppLocalization.Format("皮肤背景资源“{0}”不存在于当前皮肤包中。", imagePath));
             }
 
             imageUrl = $"https://{PreviewDocumentBuilder.PreviewHost}/{document.Generation}/skin/{PreviewDocumentBuilder.EncodeRelativePath(imagePath)}";
@@ -638,7 +639,7 @@ public sealed class ThemePreviewRenderer : IDisposable
 
         if (!double.IsFinite(transparency.Value) || transparency.Value is < 0 or > 100)
         {
-            throw new ArgumentOutOfRangeException(nameof(transparency), "预览面板透明度必须介于 0 到 100 之间。");
+            throw new ArgumentOutOfRangeException(nameof(transparency), AppLocalization.Get("预览面板透明度必须介于 0 到 100 之间。"));
         }
 
         return (100 - transparency.Value) / 100;
@@ -1029,7 +1030,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         Directory.CreateDirectory(_userDataFolder);
         var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: _userDataFolder);
         await _webView.EnsureCoreWebView2Async(environment);
-        var core = _webView.CoreWebView2 ?? throw new InvalidOperationException("WebView2 初始化后没有可用的浏览器控制器。 ");
+        var core = _webView.CoreWebView2 ?? throw new InvalidOperationException(AppLocalization.Get("WebView2 初始化后没有可用的浏览器控制器。 "));
         var settings = core.Settings;
         settings.IsScriptEnabled = true;
         settings.IsWebMessageEnabled = true;
@@ -1243,7 +1244,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         else
         {
             _navigationCompletion?.TrySetException(new InvalidOperationException(
-                $"原生基础预览文档加载失败（{args.WebErrorStatus}，HTTP {args.HttpStatusCode}）。 "));
+                AppLocalization.Format("原生基础预览文档加载失败（{0}，HTTP {1}）。 ", args.WebErrorStatus, args.HttpStatusCode)));
         }
     }
 

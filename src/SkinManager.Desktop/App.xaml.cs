@@ -13,6 +13,7 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        AppLocalization.Initialize();
         base.OnStartup(e);
         AppThemeService.Initialize();
         UpdateCoordinator? updateCoordinator = null;
@@ -49,8 +50,8 @@ public partial class App : Application
         {
             updateCoordinator?.Dispose();
             MessageBox.Show(
-                $"皮肤库启动失败。\n\n{exception.Message}",
-                "ChatGPT 皮肤管理器",
+                AppLocalization.Format("皮肤库启动失败。\n\n{0}", exception.Message),
+                AppLocalization.Get("ChatGPT 皮肤管理器"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(1);
@@ -64,7 +65,7 @@ public partial class App : Application
     {
         const string resourceName = "SkinManager.Desktop.Resources.CodexBase-26.1027.3384.0.zip";
         using var source = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"内置原生预览资源不可用：{resourceName}");
+            ?? throw new InvalidOperationException(AppLocalization.Format("内置原生预览资源不可用：{0}", resourceName));
         using var destination = new MemoryStream();
         source.CopyTo(destination);
         return BasePackageReader.ReadZipBytes(destination.ToArray());
@@ -74,7 +75,7 @@ public partial class App : Application
     {
         var resource = Application.GetResourceStream(new Uri(
             "pack://application:,,,/SkinManager;component/SkinManager.ico", UriKind.Absolute))
-            ?? throw new InvalidOperationException("应用程序图标资源不可用。");
+            ?? throw new InvalidOperationException(AppLocalization.Get("应用程序图标资源不可用。"));
         using (resource.Stream)
         {
             var decoder = BitmapDecoder.Create(

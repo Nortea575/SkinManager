@@ -33,6 +33,9 @@ internal static class MarketCommunityUiChecks
         Directory.CreateDirectory(testRoot);
         var screenshotDirectory = Program.FindTestOutputDirectory();
         Directory.CreateDirectory(screenshotDirectory);
+        var languageSettingsPath = Path.Combine(testRoot, "language.json");
+        AppLocalization.Initialize(languageSettingsPath);
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         var originalTheme = AppThemeService.Mode;
         AppThemeService.SetMode(AppThemeMode.Night);
 
@@ -174,6 +177,7 @@ internal static class MarketCommunityUiChecks
             await WaitUntilAsync(() => window.CommentsListForTests.Items.Count == 2 &&
                 FindNamed<TextBlock>(window, "CommentsPaginationText").Text.Contains("第 1/2 页", StringComparison.Ordinal),
                 "登录后详情加载示例评论与分页");
+            await VerifyLocalizationSwitchAsync(window, client, server);
             await SetWindowSizeAsync(window, 1060, 740);
             await SaveScreenshotAsync(window, Path.Combine(screenshotDirectory, "市场社区-夜间-登录详情与示例评论.png"));
 
@@ -354,6 +358,107 @@ internal static class MarketCommunityUiChecks
         }
     }
 
+    private static async Task VerifyLocalizationSwitchAsync(
+        SkinMarketWindow window,
+        SkinMarketClient client,
+        FakeMarketHandler server)
+    {
+        const string commentDraft = "Keep this comment draft while switching languages.";
+        const string searchDraft = "Ayanami search draft";
+        const string uploadDraft = "Keep this submission draft too.";
+        var selectedRow = window.SelectedRow;
+        var commentCount = window.CommentsListForTests.Items.Count;
+        window.CommentInputForTests.Text = commentDraft;
+        window.SearchBoxForTests.Text = searchDraft;
+        window.UploadDescriptionBoxForTests.Text = uploadDraft;
+        window.UploadAuthorBoxForTests.Text = "A draft author";
+        window.UploadLicenseBoxForTests.Text = "A draft license";
+        window.UploadMinimumVersionBoxForTests.Text = "1.2.3";
+        window.UploadTagsBoxForTests.Text = "draft,language";
+
+        var requestCount = server.RequestCount;
+        var writeCount = server.WriteRequestCount;
+        AppLocalization.SetLanguage(AppLanguage.English);
+        await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.Render);
+        Check(server.RequestCount == requestCount && server.WriteRequestCount == writeCount,
+            "语言切换不发市场请求或社区写请求");
+        Check(window.SelectedRow == selectedRow && window.IsDetailsVisible &&
+              window.CommentsListForTests.Items.Count == commentCount &&
+              window.CommentInputForTests.Text == commentDraft && window.SearchBoxForTests.Text == searchDraft &&
+              window.UploadDescriptionBoxForTests.Text == uploadDraft &&
+              window.UploadAuthorBoxForTests.Text == "A draft author" &&
+              window.UploadLicenseBoxForTests.Text == "A draft license" &&
+              window.UploadMinimumVersionBoxForTests.Text == "1.2.3" &&
+              window.UploadTagsBoxForTests.Text == "draft,language",
+            "切换语言后保留当前市场条目、评论、搜索和投稿草稿");
+        var englishUploadButtonText = window.OpenUploadButtonForTests.Content?.ToString() ?? "<null>";
+        var englishCommentsPaginationText = FindNamed<TextBlock>(window, "CommentsPaginationText").Text;
+        Check(englishUploadButtonText == "Upload skin" &&
+              englishCommentsPaginationText.Contains("Page 1/2", StringComparison.Ordinal),
+            $"静态市场按钮与动态评论分页显示英文（投稿按钮='{englishUploadButtonText}'，评论分页='{englishCommentsPaginationText}'）");
+        await SaveScreenshotAsync(
+            window,
+            Path.Combine(Program.FindTestOutputDirectory(), "市场社区-英文-登录详情与评论草稿.png"));
+        Check(GetQueryValue(client.LoginUri, "lang") == "en" &&
+              GetQueryValue(client.LoginUri, "wp_lang") == "en_US" &&
+              Uri.TryCreate(GetQueryValue(client.LoginUri, "redirect_to"), UriKind.Absolute, out var englishRedirect) &&
+              englishRedirect.Query.Contains("page_id=39", StringComparison.Ordinal) &&
+              GetQueryValue(client.RegistrationUri, "action") == "register" &&
+              GetQueryValue(client.RegistrationUri, "lang") == "en" &&
+              GetQueryValue(client.RegistrationUri, "wp_lang") == "en_US",
+            "英文登录和注册链接保留原查询及 redirect_to 并附加站点语言参数");
+
+        _ = await client.GetPageAsync();
+        Check(server.LastRestLanguage == "en", "fake HTTP 目录 GET 使用 lang=en");
+        await client.RefreshAccountAsync(SubmitCookie);
+        Check(server.LastMarketPageLanguage == "en", "fake HTTP 账号配置 GET 使用 lang=en");
+
+        requestCount = server.RequestCount;
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+        await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.Render);
+        Check(server.RequestCount == requestCount && server.WriteRequestCount == writeCount &&
+              window.SelectedRow == selectedRow && window.CommentInputForTests.Text == commentDraft &&
+              window.SearchBoxForTests.Text == searchDraft && window.UploadDescriptionBoxForTests.Text == uploadDraft,
+            "切回中文不发请求且继续保留市场选择与用户输入");
+        Check(window.OpenUploadButtonForTests.Content?.ToString() == "上传皮肤",
+            "切回中文后静态市场按钮恢复中文");
+        Check(GetQueryValue(client.LoginUri, "lang") == "zh" &&
+              GetQueryValue(client.LoginUri, "wp_lang") == "zh_CN" &&
+              GetQueryValue(client.RegistrationUri, "lang") == "zh" &&
+              GetQueryValue(client.RegistrationUri, "wp_lang") == "zh_CN",
+            "中文登录与注册链接使用站点语言参数");
+        _ = await client.GetPageAsync();
+        Check(server.LastRestLanguage == "zh", "fake HTTP 目录 GET 使用 lang=zh");
+        await client.RefreshAccountAsync(SubmitCookie);
+        Check(server.LastMarketPageLanguage == "zh", "fake HTTP 账号配置 GET 使用 lang=zh");
+
+        window.CommentInputForTests.Text = string.Empty;
+        window.SearchBoxForTests.Text = string.Empty;
+        window.UploadDescriptionBoxForTests.Text = string.Empty;
+        window.UploadAuthorBoxForTests.Text = string.Empty;
+        window.UploadLicenseBoxForTests.Text = string.Empty;
+        window.UploadMinimumVersionBoxForTests.Text = string.Empty;
+        window.UploadTagsBoxForTests.Text = string.Empty;
+    }
+
+    private static string? GetQueryValue(Uri uri, string name)
+    {
+        foreach (var segment in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = segment.IndexOf('=');
+            var key = separator < 0 ? segment : segment[..separator];
+            if (!Uri.UnescapeDataString(key.Replace('+', ' ')).Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = separator < 0 ? string.Empty : segment[(separator + 1)..];
+            return Uri.UnescapeDataString(value.Replace('+', ' '));
+        }
+
+        return null;
+    }
+
     private static void FillUploadForm(SkinMarketWindow window, string description, string tags)
     {
         window.UploadDescriptionBoxForTests.Text = description;
@@ -527,8 +632,11 @@ internal static class MarketCommunityUiChecks
         private int _likePostCount;
         private int _commentPostCount;
         private int _submissionPostCount;
+        private int _requestCount;
         private int _writeRequestCount;
         private int _packageDownloadCount;
+        private string? _lastRestLanguage;
+        private string? _lastMarketPageLanguage;
         private volatile bool _isLiked = true;
         private byte[]? _lastSubmissionBody;
 
@@ -547,8 +655,11 @@ internal static class MarketCommunityUiChecks
         public int LikePostCount => Volatile.Read(ref _likePostCount);
         public int CommentPostCount => Volatile.Read(ref _commentPostCount);
         public int SubmissionPostCount => Volatile.Read(ref _submissionPostCount);
+        public int RequestCount => Volatile.Read(ref _requestCount);
         public int WriteRequestCount => Volatile.Read(ref _writeRequestCount);
         public int PackageDownloadCount => Volatile.Read(ref _packageDownloadCount);
+        public string? LastRestLanguage => Volatile.Read(ref _lastRestLanguage);
+        public string? LastMarketPageLanguage => Volatile.Read(ref _lastMarketPageLanguage);
         public byte[]? LastSubmissionBody => Volatile.Read(ref _lastSubmissionBody);
 
         private int _invalidWriteAuthentication;
@@ -579,9 +690,17 @@ internal static class MarketCommunityUiChecks
                 throw new InvalidDataException("Fake 市场拒绝本站以外的 HTTP 请求。");
             }
 
+            Interlocked.Increment(ref _requestCount);
             var route = QueryValue(uri, "rest_route");
+            var language = QueryValue(uri, "lang");
+            if (route is not null)
+            {
+                Volatile.Write(ref _lastRestLanguage, language);
+            }
+
             if (uri.Query.Contains("page_id=39", StringComparison.Ordinal))
             {
+                Volatile.Write(ref _lastMarketPageLanguage, language);
                 var cookie = Header(request, "Cookie");
                 var loggedIn = IsLoginCookie(cookie);
                 var userId = cookie?.Contains("market-readonly", StringComparison.Ordinal) == true ? 43 : 42;

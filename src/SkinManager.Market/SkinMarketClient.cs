@@ -60,30 +60,30 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (perPage is < 1 or > 50)
         {
-            throw new ArgumentOutOfRangeException(nameof(perPage), "每页数量必须在 1 到 50 之间。");
+            throw new ArgumentOutOfRangeException(nameof(perPage), AppLocalization.Get("每页数量必须在 1 到 50 之间。"));
         }
 
         query ??= string.Empty;
         if (query.Length > 200)
         {
-            throw new ArgumentException("搜索内容不能超过 200 个字符。", nameof(query));
+            throw new ArgumentException(AppLocalization.Get("搜索内容不能超过 200 个字符。"), nameof(query));
         }
 
         if (!string.IsNullOrEmpty(appearance) && appearance is not ("light" or "dark" or "system"))
         {
-            throw new ArgumentException("外观筛选只能是 light、dark 或 system。", nameof(appearance));
+            throw new ArgumentException(AppLocalization.Get("外观筛选只能是 light、dark 或 system。"), nameof(appearance));
         }
 
         sort = string.IsNullOrWhiteSpace(sort) ? "latest" : sort.Trim();
         if (sort is not ("latest" or "likes"))
         {
-            throw new ArgumentException("排序方式只能是 latest 或 likes。", nameof(sort));
+            throw new ArgumentException(AppLocalization.Get("排序方式只能是 latest 或 likes。"), nameof(sort));
         }
 
         tag = string.IsNullOrWhiteSpace(tag) ? null : tag.Trim();
         if (tag is { Length: > 80 })
         {
-            throw new ArgumentException("标签不能超过 80 个字符。", nameof(tag));
+            throw new ArgumentException(AppLocalization.Get("标签不能超过 80 个字符。"), nameof(tag));
         }
 
         var queryParts = new List<string>
@@ -119,17 +119,17 @@ public sealed partial class SkinMarketClient : IDisposable
             var root = document.RootElement;
             if (RequiredInt32(root, "formatVersion") != 1 || RequiredInt32(root, "schemaVersion") != 1)
             {
-                throw new InvalidDataException("市场目录使用了不受支持的格式或架构版本。");
+                throw new InvalidDataException(AppLocalization.Get("市场目录使用了不受支持的格式或架构版本。"));
             }
 
             if (!root.TryGetProperty("items", out var itemsElement) || itemsElement.ValueKind != JsonValueKind.Array)
             {
-                throw new InvalidDataException("市场目录缺少 items 列表。");
+                throw new InvalidDataException(AppLocalization.Get("市场目录缺少 items 列表。"));
             }
 
             if (!root.TryGetProperty("pagination", out var paginationElement) || paginationElement.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException("市场目录缺少分页信息。");
+                throw new InvalidDataException(AppLocalization.Get("市场目录缺少分页信息。"));
             }
 
             var pagination = new SkinMarketPagination(
@@ -140,7 +140,7 @@ public sealed partial class SkinMarketClient : IDisposable
             if (pagination.Page != page || pagination.PerPage != perPage || pagination.Total < 0 || pagination.TotalPages < 0 ||
                 itemsElement.GetArrayLength() > perPage)
             {
-                throw new InvalidDataException("市场目录返回了无效的分页数据。");
+                throw new InvalidDataException(AppLocalization.Get("市场目录返回了无效的分页数据。"));
             }
 
             var items = new List<SkinMarketItem>(itemsElement.GetArrayLength());
@@ -148,7 +148,7 @@ public sealed partial class SkinMarketClient : IDisposable
             {
                 if (itemElement.ValueKind != JsonValueKind.Object)
                 {
-                    throw new InvalidDataException("市场目录中的皮肤条目格式无效。");
+                    throw new InvalidDataException(AppLocalization.Get("市场目录中的皮肤条目格式无效。"));
                 }
 
                 items.Add(ReadItem(itemElement));
@@ -159,7 +159,7 @@ public sealed partial class SkinMarketClient : IDisposable
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("读取市场目录超时，请重试。", exception);
+            throw new TimeoutException(AppLocalization.Get("读取市场目录超时，请重试。"), exception);
         }
     }
 
@@ -182,7 +182,7 @@ public sealed partial class SkinMarketClient : IDisposable
               path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)) ||
             path.Split('/').Any(segment => segment is "." or ".."))
         {
-            throw new InvalidDataException("市场封面缩略图地址无效。");
+            throw new InvalidDataException(AppLocalization.Get("市场封面缩略图地址无效。"));
         }
 
         using var operationCancellation = CreateOperationCancellation(cancellationToken);
@@ -207,10 +207,10 @@ public sealed partial class SkinMarketClient : IDisposable
             }
             catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
             {
-                var timeout = new TimeoutException("读取市场封面缩略图超时。", exception);
+                var timeout = new TimeoutException(AppLocalization.Get("读取市场封面缩略图超时。"), exception);
                 if (firstReadFailure is not null)
                 {
-                    throw new AggregateException("读取封面缩略图失败并超时；已保留首次传输错误。", firstReadFailure, timeout);
+                    throw new AggregateException(AppLocalization.Get("读取封面缩略图失败并超时；已保留首次传输错误。"), firstReadFailure, timeout);
                 }
 
                 throw timeout;
@@ -221,11 +221,11 @@ public sealed partial class SkinMarketClient : IDisposable
             }
             catch (Exception exception) when (firstReadFailure is not null)
             {
-                throw new AggregateException("读取封面缩略图重试后仍失败；已保留两次错误。", firstReadFailure, exception);
+                throw new AggregateException(AppLocalization.Get("读取封面缩略图重试后仍失败；已保留两次错误。"), firstReadFailure, exception);
             }
         }
 
-        throw new InvalidOperationException("市场封面缩略图读取超过允许的尝试次数。");
+        throw new InvalidOperationException(AppLocalization.Get("市场封面缩略图读取超过允许的尝试次数。"));
     }
 
     public static Uri GetDetailUri(string raw)
@@ -246,17 +246,17 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (item.Size is <= 0 or > MaxDownloadBytes)
         {
-            throw new InvalidDataException("市场皮肤包大小无效或超过 64 MB 上限。");
+            throw new InvalidDataException(AppLocalization.Get("市场皮肤包大小无效或超过 64 MB 上限。"));
         }
 
         if (!Sha256Pattern().IsMatch(item.Sha256))
         {
-            throw new InvalidDataException("市场目录中的 SHA-256 校验值格式无效。");
+            throw new InvalidDataException(AppLocalization.Get("市场目录中的 SHA-256 校验值格式无效。"));
         }
 
         if (item.SkinFormatVersion != 1)
         {
-            throw new InvalidDataException($"该皮肤使用不受支持的格式版本 {item.SkinFormatVersion}。");
+            throw new InvalidDataException(AppLocalization.Format("该皮肤使用不受支持的格式版本 {0}。", item.SkinFormatVersion));
         }
 
         if (!IsManagerCompatible(item.MinimumManagerVersion, managerVersion, out var compatibilityMessage))
@@ -283,31 +283,31 @@ public sealed partial class SkinMarketClient : IDisposable
             var expectedHash = Convert.FromHexString(item.Sha256);
             if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
             {
-                throw new InvalidDataException("下载文件的 SHA-256 与市场目录不一致。请刷新目录后重试。");
+                throw new InvalidDataException(AppLocalization.Get("下载文件的 SHA-256 与市场目录不一致。请刷新目录后重试。"));
             }
 
             var package = await Task.Run(() => SkinPackageReader.ReadZipFile(packagePath), operationCancellation.Token)
                 .ConfigureAwait(false);
             if (!package.Id.Equals(item.Id, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException("皮肤包 manifest ID 与市场目录中的 ID 不一致。");
+                throw new InvalidDataException(AppLocalization.Get("皮肤包 manifest ID 与市场目录中的 ID 不一致。"));
             }
 
             if (!package.Version.Equals(item.Version, StringComparison.Ordinal))
             {
-                throw new InvalidDataException("皮肤包 manifest 版本与市场目录中的版本不一致。");
+                throw new InvalidDataException(AppLocalization.Get("皮肤包 manifest 版本与市场目录中的版本不一致。"));
             }
 
             if (package.Definition.FormatVersion != item.SkinFormatVersion)
             {
-                throw new InvalidDataException("皮肤包 manifest 格式版本与市场目录不一致。");
+                throw new InvalidDataException(AppLocalization.Get("皮肤包 manifest 格式版本与市场目录不一致。"));
             }
 
             return package;
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("下载市场皮肤超时，请重试。", exception);
+            throw new TimeoutException(AppLocalization.Get("下载市场皮肤超时，请重试。"), exception);
         }
         finally
         {
@@ -323,17 +323,17 @@ public sealed partial class SkinMarketClient : IDisposable
         ArgumentNullException.ThrowIfNull(managerVersion);
         if (!Version.TryParse(minimumVersionText, out var minimumVersion) || minimumVersion.Major < 0 || minimumVersion.Minor < 0)
         {
-            message = "市场条目的最低管理器版本无法识别，无法安全安装。";
+            message = AppLocalization.Get("市场条目的最低管理器版本无法识别，无法安全安装。");
             return false;
         }
 
         if (managerVersion < minimumVersion)
         {
-            message = $"需要管理器 {minimumVersion} 或更新版本。";
+            message = AppLocalization.Format("需要管理器 {0} 或更新版本。", minimumVersion);
             return false;
         }
 
-        message = $"兼容管理器 {managerVersion.ToString(3)}。";
+        message = AppLocalization.Format("兼容管理器 {0}。", managerVersion.ToString(3));
         return true;
     }
 
@@ -367,6 +367,7 @@ public sealed partial class SkinMarketClient : IDisposable
 
     private async Task<HttpResponseMessage> SendAsync(Uri uri, CancellationToken cancellationToken)
     {
+        uri = MarketLanguageUri.ForPublicRest(uri);
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Version = HttpVersion.Version20;
         request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
@@ -387,7 +388,7 @@ public sealed partial class SkinMarketClient : IDisposable
         if ((int)response.StatusCode is >= 300 and < 400)
         {
             response.Dispose();
-            throw new InvalidDataException("市场服务器返回了重定向；为保护下载地址，管理器不会跟随该地址。");
+            throw new InvalidDataException(AppLocalization.Get("市场服务器返回了重定向；为保护下载地址，管理器不会跟随该地址。"));
         }
 
         if (!response.IsSuccessStatusCode)
@@ -426,7 +427,7 @@ public sealed partial class SkinMarketClient : IDisposable
             received = checked(received + read);
             if (received > maxBytes)
             {
-                throw new InvalidDataException("服务器返回的内容超过允许大小。");
+                throw new InvalidDataException(AppLocalization.Get("服务器返回的内容超过允许大小。"));
             }
 
             output.Write(buffer, 0, read);
@@ -472,7 +473,7 @@ public sealed partial class SkinMarketClient : IDisposable
             received = checked(received + read);
             if (received > maxBytes || received > expectedSize)
             {
-                throw new InvalidDataException("下载内容超过允许大小或市场目录声明的大小。");
+                throw new InvalidDataException(AppLocalization.Get("下载内容超过允许大小或市场目录声明的大小。"));
             }
 
             hash.AppendData(buffer, 0, read);
@@ -486,7 +487,7 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (received != expectedSize || (declaredLength.HasValue && received != declaredLength.Value))
         {
-            throw new InvalidDataException("下载内容大小与市场目录声明不一致。");
+            throw new InvalidDataException(AppLocalization.Get("下载内容大小与市场目录声明不一致。"));
         }
 
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -500,7 +501,7 @@ public sealed partial class SkinMarketClient : IDisposable
         if (declaredLength is < 0 || declaredLength > maxBytes ||
             (expectedSize.HasValue && declaredLength.HasValue && declaredLength.Value != expectedSize.Value))
         {
-            throw new InvalidDataException("服务器声明的文件大小无效或与市场目录中的大小不一致。");
+            throw new InvalidDataException(AppLocalization.Get("服务器声明的文件大小无效或与市场目录中的大小不一致。"));
         }
 
         return declaredLength;
@@ -524,13 +525,13 @@ public sealed partial class SkinMarketClient : IDisposable
         var id = RequiredString(element, "id", 64);
         if (!SkinIdPattern().IsMatch(id))
         {
-            throw new InvalidDataException("市场目录包含无效的皮肤 ID。");
+            throw new InvalidDataException(AppLocalization.Get("市场目录包含无效的皮肤 ID。"));
         }
 
         var appearance = RequiredString(element, "appearance", 16);
         if (appearance is not ("light" or "dark" or "system"))
         {
-            throw new InvalidDataException($"皮肤“{id}”声明了无效的外观类型。");
+            throw new InvalidDataException(AppLocalization.Format("皮肤“{0}”声明了无效的外观类型。", id));
         }
 
         return new SkinMarketItem(
@@ -567,7 +568,7 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (property.ValueKind != JsonValueKind.Array || property.GetArrayLength() > 50)
         {
-            throw new InvalidDataException($"市场目录中的 {propertyName} 格式无效。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 格式无效。", propertyName));
         }
 
         var tags = new List<SkinMarketTag>(property.GetArrayLength());
@@ -575,14 +576,14 @@ public sealed partial class SkinMarketClient : IDisposable
         {
             if (tag.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException($"市场目录中的 {propertyName} 项格式无效。");
+                throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 项格式无效。", propertyName));
             }
 
             var id = OptionalTagId(tag, "id");
             var name = OptionalString(tag, "name", 80);
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
             {
-                throw new InvalidDataException($"市场目录中的 {propertyName} 项缺少有效的 id 或 name。");
+                throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 项缺少有效的 id 或 name。", propertyName));
             }
 
             tags.Add(new SkinMarketTag(id, name));
@@ -602,7 +603,7 @@ public sealed partial class SkinMarketClient : IDisposable
         {
             JsonValueKind.String => property.GetString(),
             JsonValueKind.Number when property.TryGetInt64(out var value) && value >= 0 => value.ToString(CultureInfo.InvariantCulture),
-            _ => throw new InvalidDataException($"市场目录中的标签 {name} 格式无效。")
+            _ => throw new InvalidDataException(AppLocalization.Format("市场目录中的标签 {0} 格式无效。", name))
         };
     }
 
@@ -615,7 +616,7 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value) || value < 0)
         {
-            throw new InvalidDataException($"市场目录中的 {name} 必须是非负整数。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 必须是非负整数。", name));
         }
 
         return value;
@@ -632,7 +633,7 @@ public sealed partial class SkinMarketClient : IDisposable
         {
             JsonValueKind.True => true,
             JsonValueKind.False => false,
-            _ => throw new InvalidDataException($"市场目录中的 {name} 必须是布尔值。")
+            _ => throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 必须是布尔值。", name))
         };
     }
 
@@ -643,7 +644,7 @@ public sealed partial class SkinMarketClient : IDisposable
         var expectedRoute = $"/skin-manager/v1/skins/{skinId}/download";
         if (uri.AbsolutePath != "/" || !string.Equals(route, expectedRoute, StringComparison.Ordinal))
         {
-            throw new InvalidDataException("市场皮肤包地址与当前条目不匹配。");
+            throw new InvalidDataException(AppLocalization.Get("市场皮肤包地址与当前条目不匹配。"));
         }
 
         return uri;
@@ -663,14 +664,15 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (uri is null)
         {
-            throw new InvalidDataException($"市场{purpose}地址无效。");
+            throw new InvalidDataException(AppLocalization.Format("市场{0}地址无效。", AppLocalization.Get(purpose)));
         }
 
         if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
             !uri.Host.Equals(SiteRoot.Host, StringComparison.OrdinalIgnoreCase) ||
             uri.Port != SiteRoot.Port || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
         {
-            throw new InvalidDataException($"市场{purpose}地址必须来自 {SiteRoot.Host} 的 HTTPS 同源地址。");
+            throw new InvalidDataException(AppLocalization.Format(
+                "市场{0}地址必须来自 {1} 的 HTTPS 同源地址。", AppLocalization.Get(purpose), SiteRoot.Host));
         }
 
         return uri;
@@ -704,13 +706,13 @@ public sealed partial class SkinMarketClient : IDisposable
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String)
         {
-            throw new InvalidDataException($"市场目录缺少有效的 {name}。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录缺少有效的 {0}。", name));
         }
 
         var value = property.GetString();
         if (string.IsNullOrWhiteSpace(value) || value.Length > maxLength)
         {
-            throw new InvalidDataException($"市场目录中的 {name} 为空或过长。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 为空或过长。", name));
         }
 
         return value;
@@ -731,13 +733,13 @@ public sealed partial class SkinMarketClient : IDisposable
 
         if (property.ValueKind != JsonValueKind.String)
         {
-            throw new InvalidDataException($"市场目录中的 {name} 格式无效。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 格式无效。", name));
         }
 
         var value = property.GetString() ?? string.Empty;
         if (value.Length > maxLength)
         {
-            throw new InvalidDataException($"市场目录中的 {name} 过长。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 过长。", name));
         }
 
         return value;
@@ -747,7 +749,7 @@ public sealed partial class SkinMarketClient : IDisposable
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value))
         {
-            throw new InvalidDataException($"市场目录缺少有效的 {name}。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录缺少有效的 {0}。", name));
         }
 
         return value;
@@ -757,7 +759,7 @@ public sealed partial class SkinMarketClient : IDisposable
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var value))
         {
-            throw new InvalidDataException($"市场目录缺少有效的 {name}。");
+            throw new InvalidDataException(AppLocalization.Format("市场目录缺少有效的 {0}。", name));
         }
 
         return value;
@@ -772,5 +774,6 @@ public sealed partial class SkinMarketClient : IDisposable
     private static partial Regex Sha256Pattern();
 
     private sealed class IncompleteResponseException(long declaredBytes, long receivedBytes)
-        : IOException($"服务器声明内容长度为 {declaredBytes} bytes，实际只读取到 {receivedBytes} bytes。");
+        : IOException(AppLocalization.Format(
+            "服务器声明内容长度为 {0} bytes，实际只读取到 {1} bytes。", declaredBytes, receivedBytes));
 }

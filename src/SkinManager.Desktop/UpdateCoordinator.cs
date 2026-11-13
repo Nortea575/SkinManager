@@ -22,7 +22,8 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
     private DownloadedUpdate? _downloadedUpdate;
     private UpdateDownloadProgress? _progress;
     private UpdateCheckState? _checkState;
-    private string _statusMessage = "尚未检查更新";
+    private string _statusSource = "尚未检查更新";
+    private object?[] _statusArguments = [];
     private readonly string _currentVersionTag;
     private bool _automaticCheckAndDownload = true;
     private bool _includePrereleases;
@@ -51,6 +52,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         _settingsPath = Path.Combine(UpdatesDirectory, "settings.json");
         _ownedHttpClient = ownedHttpClient;
         LoadPreferences();
+        AppLocalization.LanguageChanged += Localization_LanguageChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -105,17 +107,9 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string StatusMessage
-    {
-        get => _statusMessage;
-        private set
-        {
-            if (SetProperty(ref _statusMessage, value))
-            {
-                OnPropertyChanged(nameof(UpdateEntryLabel));
-            }
-        }
-    }
+    public string StatusMessage => _statusArguments.Length == 0
+        ? AppLocalization.Get(_statusSource)
+        : AppLocalization.Format(_statusSource, _statusArguments);
 
     public bool AutomaticCheckAndDownload
     {
@@ -179,16 +173,16 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
                                        (IncludePrereleases || !downloaded.Release.IsPrerelease);
 
     public string UpdateEntryLabel => _disposed
-        ? $"版本 {CurrentVersionLabel}"
+        ? AppLocalization.Format("版本 {0}", CurrentVersionLabel)
         : HasDownloadedUpdate
-            ? $"更新已就绪 · {Release?.DisplayVersion}"
+            ? AppLocalization.Format("更新已就绪 · {0}", Release?.DisplayVersion)
             : HasAvailableUpdate
-                ? $"发现更新 · {Release?.DisplayVersion}"
+                ? AppLocalization.Format("发现更新 · {0}", Release?.DisplayVersion)
                 : IsDownloading
-                    ? "正在下载更新…"
+                    ? AppLocalization.Get("正在下载更新…")
                     : IsChecking
-                    ? "正在检查更新…"
-                    : $"版本与更新 · {CurrentVersionLabel}";
+                    ? AppLocalization.Get("正在检查更新…")
+                    : AppLocalization.Format("版本与更新 · {0}", CurrentVersionLabel);
 
     public static Version ReadCurrentVersion(Assembly? assembly = null)
     {
@@ -238,7 +232,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         _checkCancellation = checkCancellation;
         IsChecking = true;
         Progress = null;
-        StatusMessage = "正在检查更新…";
+        SetStatus("正在检查更新…");
         var shouldDownload = false;
         try
         {
@@ -258,28 +252,38 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
             CheckState = result.State;
             Release = result.Release;
             DownloadedUpdate = null;
-            StatusMessage = result.State switch
+            switch (result.State)
             {
-                UpdateCheckState.UpToDate => $"当前已是最新版本 {CurrentVersionLabel}",
-                UpdateCheckState.Available when result.Release is not null => $"发现新版本 {result.Release.DisplayVersion}",
-                UpdateCheckState.NotPublished => "尚未发布可用更新",
-                UpdateCheckState.PackageNotReady => "已发现新版本，但安装包尚未准备好",
-                _ => "更新源返回了无法识别的结果"
-            };
+                case UpdateCheckState.UpToDate:
+                    SetStatus("当前已是最新版本 {0}", CurrentVersionLabel);
+                    break;
+                case UpdateCheckState.Available when result.Release is not null:
+                    SetStatus("发现新版本 {0}", result.Release.DisplayVersion);
+                    break;
+                case UpdateCheckState.NotPublished:
+                    SetStatus("尚未发布可用更新");
+                    break;
+                case UpdateCheckState.PackageNotReady:
+                    SetStatus("已发现新版本，但安装包尚未准备好");
+                    break;
+                default:
+                    SetStatus("更新源返回了无法识别的结果");
+                    break;
+            }
             shouldDownload = downloadAutomatically && AutomaticCheckAndDownload && result.State == UpdateCheckState.Available && result.Release is not null;
         }
         catch (OperationCanceledException) when (checkCancellation.IsCancellationRequested)
         {
             if (channelRevision == _updateChannelRevision && !_disposed)
             {
-                StatusMessage = "更新检查已取消。可以重新检查。";
+                SetStatus("更新检查已取消。可以重新检查。");
             }
         }
         catch (Exception exception)
         {
             if (channelRevision == _updateChannelRevision && !_disposed)
             {
-                StatusMessage = $"检查更新失败：{exception.Message} 可以重试。";
+                SetStatus("检查更新失败：{0} 可以重试。", exception.Message);
             }
         }
         finally
@@ -314,7 +318,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         IsDownloading = true;
         Progress = new UpdateDownloadProgress(0, release.Size);
         DownloadedUpdate = null;
-        StatusMessage = $"正在下载版本 {release.DisplayVersion}…";
+        SetStatus("正在下载版本 {0}…", release.DisplayVersion);
         var progress = new Progress<UpdateDownloadProgress>(value =>
         {
             if (channelRevision != _updateChannelRevision || _disposed)
@@ -343,21 +347,21 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
             }
 
             DownloadedUpdate = downloaded;
-            StatusMessage = $"版本 {downloaded.Release.DisplayVersion} 已下载，可以安装。";
+            SetStatus("版本 {0} 已下载，可以安装。", downloaded.Release.DisplayVersion);
             Progress = new UpdateDownloadProgress(downloaded.Release.Size, downloaded.Release.Size);
         }
         catch (OperationCanceledException) when (downloadCancellation.IsCancellationRequested)
         {
             if (channelRevision == _updateChannelRevision && !_disposed)
             {
-                StatusMessage = "下载已取消。可以重新下载。";
+                SetStatus("下载已取消。可以重新下载。");
             }
         }
         catch (Exception exception)
         {
             if (channelRevision == _updateChannelRevision && !_disposed)
             {
-                StatusMessage = $"下载失败：{exception.Message} 可以重试。";
+                SetStatus("下载失败：{0} 可以重试。", exception.Message);
             }
         }
         finally
@@ -387,14 +391,14 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
 
     public void ReportInstallFailure(string message)
     {
-        StatusMessage = $"安装未启动：{message}";
+        SetStatus("安装未启动：{0}", message);
     }
 
     public void ReportInstallReady()
     {
         if (DownloadedUpdate is { } update)
         {
-            StatusMessage = $"版本 {update.Release.DisplayVersion} 已下载，可以安装。";
+            SetStatus("版本 {0} 已下载，可以安装。", update.Release.DisplayVersion);
         }
     }
 
@@ -413,7 +417,9 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         _checkCancellation?.Dispose();
         _checkCancellation = null;
         _lifetime.Dispose();
+        AppLocalization.LanguageChanged -= Localization_LanguageChanged;
         OnPropertyChanged(nameof(UpdateEntryLabel));
+        OnPropertyChanged(nameof(StatusMessage));
     }
 
     private void LoadPreferences()
@@ -456,7 +462,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            StatusMessage = $"更新偏好无法保存：{exception.Message}";
+            SetStatus("更新偏好无法保存：{0}", exception.Message);
         }
     }
 
@@ -475,6 +481,24 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
+    private void SetStatus(string source, params object?[] arguments)
+    {
+        var previousMessage = StatusMessage;
+        _statusSource = source;
+        _statusArguments = arguments;
+        if (!string.Equals(previousMessage, StatusMessage, StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(StatusMessage));
+            OnPropertyChanged(nameof(UpdateEntryLabel));
+        }
+    }
+
+    private void Localization_LanguageChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(StatusMessage));
+        OnPropertyChanged(nameof(UpdateEntryLabel));
+    }
+
     private void InvalidateForUpdateChannelChange()
     {
         _updateChannelRevision++;
@@ -484,7 +508,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
         DownloadedUpdate = null;
         CheckState = null;
         Progress = null;
-        StatusMessage = "更新通道已更改，请重新检查更新。";
+        SetStatus("更新通道已更改，请重新检查更新。");
     }
 
     private void EnsureUpdateIsCurrentForInstallation(DownloadedUpdate update, long channelRevision)
@@ -493,7 +517,7 @@ public sealed class UpdateCoordinator : INotifyPropertyChanged, IDisposable
             !ReferenceEquals(DownloadedUpdate, update) ||
             update.Release.IsPrerelease && !IncludePrereleases)
         {
-            throw new InvalidOperationException("此更新已不属于当前更新通道，请重新检查并下载。");
+            throw new InvalidOperationException(AppLocalization.Get("此更新已不属于当前更新通道，请重新检查并下载。"));
         }
     }
 

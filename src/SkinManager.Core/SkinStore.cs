@@ -67,8 +67,9 @@ public sealed class SkinStore
         if (unreadableCount > 0)
         {
             LastLoadWarning = unreadableCount == 1
-                ? $"皮肤库中的“{firstUnreadableName}”无法读取，文件已保留；请重新导入有效皮肤包。"
-                : $"皮肤库中有 {unreadableCount} 个皮肤无法读取（例如“{firstUnreadableName}”），文件已保留；请重新导入有效皮肤包。";
+                ? AppLocalization.Format("皮肤库中的“{0}”无法读取，文件已保留；请重新导入有效皮肤包。", firstUnreadableName)
+                : AppLocalization.Format("皮肤库中有 {0} 个皮肤无法读取（例如“{1}”），文件已保留；请重新导入有效皮肤包。",
+                    unreadableCount, firstUnreadableName);
         }
 
         return packages.OrderBy(package => package.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
@@ -121,14 +122,14 @@ public sealed class SkinStore
         var directory = GetSkinDirectory(id);
         if (!Directory.Exists(directory))
         {
-            throw new FileNotFoundException("所选皮肤不存在。", directory);
+            throw new FileNotFoundException(AppLocalization.Get("所选皮肤不存在。"), directory);
         }
 
         RejectReparsePoint(directory);
         var package = SkinPackageReader.ReadFolder(directory);
         if (!IdComparer.Equals(id, package.Id))
         {
-            throw new InvalidDataException("皮肤包 ID 与皮肤库目录名称不一致。 ");
+            throw new InvalidDataException(AppLocalization.Get("皮肤包 ID 与皮肤库目录名称不一致。 "));
         }
 
         return package;
@@ -174,7 +175,7 @@ public sealed class SkinStore
         var info = new FileInfo(path);
         if (info.Length <= 0 || info.Length > SkinPackageReader.MaxSingleFileBytes)
         {
-            throw new InvalidDataException("皮肤缩略图资源为空或超过单文件大小上限。 ");
+            throw new InvalidDataException(AppLocalization.Get("皮肤缩略图资源为空或超过单文件大小上限。 "));
         }
 
         var bytes = File.ReadAllBytes(path);
@@ -224,13 +225,13 @@ public sealed class SkinStore
         var destination = Path.GetFullPath(destinationPath);
         if (Directory.Exists(destination) || (File.Exists(destination) && !overwriteExisting))
         {
-            throw new IOException("目标文件已存在；导出不会覆盖未经确认的文件。 ");
+            throw new IOException(AppLocalization.Get("目标文件已存在；导出不会覆盖未经确认的文件。 "));
         }
 
         var parent = Path.GetDirectoryName(destination);
         if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
         {
-            throw new DirectoryNotFoundException("导出目标文件夹不存在。 ");
+            throw new DirectoryNotFoundException(AppLocalization.Get("导出目标文件夹不存在。 "));
         }
 
         var temporary = Path.Combine(parent, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
@@ -251,7 +252,7 @@ public sealed class SkinStore
             {
                 if (!overwriteExisting)
                 {
-                    throw new IOException("目标文件已存在；导出不会覆盖未经确认的文件。 ");
+                    throw new IOException(AppLocalization.Get("目标文件已存在；导出不会覆盖未经确认的文件。 "));
                 }
 
                 File.Replace(temporary, destination, destinationBackupFileName: null);
@@ -305,7 +306,7 @@ public sealed class SkinStore
             {
                 if (File.Exists(destination) && !Directory.Exists(destination))
                 {
-                    throw new IOException("皮肤库中存在与皮肤 ID 同名的文件。 ");
+                    throw new IOException(AppLocalization.Get("皮肤库中存在与皮肤 ID 同名的文件。 "));
                 }
 
                 Directory.Move(destination, backup);
@@ -419,7 +420,7 @@ public sealed class SkinStore
         var fullPath = Path.GetFullPath(Path.Combine(root, normalized));
         if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidDataException("资源路径超出了皮肤目录。 ");
+            throw new InvalidDataException(AppLocalization.Get("资源路径超出了皮肤目录。 "));
         }
 
         return fullPath;
@@ -429,7 +430,7 @@ public sealed class SkinStore
     {
         if (!SkinIdComparerIsValid(id))
         {
-            throw new InvalidDataException("皮肤 ID 无效。 ");
+            throw new InvalidDataException(AppLocalization.Get("皮肤 ID 无效。 "));
         }
     }
 
@@ -444,7 +445,7 @@ public sealed class SkinStore
         var normalized = SkinPackageReader.NormalizeRelativePath(path, "$.background.image");
         if (!SkinPackageReader.IsSupportedImagePath(normalized))
         {
-            throw new InvalidDataException("背景图片只支持 PNG、JPG、JPEG 或 GIF。 ");
+            throw new InvalidDataException(AppLocalization.Get("背景图片只支持 PNG、JPG、JPEG 或 GIF。 "));
         }
 
         return normalized;
@@ -455,8 +456,9 @@ public sealed class SkinStore
         if (unreadableCount > 0)
         {
             LastLoadWarning = unreadableCount == 1
-                ? $"皮肤库中的“{firstUnreadableName}”无法读取，文件已保留；请重新导入有效皮肤包。"
-                : $"皮肤库中有 {unreadableCount} 个皮肤无法读取（例如“{firstUnreadableName}”），文件已保留；请重新导入有效皮肤包。";
+                ? AppLocalization.Format("皮肤库中的“{0}”无法读取，文件已保留；请重新导入有效皮肤包。", firstUnreadableName)
+                : AppLocalization.Format("皮肤库中有 {0} 个皮肤无法读取（例如“{1}”），文件已保留；请重新导入有效皮肤包。",
+                    unreadableCount, firstUnreadableName);
         }
     }
 
@@ -464,7 +466,7 @@ public sealed class SkinStore
     {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new IOException("皮肤库路径不能是符号链接或重解析点。 ");
+            throw new IOException(AppLocalization.Get("皮肤库路径不能是符号链接或重解析点。 "));
         }
     }
 

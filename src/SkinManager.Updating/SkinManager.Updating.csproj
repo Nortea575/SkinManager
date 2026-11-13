@@ -5,4 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
+    <Using Include="SkinManager.Core" />
+  </ItemGroup>
 </Project>

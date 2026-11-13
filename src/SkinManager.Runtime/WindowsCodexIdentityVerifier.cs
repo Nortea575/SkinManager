@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using SkinManager.Core;
 
 namespace SkinManager.Runtime;
 
@@ -40,7 +41,7 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
         var processIds = GetListenerProcessIds(endpoint);
         if (processIds.Count != 1)
             throw new InvalidOperationException(processIds.Count == 0
-                ? $"指定地址 {endpoint.Host} 的端口 {endpoint.Port} 没有 TCP listener。请使用调试参数启动 Codex 后重试。"
+                ? AppLocalization.Format("指定地址 {0} 的端口 {1} 没有 TCP listener。请使用调试参数启动 Codex 后重试。", endpoint.Host, endpoint.Port)
                 : "指定 loopback 地址由多个进程共同监听，无法安全确认目标身份。 ");
 
         var processId = processIds.Single();
@@ -115,7 +116,7 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
         var bufferLength = 0;
         var result = GetExtendedTcpTable(IntPtr.Zero, ref bufferLength, order: true, addressFamily, TcpTableOwnerPidListener, 0);
         if (result != ErrorInsufficientBuffer && result != 0)
-            throw new InvalidOperationException($"无法读取本机 TCP listener 表（错误 {result}）。");
+            throw new InvalidOperationException(AppLocalization.Format("无法读取本机 TCP listener 表（错误 {0}）。", result));
         if (bufferLength <= sizeof(uint))
             return;
 
@@ -124,7 +125,7 @@ internal sealed class WindowsCodexIdentityVerifier : ICodexEndpointIdentityVerif
         {
             result = GetExtendedTcpTable(buffer, ref bufferLength, order: true, addressFamily, TcpTableOwnerPidListener, 0);
             if (result != 0)
-                throw new InvalidOperationException($"无法读取本机 TCP listener 表（错误 {result}）。");
+                throw new InvalidOperationException(AppLocalization.Format("无法读取本机 TCP listener 表（错误 {0}）。", result));
 
             var rows = Marshal.ReadInt32(buffer);
             var bytes = new byte[bufferLength];

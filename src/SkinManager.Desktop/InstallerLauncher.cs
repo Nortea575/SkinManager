@@ -18,21 +18,27 @@ public sealed class ProcessInstallerLauncher : IInstallerLauncher
         var fullInstallDirectory = Path.GetFullPath(installDirectory);
         if (!File.Exists(fullInstallerPath))
         {
-            throw new FileNotFoundException("已下载的安装包不存在。", fullInstallerPath);
+            throw new FileNotFoundException(AppLocalization.Get("已下载的安装包不存在。"), fullInstallerPath);
         }
 
+        using var process = Process.Start(CreateStartInfo(fullInstallerPath, fullInstallDirectory, AppLocalization.IsEnglish));
+        return process is not null;
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(string installerPath, string installDirectory, bool isEnglish)
+    {
         var startInfo = new ProcessStartInfo
         {
-            FileName = fullInstallerPath,
-            WorkingDirectory = fullInstallDirectory,
+            FileName = Path.GetFullPath(installerPath),
+            WorkingDirectory = Path.GetFullPath(installDirectory),
             UseShellExecute = false
         };
         startInfo.ArgumentList.Add("/SILENT");
         startInfo.ArgumentList.Add("/NORESTART");
         startInfo.ArgumentList.Add("/SP-");
         startInfo.ArgumentList.Add("/SKINMANAGERUPDATE=1");
-        startInfo.ArgumentList.Add($"/DIR={fullInstallDirectory}");
-        using var process = Process.Start(startInfo);
-        return process is not null;
+        startInfo.ArgumentList.Add($"/LANG={(isEnglish ? "english" : "chinesesimp")}");
+        startInfo.ArgumentList.Add($"/DIR={startInfo.WorkingDirectory}");
+        return startInfo;
     }
 }

@@ -59,7 +59,7 @@ public sealed class SkinPackage
 }
 
 public sealed class DuplicateSkinException(string id)
-    : InvalidOperationException($"皮肤 ID“{id}”已存在。")
+    : InvalidOperationException(AppLocalization.Format("皮肤 ID“{0}”已存在。", id))
 {
     public string SkinId { get; } = id;
 }

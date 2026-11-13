@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SkinManager.Core\SkinManager.Core.csproj" />
+    <Using Include="SkinManager.Core" />
     <Compile Include="..\SkinManager.Runtime\CodexHostContract.cs" Link="CodexHostContract.cs" />
     <EmbeddedResource Include="SkinFillEngine.js" LogicalName="SkinManager.Rendering.SkinFillEngine.js" />
   </ItemGroup>

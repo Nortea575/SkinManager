@@ -15,13 +15,13 @@ public sealed partial class SkinMarketClient
     private const int MaxCookieHeaderLength = 16 * 1024;
     private const int CommentsPerPage = 20;
     private static readonly Uri DefaultMarketUri = new("https://blog.ancimen.top/?page_id=39");
-    private static readonly Uri DefaultLoginUri = CreateDefaultLoginUri();
     private static readonly Uri DefaultRegistrationUri = new("https://blog.ancimen.top/wp-login.php?action=register");
 
     private readonly object _sessionLock = new();
     private string? _cookieHeader;
     private string? _restNonce;
     private SkinMarketAccount? _account;
+    private Uri? _loginUri;
     private int _sessionGeneration;
 
     public SkinMarketAccount? Account
@@ -35,9 +35,13 @@ public sealed partial class SkinMarketClient
         }
     }
 
-    public Uri LoginUri { get; private set; } = DefaultLoginUri;
+    public Uri LoginUri
+    {
+        get => MarketLanguageUri.ForLogin(_loginUri ?? CreateDefaultLoginUri());
+        private set => _loginUri = value;
+    }
 
-    public Uri RegistrationUri => DefaultRegistrationUri;
+    public Uri RegistrationUri => MarketLanguageUri.ForLogin(DefaultRegistrationUri);
 
     /// <summary>
     /// Reads the market page configuration using the supplied WebView cookie header.
@@ -61,7 +65,7 @@ public sealed partial class SkinMarketClient
         {
             var html = await GetBootstrapHtmlAsync(normalizedCookie, operationCancellation.Token).ConfigureAwait(false);
             var config = ReadBootstrapConfig(html);
-            var loginUri = ValidateSameOrigin(config.LoginUrl, "登录页");
+            var loginUri = ValidateSameOrigin(config.LoginUrl, AppLocalization.Get("登录页"));
 
             if (!config.IsLoggedIn || config.UserId <= 0)
             {
@@ -81,7 +85,9 @@ public sealed partial class SkinMarketClient
                 operationCancellation.Token).ConfigureAwait(false);
             var account = new SkinMarketAccount(
                 config.UserId,
-                string.IsNullOrWhiteSpace(displayName) ? $"用户 {config.UserId.ToString(CultureInfo.InvariantCulture)}" : displayName,
+                string.IsNullOrWhiteSpace(displayName)
+                    ? AppLocalization.Format("用户 {0}", config.UserId.ToString(CultureInfo.InvariantCulture))
+                    : displayName,
                 config.CanSubmit);
 
             return ApplyAccount(generation, normalizedCookie, config.Nonce, loginUri, account)
@@ -90,7 +96,7 @@ public sealed partial class SkinMarketClient
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("刷新市场账号状态超时，请重试。", exception);
+            throw new TimeoutException(AppLocalization.Get("刷新市场账号状态超时，请重试。"), exception);
         }
     }
 
@@ -177,12 +183,12 @@ public sealed partial class SkinMarketClient
         var contentLength = CountUnicodeCharacters(normalizedContent);
         if (contentLength == 0)
         {
-            throw new ArgumentException("评论内容不能为空。", nameof(content));
+            throw new ArgumentException(AppLocalization.Get("评论内容不能为空。"), nameof(content));
         }
 
         if (contentLength > 2000)
         {
-            throw new ArgumentException("评论内容不能超过 2000 个字符。", nameof(content));
+            throw new ArgumentException(AppLocalization.Get("评论内容不能超过 2000 个字符。"), nameof(content));
         }
 
         var session = CaptureRequiredSession();
@@ -199,7 +205,7 @@ public sealed partial class SkinMarketClient
         var root = document.RootElement;
         var comment = ReadComment(RequiredObject(root, "comment"));
         var pending = RequiredBoolean(root, "pending");
-        var message = CommunityOptionalString(root, "message", 200) ?? (pending ? "评论已提交，审核后显示" : "评论已发布");
+        var message = CommunityOptionalString(root, "message", 200) ?? (pending ? AppLocalization.Get("评论已提交，审核后显示") : AppLocalization.Get("评论已发布"));
         return new SkinMarketCommentResult(comment, pending, message);
     }
 
@@ -212,7 +218,7 @@ public sealed partial class SkinMarketClient
         var session = CaptureRequiredSession();
         if (session.Account?.CanSubmit != true)
         {
-            throw new UnauthorizedAccessException("当前账号没有皮肤投稿权限。");
+            throw new UnauthorizedAccessException(AppLocalization.Get("当前账号没有皮肤投稿权限。"));
         }
 
         ValidateSubmissionFields(draft);
@@ -221,7 +227,7 @@ public sealed partial class SkinMarketClient
         var fileInfo = new FileInfo(packagePath);
         if (!fileInfo.Exists || fileInfo.Length <= 0 || fileInfo.Length > SkinPackageReader.MaxArchiveBytes)
         {
-            throw new InvalidDataException("ZIP 文件必须存在且大小在 1 字节到 64 MB 之间。");
+            throw new InvalidDataException(AppLocalization.Get("ZIP 文件必须存在且大小在 1 字节到 64 MB 之间。"));
         }
 
         using var operationCancellation = CreateOperationCancellation(cancellationToken, DownloadTimeout);
@@ -232,7 +238,7 @@ public sealed partial class SkinMarketClient
             packageBytes = await File.ReadAllBytesAsync(packagePath, operationCancellation.Token).ConfigureAwait(false);
             if (packageBytes.LongLength == 0 || packageBytes.LongLength > SkinPackageReader.MaxArchiveBytes)
             {
-                throw new InvalidDataException("ZIP 文件必须存在且大小在 1 字节到 64 MB 之间。");
+                throw new InvalidDataException(AppLocalization.Get("ZIP 文件必须存在且大小在 1 字节到 64 MB 之间。"));
             }
 
             var package = SkinPackageReader.ReadZipBytes(packageBytes);
@@ -240,7 +246,7 @@ public sealed partial class SkinMarketClient
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("读取并校验待投稿 ZIP 超时。", exception);
+            throw new TimeoutException(AppLocalization.Get("读取并校验待投稿 ZIP 超时。"), exception);
         }
 
         using var multipart = new MultipartFormDataContent();
@@ -265,10 +271,10 @@ public sealed partial class SkinMarketClient
         var status = CommunityRequiredString(item, "status", 24);
         var message = status switch
         {
-            "pending" => "投稿已提交，等待管理员审核。",
-            "publish" => "皮肤已通过审核并上架。",
-            "draft" => "投稿已保存为草稿。",
-            _ => $"投稿状态：{status}"
+            "pending" => AppLocalization.Get("投稿已提交，等待管理员审核。"),
+            "publish" => AppLocalization.Get("皮肤已通过审核并上架。"),
+            "draft" => AppLocalization.Get("投稿已保存为草稿。"),
+            _ => AppLocalization.Format("投稿状态：{0}", status)
         };
         return new SkinMarketSubmissionResult(
             RequiredPositiveInt32(item, "postId"),
@@ -280,7 +286,7 @@ public sealed partial class SkinMarketClient
 
     private async Task<string> GetBootstrapHtmlAsync(string cookieHeader, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, DefaultMarketUri);
+        using var request = new HttpRequestMessage(HttpMethod.Get, MarketLanguageUri.ForMarketPage(DefaultMarketUri));
         request.Version = HttpVersion.Version20;
         request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
@@ -290,7 +296,7 @@ public sealed partial class SkinMarketClient
             .ConfigureAwait(false);
         if ((int)response.StatusCode is >= 300 and < 400)
         {
-            throw new InvalidDataException("市场登录状态读取遇到重定向；为保护账号会话，管理器不会跟随该地址。");
+            throw new InvalidDataException(AppLocalization.Get("市场登录状态读取遇到重定向；为保护账号会话，管理器不会跟随该地址。"));
         }
 
         var bytes = await ReadBoundedAsync(response, MaxBootstrapBytes, cancellationToken).ConfigureAwait(false);
@@ -305,7 +311,7 @@ public sealed partial class SkinMarketClient
         }
         catch (DecoderFallbackException exception)
         {
-            throw new InvalidDataException("市场账号页面不是有效的 UTF-8 文本。", exception);
+            throw new InvalidDataException(AppLocalization.Get("市场账号页面不是有效的 UTF-8 文本。"), exception);
         }
     }
 
@@ -377,7 +383,7 @@ public sealed partial class SkinMarketClient
                 operationCancellation.Token).ConfigureAwait(false);
             if ((int)response.StatusCode is >= 300 and < 400)
             {
-                throw new InvalidDataException("市场服务器返回了重定向；管理器不会跟随该地址。");
+                throw new InvalidDataException(AppLocalization.Get("市场服务器返回了重定向；管理器不会跟随该地址。"));
             }
 
             var bytes = await ReadBoundedAsync(response, MaxCommunityResponseBytes, operationCancellation.Token)
@@ -393,12 +399,12 @@ public sealed partial class SkinMarketClient
             }
             catch (JsonException exception)
             {
-                throw new InvalidDataException("市场服务器返回的社区数据不是有效 JSON。", exception);
+                throw new InvalidDataException(AppLocalization.Get("市场服务器返回的社区数据不是有效 JSON。"), exception);
             }
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("市场社区请求超时，请重试。", exception);
+            throw new TimeoutException(AppLocalization.Get("市场社区请求超时，请重试。"), exception);
         }
     }
 
@@ -416,7 +422,7 @@ public sealed partial class SkinMarketClient
         {
             if (_account is null || _cookieHeader is null || _restNonce is null)
             {
-                throw new InvalidOperationException("请先登录市场账号后再操作。");
+                throw new InvalidOperationException(AppLocalization.Get("请先登录市场账号后再操作。"));
             }
 
             return new AccountSession(_cookieHeader, _restNonce, _account);
@@ -516,8 +522,8 @@ public sealed partial class SkinMarketClient
         }
 
         var message = string.IsNullOrWhiteSpace(serverMessage)
-            ? $"市场请求失败（HTTP {(int)statusCode}）。"
-            : $"市场请求失败（HTTP {(int)statusCode}）：{serverMessage}";
+            ? AppLocalization.Format("市场请求失败（HTTP {0}）。", (int)statusCode)
+            : AppLocalization.Format("市场请求失败（HTTP {0}）：{1}", (int)statusCode, AppLocalization.Get(serverMessage));
         return new HttpRequestException(message, null, statusCode);
     }
 
@@ -525,7 +531,7 @@ public sealed partial class SkinMarketClient
     {
         if (string.IsNullOrWhiteSpace(route) || !route.StartsWith("/", StringComparison.Ordinal))
         {
-            throw new ArgumentException("市场 API 路由无效。", nameof(route));
+            throw new ArgumentException(AppLocalization.Get("市场 API 路由无效。"), nameof(route));
         }
 
         var parts = new List<string> { $"rest_route={Uri.EscapeDataString(route)}" };
@@ -535,7 +541,7 @@ public sealed partial class SkinMarketClient
                 $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
         }
 
-        return new Uri(SiteRoot, "/?" + string.Join('&', parts));
+        return MarketLanguageUri.ForPublicRest(new Uri(SiteRoot, "/?" + string.Join('&', parts)));
     }
 
     private static string ValidateCookieHeader(string cookieHeader)
@@ -549,7 +555,7 @@ public sealed partial class SkinMarketClient
         if (value.Length == 0 || value.Length > MaxCookieHeaderLength ||
             value.Any(character => char.IsControl(character)))
         {
-            throw new ArgumentException("市场账号 Cookie 格式无效。", nameof(cookieHeader));
+            throw new ArgumentException(AppLocalization.Get("市场账号 Cookie 格式无效。"), nameof(cookieHeader));
         }
 
         return value;
@@ -560,7 +566,7 @@ public sealed partial class SkinMarketClient
         var match = BootstrapConfigPattern().Match(html);
         if (!match.Success)
         {
-            throw new InvalidDataException("市场页面未提供可读取的账号配置，请检查登录状态后重试。");
+            throw new InvalidDataException(AppLocalization.Get("市场页面未提供可读取的账号配置，请检查登录状态后重试。"));
         }
 
         var json = WebUtility.HtmlDecode(match.Groups["config"].Value);
@@ -570,7 +576,7 @@ public sealed partial class SkinMarketClient
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException("市场账号配置格式无效。");
+                throw new InvalidDataException(AppLocalization.Get("市场账号配置格式无效。"));
             }
 
             return new SkinMarketBootstrapConfig(
@@ -582,7 +588,7 @@ public sealed partial class SkinMarketClient
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException("市场账号配置不是有效 JSON。", exception);
+            throw new InvalidDataException(AppLocalization.Get("市场账号配置不是有效 JSON。"), exception);
         }
     }
 
@@ -605,7 +611,7 @@ public sealed partial class SkinMarketClient
             RequiredNonNegativeInt32(element, "totalPages"));
         if (pagination.Page != requestedPage || pagination.PerPage != perPage || itemCount > perPage)
         {
-            throw new InvalidDataException("市场评论分页信息无效。");
+            throw new InvalidDataException(AppLocalization.Get("市场评论分页信息无效。"));
         }
 
         return pagination;
@@ -616,7 +622,7 @@ public sealed partial class SkinMarketClient
         ArgumentException.ThrowIfNullOrWhiteSpace(skinId);
         if (skinId.Length > 64 || !SkinIdPattern().IsMatch(skinId))
         {
-            throw new ArgumentException("皮肤 ID 格式无效。", nameof(skinId));
+            throw new ArgumentException(AppLocalization.Get("皮肤 ID 格式无效。"), nameof(skinId));
         }
     }
 
@@ -630,7 +636,7 @@ public sealed partial class SkinMarketClient
         ArgumentNullException.ThrowIfNull(draft.Tags);
         if (draft.Tags.Count > 12)
         {
-            throw new ArgumentException("标签最多填写 12 个。", nameof(draft));
+            throw new ArgumentException(AppLocalization.Get("标签最多填写 12 个。"), nameof(draft));
         }
 
         foreach (var tag in draft.Tags)
@@ -644,7 +650,7 @@ public sealed partial class SkinMarketClient
         ArgumentNullException.ThrowIfNull(value);
         if ((!allowEmpty && string.IsNullOrWhiteSpace(value)) || value.Length > maxLength)
         {
-            throw new ArgumentException($"{fieldName}不能超过 {maxLength} 个字符。", fieldName);
+            throw new ArgumentException(AppLocalization.Format("{0}不能超过 {1} 个字符。", AppLocalization.Get(fieldName), maxLength), fieldName);
         }
     }
 
@@ -660,13 +666,14 @@ public sealed partial class SkinMarketClient
     }
 
     private static Uri CreateDefaultLoginUri() => new(
-        "https://blog.ancimen.top/wp-login.php?redirect_to=" + Uri.EscapeDataString(DefaultMarketUri.AbsoluteUri));
+        "https://blog.ancimen.top/wp-login.php?redirect_to=" +
+        Uri.EscapeDataString(MarketLanguageUri.ForMarketPage(DefaultMarketUri).AbsoluteUri));
 
     private static JsonElement RequiredObject(JsonElement element, string name)
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidDataException($"市场响应缺少有效的 {name} 对象。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应缺少有效的 {0} 对象。", name));
         }
 
         return property;
@@ -676,7 +683,7 @@ public sealed partial class SkinMarketClient
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Array)
         {
-            throw new InvalidDataException($"市场响应缺少有效的 {name} 列表。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应缺少有效的 {0} 列表。", name));
         }
 
         return property;
@@ -687,7 +694,7 @@ public sealed partial class SkinMarketClient
         var value = CommunityOptionalString(element, name, maxLength);
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new InvalidDataException($"市场响应缺少有效的 {name}。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应缺少有效的 {0}。", name));
         }
 
         return value;
@@ -702,13 +709,13 @@ public sealed partial class SkinMarketClient
 
         if (property.ValueKind != JsonValueKind.String)
         {
-            throw new InvalidDataException($"市场响应中的 {name} 格式无效。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应中的 {0} 格式无效。", name));
         }
 
         var value = property.GetString() ?? string.Empty;
         if (value.Length > maxLength)
         {
-            throw new InvalidDataException($"市场响应中的 {name} 过长。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应中的 {0} 过长。", name));
         }
 
         return value;
@@ -719,7 +726,7 @@ public sealed partial class SkinMarketClient
         if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Number ||
             !property.TryGetInt32(out var value))
         {
-            throw new InvalidDataException($"市场响应缺少有效的 {name}。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应缺少有效的 {0}。", name));
         }
 
         return value;
@@ -730,7 +737,7 @@ public sealed partial class SkinMarketClient
         var value = CommunityRequiredInt32(element, name);
         if (value <= 0)
         {
-            throw new InvalidDataException($"市场响应中的 {name} 必须是正整数。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应中的 {0} 必须是正整数。", name));
         }
 
         return value;
@@ -741,7 +748,7 @@ public sealed partial class SkinMarketClient
         var value = CommunityRequiredInt32(element, name);
         if (value < 0)
         {
-            throw new InvalidDataException($"市场响应中的 {name} 必须是非负整数。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应中的 {0} 必须是非负整数。", name));
         }
 
         return value;
@@ -751,7 +758,7 @@ public sealed partial class SkinMarketClient
     {
         if (!element.TryGetProperty(name, out var property) || property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
         {
-            throw new InvalidDataException($"市场响应缺少有效的 {name} 布尔值。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应缺少有效的 {0} 布尔值。", name));
         }
 
         return property.GetBoolean();
@@ -766,7 +773,7 @@ public sealed partial class SkinMarketClient
 
         if (property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
         {
-            throw new InvalidDataException($"市场响应中的 {name} 必须是布尔值。");
+            throw new InvalidDataException(AppLocalization.Format("市场响应中的 {0} 必须是布尔值。", name));
         }
 
         return property.GetBoolean();
@@ -801,4 +808,4 @@ public sealed record SkinMarketSubmissionDraft(
 public sealed record SkinMarketSubmissionResult(int PostId, string SkinId, string Name, string Status, string Message);
 
 public sealed class SkinMarketReauthenticationException(HttpStatusCode statusCode)
-    : HttpRequestException("市场登录状态或安全验证已失效，请重新登录后重试。", null, statusCode);
+    : HttpRequestException(AppLocalization.Get("市场登录状态或安全验证已失效，请重新登录后重试。"), null, statusCode);

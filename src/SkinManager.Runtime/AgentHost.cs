@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using SkinManager.Core;
 
 namespace SkinManager.Runtime;
 
@@ -70,6 +71,7 @@ internal static class AgentHost
                 RuntimeStatus status;
                 try
                 {
+                    AppLocalization.Initialize();
                     status = await coordinator.HandleAsync(command, requestTimeout.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (hostLifetime.IsCancellationRequested)
@@ -78,7 +80,7 @@ internal static class AgentHost
                 }
                 catch (Exception ex)
                 {
-                    status = RuntimeStatus.Error($"后台处理失败：{ex.Message}");
+                    status = RuntimeStatus.Error(AppLocalization.Format("后台处理失败：{0}", ex.Message));
                 }
 
                 using var responseTimeout = CancellationTokenSource.CreateLinkedTokenSource(hostLifetime.Token);

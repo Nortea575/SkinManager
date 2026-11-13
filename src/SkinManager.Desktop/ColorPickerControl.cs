@@ -23,7 +23,7 @@ public sealed class ColorPickerControl : FrameworkElement
         Width = 224;
         Height = 224;
         Cursor = Cursors.Cross;
-        AutomationProperties.SetName(this, "色相与饱和度、明度调色盘");
+        LocalizedUiText.SetAutomationName(this, "色相与饱和度、明度调色盘");
     }
 
     public event EventHandler? ColorChanged;

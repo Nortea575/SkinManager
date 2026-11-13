@@ -154,6 +154,10 @@ internal static class Program
         var betaWorkspaceOnly = args.Contains("--beta-workspace-only", StringComparer.OrdinalIgnoreCase);
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
         var marketCommunityOnly = args.Contains("--market-community-only", StringComparer.OrdinalIgnoreCase);
+        var localizationUiOnly = args.Contains("--localization-ui-only", StringComparer.OrdinalIgnoreCase);
+        var settingsLanguageOnly = args.Contains("--settings-language-only", StringComparer.OrdinalIgnoreCase);
+        var mainLanguageOnly = args.Contains("--main-language-only", StringComparer.OrdinalIgnoreCase);
+        var generalLanguageOnly = args.Contains("--general-language-only", StringComparer.OrdinalIgnoreCase);
         var beta2UiOnly = args.Contains("--beta2-ui-only", StringComparer.OrdinalIgnoreCase);
         var beta114Only = args.Contains("--beta114-only", StringComparer.OrdinalIgnoreCase);
         var colorPickerOnly = args.Contains("--color-picker-only", StringComparer.OrdinalIgnoreCase);
@@ -166,6 +170,8 @@ internal static class Program
         var chatReplyOnly = args.Contains("--chat-reply-only", StringComparer.OrdinalIgnoreCase);
         var creationOnly = args.Contains("--creation-only", StringComparer.OrdinalIgnoreCase);
         var connectionOnly = args.Contains("--connection-only", StringComparer.OrdinalIgnoreCase);
+        AppLocalization.Initialize(Path.Combine(FindTestOutputDirectory(), "language-harness", "language.json"));
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
         if (!chatReplyOnly && !connectionOnly && !updateChannelOnly)
@@ -201,6 +207,59 @@ internal static class Program
                 {
                     await MarketCommunityUiChecks.RunAsync();
                     await MarketAuthBridgeChecks.RunAsync();
+                }
+                else if (mainLanguageOnly)
+                {
+                    try
+                    {
+                        await MainWindowLanguageChecks.RunAsync();
+                    }
+                    finally
+                    {
+                        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+                    }
+                }
+                else if (generalLanguageOnly)
+                {
+                    try
+                    {
+                        await GeneralLocalizationUiChecks.RunAsync();
+                    }
+                    finally
+                    {
+                        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+                    }
+                }
+                else if (settingsLanguageOnly)
+                {
+                    try
+                    {
+                        await CompatibilityWindowTests.RunAsync();
+                    }
+                    finally
+                    {
+                        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+                    }
+                }
+                else if (localizationUiOnly)
+                {
+                    try
+                    {
+                        await GeneralLocalizationUiChecks.RunAsync();
+                        await CompatibilityWindowTests.RunAsync();
+                        await MainWindowLanguageChecks.RunAsync();
+                        var missingChineseSources = AppLocalization.MissingSources
+                            .Where(source => source.Any(character => character is >= '\u3400' and <= '\u9FFF'))
+                            .ToArray();
+                        Check(missingChineseSources.Length == 0,
+                            missingChineseSources.Length == 0
+                                ? "定位与兼容性、主窗口语言检查后没有遗漏的中文静态资源"
+                                : $"定位与兼容性、主窗口语言检查仍有中文静态资源遗漏：{string.Join(" | ", missingChineseSources)}");
+                    }
+                    finally
+                    {
+                        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+                    }
                 }
                 else if (instanceReviewUi)
                 {
@@ -249,6 +308,8 @@ internal static class Program
                     {
                         await ColorPickerChecks.RunAsync();
                         await GifBackgroundChecks.RunAsync();
+                        await GeneralLocalizationUiChecks.RunAsync();
+                        await MainWindowLanguageChecks.RunAsync();
                     }
                 }
                 _exitCode = 0;
@@ -368,27 +429,10 @@ internal static class Program
             Check(FindNamed<TextBlock>(window, "RuntimeConnectedTargetText").Text == $"PID {connectedTarget.Identity.ProcessId}",
                 "同进程地址变化不会清除仍有效的当前连接身份");
 
-            RuntimeCompatibilityRequest? compatibilityRequest = null;
-            window.SetCompatibilityConfiguratorForTesting((request, cancellationToken) =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                compatibilityRequest = request;
-                return Task.FromResult(new RuntimeCompatibilityResult(
-                    RuntimeCompatibilityState.Applied,
-                    request.Endpoint,
-                    "fake IPv6 compatibility applied",
-                    true,
-                    request.ExpectedInstance));
-            });
-            await InvokeWindowAsync(
-                window,
-                "ConfigureCompatibilityForCurrentTargetAsync",
-                new RuntimeCompatibilityOptions(),
-                CancellationToken.None,
-                true);
-            Check(compatibilityRequest?.Endpoint == "http://[::1]:9335/" &&
-                  compatibilityRequest.ExpectedInstance == connectedTarget.Identity,
-                "同一调试进程存在 IPv4 首选地址时，语言兼容请求仍沿用当前 IPv6 Endpoint");
+            Check(window.GetType().GetMethod(
+                      "ConfigureCompatibilityForCurrentTargetAsync",
+                      System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is null,
+                "主窗口不再注册 Codex 语言兼容设置路径");
 
             fakeInstances.Instances = [];
             await WaitUntilAsync(() => Task.FromResult(
@@ -519,7 +563,6 @@ internal static class Program
             ShowActivated = !captureScreenshots,
             ShowInTaskbar = !captureScreenshots
         };
-        ConfigureFakeCompatibility(window);
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         window.Closed += (_, _) => closed.TrySetResult();
         window.Show();
@@ -611,7 +654,6 @@ internal static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize
         };
-        ConfigureFakeCompatibility(window);
 
         var deadline = DateTime.UtcNow.AddSeconds(15);
         DateTime? dialogLoadedAt = null;
@@ -2490,7 +2532,6 @@ internal static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize
         };
-        ConfigureFakeCompatibility(window);
         window.Show();
         try
         {
@@ -2953,8 +2994,8 @@ internal static class Program
             var applyButton = FindNamed<Button>(window, "ApplyRuntimeButton");
             var restoreButton = FindNamed<Button>(window, "RemoveRuntimeButton");
             Check(AutomationProperties.GetName(restoreButton) == "恢复原生外观" &&
-                  restoreButton.ToolTip?.ToString()?.Contains("固定简体中文设置保持不变", StringComparison.Ordinal) == true,
-                "恢复原生按钮只表示外观回退，并说明语言设置继续保留");
+                  restoreButton.ToolTip?.ToString()?.Contains("只移除皮肤外观", StringComparison.Ordinal) == true,
+                "恢复原生按钮提示只说明移除皮肤并恢复原生页面");
             var controlsRemainVisible = new[] { applyButton, restoreButton }.All(button =>
             {
                 if (!button.IsVisible || button.ActualWidth <= 0 || button.ActualHeight <= 0)
@@ -4987,23 +5028,6 @@ internal static class Program
                 }
             }
         }
-    }
-
-    private static void ConfigureFakeCompatibility(MainWindow window)
-    {
-        window.SetCompatibilityConfiguratorForTesting((request, cancellationToken) =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var state = request.Options.ForceSimplifiedChinese
-                ? RuntimeCompatibilityState.Applied
-                : RuntimeCompatibilityState.Disabled;
-            return Task.FromResult(new RuntimeCompatibilityResult(
-                state,
-                request.Endpoint,
-                "Preview fake compatibility result.",
-                true,
-                request.ExpectedInstance));
-        });
     }
 
     private static CodexInstance CreateFakeInstance(

@@ -179,14 +179,6 @@ internal static class Beta2UiChecks
             instances,
             readinessTimeout: TimeSpan.FromMilliseconds(100),
             pollInterval: TimeSpan.FromMilliseconds(5)));
-        searchWindow.SetCompatibilityConfiguratorForTesting((request, _) => Task.FromResult(
-            new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Disabled,
-                request.Endpoint,
-                "Fake compatibility result.",
-                true,
-                request.ExpectedInstance)));
-
         searchWindow.Show();
         try
         {
@@ -345,13 +337,6 @@ internal static class Beta2UiChecks
             instances,
             readinessTimeout: TimeSpan.FromMilliseconds(100),
             pollInterval: TimeSpan.FromMilliseconds(5)));
-        window.SetCompatibilityConfiguratorForTesting((request, _) => Task.FromResult(
-            new RuntimeCompatibilityResult(
-                RuntimeCompatibilityState.Disabled,
-                request.Endpoint,
-                "Fake compatibility result.",
-                true,
-                request.ExpectedInstance)));
         window.Show();
         try
         {
@@ -576,15 +561,18 @@ internal static class Beta2UiChecks
                     AutomationProperties.GetName(supportActions[1]) == "打开 GitHub 仓库" &&
                     FindVisualChildren<System.Windows.Shapes.Path>(supportActions[1]).Any(),
                 "支持作者按钮保留且 GitHub 入口使用五角星矢量图标，不设默认打开动作并保留标题栏关闭按钮");
-            Uri? requestedSponsorUri = null;
-            support.ExternalUriLauncher = uri => requestedSponsorUri = uri;
+            var requestedExternalUris = new List<Uri>();
+            support.ExternalUriLauncher = requestedExternalUris.Add;
             supportActions[0].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Require(requestedSponsorUri?.AbsoluteUri == "https://blog.ancimen.top/?page_id=170",
+            var requestedSponsorUri = requestedExternalUris.SingleOrDefault();
+            Require(requestedExternalUris.Count == 1 &&
+                    requestedSponsorUri is { Scheme: "https", Host: "blog.ancimen.top", AbsolutePath: "/", IsDefaultPort: true } &&
+                    GetQueryValue(requestedSponsorUri, "page_id") == "170" &&
+                    GetQueryValue(requestedSponsorUri, "lang") == "zh",
                 "点击支持作者只向系统启动器请求打开指定赞助页");
-            Uri? requestedGitHubUri = null;
-            support.ExternalUriLauncher = uri => requestedGitHubUri = uri;
             supportActions[1].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Require(requestedGitHubUri?.AbsoluteUri == "https://github.com/Nortea575/SkinManager",
+            Require(requestedExternalUris.Count == 2 &&
+                    requestedExternalUris[1].AbsoluteUri == "https://github.com/Nortea575/SkinManager",
                 "点击 GitHub 按钮只向可替换的外部启动器请求仓库地址");
             await SaveWindowScreenshotAsync(support,
                 Path.Combine(screenshotDirectory, "支持作者-夜间.png"));
@@ -615,6 +603,14 @@ internal static class Beta2UiChecks
             tooltip = new ToolTip { Content = "皮肤操作提示", PlacementTarget = moreButton };
             tooltip.IsOpen = true;
             await WaitUntilAsync(() => tooltip.IsOpen && tooltip.ActualWidth > 0 && tooltip.ActualHeight > 0, "打开工具提示");
+            var settingsTabs = Find<TabControl>(settings, "SettingsTabs");
+            settingsTabs.SelectedItem = Find<TabItem>(settings, "AppearanceTab");
+            await WaitUntilAsync(() => settings.AppearanceModeBox.IsLoaded &&
+                                      settings.AppearanceModeBox.IsVisible &&
+                                      settings.AppearanceModeBox.ActualWidth > 0 &&
+                                      settings.AppearanceModeBox.ActualHeight > 0,
+                "切换到外观设置页并完成控件布局");
+            await settings.Dispatcher.InvokeAsync(settings.UpdateLayout, DispatcherPriority.Render);
             settings.AppearanceModeBox.IsDropDownOpen = true;
             await WaitUntilAsync(() => settings.AppearanceModeBox.IsDropDownOpen, "打开外观模式下拉弹层");
 
@@ -718,6 +714,8 @@ internal static class Beta2UiChecks
         var ayanami = SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami"));
         var managerRoot = Path.Combine(testRoot, "weak-connection");
         var store = CreateStore(Path.Combine(managerRoot, "skins"), ayanami);
+        AppLocalization.Initialize(Path.Combine(managerRoot, "language.json"));
+        AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         var identity = new CodexProcessIdentity(44621, DateTimeOffset.UnixEpoch, "C:\\Fixtures\\Codex.exe");
         var endpoint = "http://127.0.0.1:9335";
         var weakInstance = new CodexInstance(identity, "Fixture Codex", 0, 9335, null)
@@ -728,11 +726,14 @@ internal static class Beta2UiChecks
             DebugEndpoint = endpoint
         };
         var instanceService = new FixtureCodexInstanceService([weakInstance]);
+        var statusReads = 0;
+        var launchCalls = 0;
+        var applyCalls = 0;
         var status = new RuntimeStatus(
             RuntimeStatusState.Connected,
             "ayanami",
             endpoint,
-            "Fixture CDP session remains active",
+            AppLocalization.Format("已应用到 {0} 个 Codex 页面。", 1),
             false,
             appliedTargetCount: 1,
             connectedInstance: identity);
@@ -742,16 +743,58 @@ internal static class Beta2UiChecks
             Path.Combine(managerRoot, "preview-profile"),
             readRuntimeStatusOnLoad: true,
             codexInstanceService: instanceService,
-            runtimeStatusReader: _ => Task.FromResult(status));
+            runtimeStatusReader: _ =>
+            {
+                Interlocked.Increment(ref statusReads);
+                return Task.FromResult(status);
+            });
+        window.SetRuntimeApplyWorkflowForTesting(new RuntimeApplyWorkflow(
+            (_, _) =>
+            {
+                Interlocked.Increment(ref launchCalls);
+                return Task.FromResult(new RuntimeStatus(RuntimeStatusState.Connecting, null, endpoint, "launch", true));
+            },
+            (_, _) =>
+            {
+                Interlocked.Increment(ref applyCalls);
+                return Task.FromResult(status);
+            },
+            instanceService));
         window.Show();
         try
         {
             await WaitForMainWindowAsync(window, "弱 CDP 状态主窗口加载");
             await WaitUntilAsync(() => Find<TextBlock>(window, "RuntimeStatusText").Text.Contains("已连接", StringComparison.Ordinal),
                 "弱 HTTP listener 状态保留已连接状态");
-            Require(Find<TextBlock>(window, "RuntimeStatusMessage").Text.Contains("Fixture CDP session remains active", StringComparison.Ordinal) &&
+            var refreshTimer = typeof(MainWindow).GetField("_runtimeStatusRefreshTimer", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(window) as DispatcherTimer
+                ?? throw new InvalidOperationException("找不到连接状态刷新计时器。");
+            refreshTimer.Stop();
+            Require(Find<TextBlock>(window, "RuntimeStatusMessage").Text == "已应用到 1 个 Codex 页面。" &&
                     instanceService.InstanceSnapshotReads > 1,
                 "HTTP listener 不可验证时保留活跃会话与原状态信息");
+
+            var selectedBefore = Find<ListBox>(window, "SkinList").SelectedItem;
+            var selectedSkinIdBefore = selectedBefore is null ? null : ReadSkinId(selectedBefore);
+            var previewBrowser = Find<WebView2>(window, "PreviewBrowser");
+            var statusReadBaseline = Volatile.Read(ref statusReads);
+            var instanceReadBaseline = instanceService.InstanceSnapshotReads;
+            AppLocalization.SetLanguage(AppLanguage.English);
+            await WaitUntilAsync(() =>
+                    Find<TextBlock>(window, "RuntimeStatusText").Text.Contains("Connected", StringComparison.Ordinal) &&
+                    Find<TextBlock>(window, "RuntimeStatusMessage").Text.Contains("1", StringComparison.Ordinal) &&
+                    !Find<TextBlock>(window, "RuntimeStatusMessage").Text.Any(character => character is >= '\u4e00' and <= '\u9fff'),
+                "活动连接状态切换为英文摘要");
+            AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+            await WaitUntilAsync(() =>
+                    Find<TextBlock>(window, "RuntimeStatusText").Text == "已连接并已应用" &&
+                    Find<TextBlock>(window, "RuntimeStatusMessage").Text == "已应用到 1 个 Codex 页面。",
+                "活动连接状态切回中文摘要");
+            var selectedAfter = Find<ListBox>(window, "SkinList").SelectedItem;
+            Require(statusReads == statusReadBaseline && instanceService.InstanceSnapshotReads == instanceReadBaseline &&
+                    launchCalls == 0 && applyCalls == 0 && selectedSkinIdBefore == (selectedAfter is null ? null : ReadSkinId(selectedAfter)) &&
+                    ReferenceEquals(previewBrowser, Find<WebView2>(window, "PreviewBrowser")),
+                "中英文来回切换仅重绘活动连接摘要，不重连、不重新应用，也不重建预览或改变选中皮肤");
         }
         finally
         {
@@ -1051,6 +1094,21 @@ internal static class Beta2UiChecks
         using var destination = new MemoryStream();
         source.CopyTo(destination);
         return destination.ToArray();
+    }
+
+    private static string? GetQueryValue(Uri uri, string key)
+    {
+        foreach (var part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = part.IndexOf('=');
+            var partKey = Uri.UnescapeDataString(separator < 0 ? part : part[..separator]);
+            if (partKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                return Uri.UnescapeDataString(separator < 0 ? string.Empty : part[(separator + 1)..]);
+            }
+        }
+
+        return null;
     }
 
     private static void Require(bool condition, string message)

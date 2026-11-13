@@ -21,7 +21,7 @@ internal static class PreviewImageCropper
         if (bytes.Length == 0 || !double.IsFinite(targetWidthDip) || targetWidthDip <= 0 ||
             !double.IsFinite(targetHeightDip) || targetHeightDip <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(targetWidthDip), "缩略图尺寸必须大于零，图片数据不能为空。 ");
+            throw new ArgumentOutOfRangeException(nameof(targetWidthDip), AppLocalization.Get("缩略图尺寸必须大于零，图片数据不能为空。 "));
         }
 
         dpiScaleX = double.IsFinite(dpiScaleX) && dpiScaleX > 0 ? dpiScaleX : 1;
@@ -76,7 +76,7 @@ internal static class PreviewImageCropper
         ArgumentNullException.ThrowIfNull(bytes);
         if (bytes.Length == 0)
         {
-            throw new InvalidDataException("背景图片数据不能为空。 ");
+            throw new InvalidDataException(AppLocalization.Get("背景图片数据不能为空。 "));
         }
 
         if (IsGif(bytes))
@@ -92,14 +92,14 @@ internal static class PreviewImageCropper
             BitmapCacheOption.None);
         if (decoder.Frames.Count == 0)
         {
-            throw new InvalidDataException("背景图片不包含可解码的图像帧。 ");
+            throw new InvalidDataException(AppLocalization.Get("背景图片不包含可解码的图像帧。 "));
         }
 
         var width = decoder.Frames[0].PixelWidth;
         var height = decoder.Frames[0].PixelHeight;
         if (width <= 0 || height <= 0)
         {
-            throw new InvalidDataException("背景图片尺寸无效。 ");
+            throw new InvalidDataException(AppLocalization.Get("背景图片尺寸无效。 "));
         }
 
         return (width, height);
@@ -114,7 +114,7 @@ internal static class PreviewImageCropper
             BitmapCacheOption.None);
         if (decoder.Frames.Count == 0)
         {
-            throw new InvalidDataException("GIF 背景图片不包含可解码的图像帧。 ");
+            throw new InvalidDataException(AppLocalization.Get("GIF 背景图片不包含可解码的图像帧。 "));
         }
 
         var frame = decoder.Frames[0];
@@ -160,14 +160,14 @@ internal static class PreviewImageCropper
         ArgumentNullException.ThrowIfNull(source);
         if (!double.IsFinite(ratio) || ratio <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(ratio), "裁切比例必须大于零。 ");
+            throw new ArgumentOutOfRangeException(nameof(ratio), AppLocalization.Get("裁切比例必须大于零。 "));
         }
 
         var sourceWidth = source.PixelWidth;
         var sourceHeight = source.PixelHeight;
         if (sourceWidth <= 0 || sourceHeight <= 0)
         {
-            throw new InvalidDataException("背景图片尺寸无效。 ");
+            throw new InvalidDataException(AppLocalization.Get("背景图片尺寸无效。 "));
         }
 
         var sourceRatio = (double)sourceWidth / sourceHeight;

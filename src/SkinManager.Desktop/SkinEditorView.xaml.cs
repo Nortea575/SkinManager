@@ -42,11 +42,14 @@ public partial class SkinEditorView : UserControl
     private bool _colorPickerSessionActive;
     private bool _syncingColorPickerInputs;
     private bool _colorPickerInputsValid = true;
+    private bool _localizationSubscribed;
+    private string? _validationMessageSource;
 
     public SkinEditorView()
     {
         InitializeComponent();
         Loaded += SkinEditorView_Loaded;
+        Unloaded += SkinEditorView_Unloaded;
         TokenFields.ItemsSource = _tokenFields;
         BackgroundFields.ItemsSource = _backgroundFields;
         ComponentFields.ItemsSource = _componentFields;
@@ -70,7 +73,64 @@ public partial class SkinEditorView : UserControl
         }
     }
 
-    private void SkinEditorView_Loaded(object sender, RoutedEventArgs e) => WindowMotion.AttachBehaviors(this);
+    private void SkinEditorView_Loaded(object sender, RoutedEventArgs e)
+    {
+        WindowMotion.AttachBehaviors(this);
+        if (!_localizationSubscribed)
+        {
+            AppLocalization.LanguageChanged += AppLocalization_LanguageChanged;
+            _localizationSubscribed = true;
+        }
+
+        RefreshLocalizedLabels();
+    }
+
+    private void SkinEditorView_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (_localizationSubscribed)
+        {
+            AppLocalization.LanguageChanged -= AppLocalization_LanguageChanged;
+            _localizationSubscribed = false;
+        }
+    }
+
+    private void AppLocalization_LanguageChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(RefreshLocalizedLabels), DispatcherPriority.DataBind);
+            return;
+        }
+
+        RefreshLocalizedLabels();
+    }
+
+    private void RefreshLocalizedLabels()
+    {
+        LocalizedUiText.SetText(EditorTitle, _isNew ? "新建皮肤" : "编辑皮肤");
+        LocalizedUiText.SetContent(SaveButton, _isNew ? "创建皮肤" : "保存修改");
+        foreach (var option in _componentOptions.Concat(_componentStateOptions).Concat(_componentPropertyOptions))
+        {
+            option.RefreshLocalization();
+        }
+
+        foreach (var field in _tokenFields.Concat(_backgroundFields).Concat(_componentFields))
+        {
+            field.RefreshLocalization();
+        }
+
+        _creationAccentField?.RefreshLocalization();
+        _creationBackgroundField?.RefreshLocalization();
+        UpdateMetadataSummary();
+        UpdateDirtyState();
+        UpdateCreationBackgroundLabels();
+        UpdateBackgroundImageLabels();
+        UpdateComponentScopeHint();
+        if (_validationMessageSource is not null)
+        {
+            LocalizedUiText.SetText(ValidationErrorText, _validationMessageSource);
+        }
+    }
 
     private void EditorTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -111,7 +171,7 @@ public partial class SkinEditorView : UserControl
     public event EventHandler? EditorModeChanged;
     public event EventHandler? PreviewFlushRequested;
 
-    public SkinDraft Draft => _draft ?? throw new InvalidOperationException("皮肤草稿尚未初始化。");
+    public SkinDraft Draft => _draft ?? throw new InvalidOperationException(AppLocalization.Get("皮肤草稿尚未初始化。"));
     public string SelectedScope => (ScopeInput.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "base";
     public bool IsDirty => _draft is not null && !string.Equals(_baseline, Draft.Manifest.ToJsonString(), StringComparison.Ordinal);
     public bool IsNew => _isNew;
@@ -132,8 +192,8 @@ public partial class SkinEditorView : UserControl
         _loading = true;
         try
         {
-            EditorTitle.Text = isNew ? "新建皮肤" : "编辑皮肤";
-            SaveButton.Content = isNew ? "创建皮肤" : "保存修改";
+            LocalizedUiText.SetText(EditorTitle, isNew ? "新建皮肤" : "编辑皮肤");
+            LocalizedUiText.SetContent(SaveButton, isNew ? "创建皮肤" : "保存修改");
             SetSaveActionsLayout(isNew);
             EditorModeTabs.SelectedIndex = isNew ? 0 : 1;
             BackgroundFocusModeCheckBox.IsChecked = false;
@@ -167,8 +227,8 @@ public partial class SkinEditorView : UserControl
         _historyGestureActive = false;
         _gestureSnapshotPushed = false;
         _isNew = false;
-        EditorTitle.Text = "编辑皮肤";
-        SaveButton.Content = "保存修改";
+        LocalizedUiText.SetText(EditorTitle, "编辑皮肤");
+        LocalizedUiText.SetContent(SaveButton, "保存修改");
         SetSaveActionsLayout(isNew: false);
         PruneDraftResources();
         UpdateHistoryControls();
@@ -245,7 +305,8 @@ public partial class SkinEditorView : UserControl
             return;
         }
 
-        ValidationErrorText.Text = message;
+        _validationMessageSource = message;
+        LocalizedUiText.SetText(ValidationErrorText, message);
         ValidationErrorText.Visibility = Visibility.Visible;
     }
 
@@ -303,10 +364,7 @@ public partial class SkinEditorView : UserControl
 
         var imagePath = ReadString(background, "image");
         var hasImage = !string.IsNullOrWhiteSpace(imagePath);
-            CreationBackgroundPathText.Text = hasImage ? "已选择背景图片" : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景";
-        CreationBackgroundPathText.ToolTip = hasImage
-            ? "背景图片已添加，可调整背景明暗与位置。"
-            : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景";
+        UpdateCreationBackgroundLabels();
         CreationBackgroundHexInput.IsEnabled = !hasImage;
         CreationBackgroundPickerButton.IsEnabled = !hasImage;
         CreationBackgroundColorPanel.Visibility = hasImage ? Visibility.Collapsed : Visibility.Visible;
@@ -373,10 +431,14 @@ public partial class SkinEditorView : UserControl
                 : SelectedScope == "base"
                     ? (_isNew ? definition.DefaultValue ?? string.Empty : "继承原版")
                     : "继承基础范围";
+            var labelTemplate = node is null ? "{0} · {1}" : null;
+            object?[]? labelArguments = node is null
+                ? [definition.Label, SelectedScope == "base" ? "继承原版" : "继承基础范围"]
+                : null;
             _tokenFields.Add(new SkinEditorField(
-                path, node is not null ? definition.Label : $"{definition.Label} · {(SelectedScope == "base" ? "继承原版" : "继承基础范围")}",
-                ToDisplayValue(value, isNumeric, percentMode), placeholder,
-                definition.EditorKind == SkinEditorFieldKind.Color, isNumeric, percentMode, OnFieldValueChanged));
+                path, definition.Label, ToDisplayValue(value, isNumeric, percentMode), placeholder,
+                definition.EditorKind == SkinEditorFieldKind.Color, isNumeric, percentMode, OnFieldValueChanged,
+                labelTemplate, labelArguments));
         }
     }
 
@@ -385,8 +447,7 @@ public partial class SkinEditorView : UserControl
         _backgroundFields.Clear();
         var background = GetScopedObject("background");
         var imagePath = ReadString(background, "image");
-        BackgroundImagePathText.Text = imagePath ?? (SelectedScope == "base" ? "未选择背景图" : "沿用基础背景图");
-        BackgroundImagePathText.ToolTip = imagePath ?? (SelectedScope == "base" ? "未选择背景图" : "当前范围未覆盖图片，将沿用基础背景图");
+        UpdateBackgroundImageLabels(imagePath);
         RemoveBackgroundButton.IsEnabled = !string.IsNullOrWhiteSpace(imagePath);
         var fit = ReadString(background, "fit") ?? (SelectedScope == "base" ? "cover" : "inherit");
         BackgroundFitInput.SelectedItem = BackgroundFitInput.Items.Cast<ComboBoxItem>()
@@ -405,10 +466,14 @@ public partial class SkinEditorView : UserControl
                 : SelectedScope == "base"
                     ? (_isNew ? definition.DefaultValue ?? string.Empty : "继承原版")
                     : "继承基础范围";
+            var labelTemplate = node is null ? "{0} · {1}" : null;
+            object?[]? labelArguments = node is null
+                ? [definition.Label, SelectedScope == "base" ? "继承原版" : "继承基础范围"]
+                : null;
             _backgroundFields.Add(new SkinEditorField(
-                path, node is not null ? definition.Label : $"{definition.Label} · {(SelectedScope == "base" ? "继承原版" : "继承基础范围")}",
-                ToDisplayValue(value, isNumeric, percentMode), placeholder,
-                definition.EditorKind == SkinEditorFieldKind.Color, isNumeric, percentMode, OnFieldValueChanged));
+                path, definition.Label, ToDisplayValue(value, isNumeric, percentMode), placeholder,
+                definition.EditorKind == SkinEditorFieldKind.Color, isNumeric, percentMode, OnFieldValueChanged,
+                labelTemplate, labelArguments));
         }
     }
 
@@ -433,10 +498,7 @@ public partial class SkinEditorView : UserControl
             : (component?["states"] as JsonObject)?[state] as JsonObject;
         if (propertyObject is null)
         {
-            ComponentScopeHint.Text = SelectedScope == "base"
-                ? "基础范围尚无此组件覆盖；添加属性即可创建样式。"
-                : "当前范围尚无此组件覆盖，预览沿用基础值；添加属性即可创建覆盖。";
-            ComponentScopeHint.Visibility = Visibility.Visible;
+            UpdateComponentScopeHint(showWhenEmpty: true);
             return;
         }
 
@@ -456,10 +518,7 @@ public partial class SkinEditorView : UserControl
                 definition.EditorKind == SkinEditorFieldKind.Color, isNumeric, percentMode, OnFieldValueChanged));
         }
 
-        ComponentScopeHint.Text = SelectedScope == "base"
-            ? "此状态尚无自定义属性；基础样式由原版界面提供。"
-            : "此范围尚无自定义属性，预览沿用已有样式；添加属性即可覆盖。";
-        ComponentScopeHint.Visibility = _componentFields.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateComponentScopeHint();
     }
 
     private void Metadata_TextChanged(object sender, TextChangedEventArgs e)
@@ -723,8 +782,8 @@ public partial class SkinEditorView : UserControl
 
     private void UpdateMetadataSummary()
     {
-        var name = string.IsNullOrWhiteSpace(NameInput.Text) ? "新皮肤" : NameInput.Text.Trim();
-        var version = string.IsNullOrWhiteSpace(VersionInput.Text) ? "未设版本" : VersionInput.Text.Trim();
+        var name = string.IsNullOrWhiteSpace(NameInput.Text) ? AppLocalization.Get("新皮肤") : NameInput.Text.Trim();
+        var version = string.IsNullOrWhiteSpace(VersionInput.Text) ? AppLocalization.Get("未设版本") : VersionInput.Text.Trim();
         MetadataSummary.Text = $"{name} · {version}";
     }
 
@@ -932,8 +991,70 @@ public partial class SkinEditorView : UserControl
     private void UpdateDirtyState()
     {
         var dirty = IsDirty;
-        DirtyStateText.Text = dirty ? "未保存的修改" : _isNew ? "尚未保存到皮肤库" : "草稿已保存";
+        LocalizedUiText.SetText(DirtyStateText, dirty ? "未保存的修改" : _isNew ? "尚未保存到皮肤库" : "草稿已保存");
         DirtyStateText.SetResourceReference(TextBlock.ForegroundProperty, dirty ? "WarningText" : "SecondaryText");
+    }
+
+    private void UpdateCreationBackgroundLabels()
+    {
+        if (_draft is null)
+        {
+            return;
+        }
+
+        var hasImage = !string.IsNullOrWhiteSpace(ReadString(Draft.Manifest["background"] as JsonObject, "image"));
+        LocalizedUiText.SetText(CreationBackgroundPathText,
+            hasImage ? "已选择背景图片" : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景");
+        LocalizedUiText.SetToolTip(CreationBackgroundPathText,
+            hasImage ? "背景图片已添加，可调整背景明暗与位置。" : "可拖入 PNG、JPG 或 GIF，也可使用纯色背景");
+    }
+
+    private void UpdateBackgroundImageLabels(string? imagePath = null)
+    {
+        if (_draft is null)
+        {
+            return;
+        }
+
+        imagePath ??= ReadString(GetScopedObject("background"), "image");
+        var fallback = SelectedScope == "base" ? "未选择背景图" : "沿用基础背景图";
+        var tooltipFallback = SelectedScope == "base" ? "未选择背景图" : "当前范围未覆盖图片，将沿用基础背景图";
+        if (imagePath is null)
+        {
+            LocalizedUiText.SetText(BackgroundImagePathText, fallback);
+            LocalizedUiText.SetToolTip(BackgroundImagePathText, tooltipFallback);
+            return;
+        }
+
+        LocalizedUiText.SetText(BackgroundImagePathText, "{0}", imagePath);
+        LocalizedUiText.SetToolTip(BackgroundImagePathText, "{0}", imagePath);
+    }
+
+    private void UpdateComponentScopeHint(bool showWhenEmpty = false)
+    {
+        if (_draft is null || ComponentInput.SelectedValue is not string componentId)
+        {
+            ComponentScopeHint.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var component = GetNode(Draft.Manifest, ScopedPath("components", componentId)) as JsonObject;
+        var state = SelectedState();
+        var properties = state == "default"
+            ? component
+            : (component?["states"] as JsonObject)?[state] as JsonObject;
+        var noComponentOverride = properties is null;
+        var source = noComponentOverride
+            ? SelectedScope == "base"
+                ? "基础范围尚无此组件覆盖；添加属性即可创建样式。"
+                : "当前范围尚无此组件覆盖，预览沿用基础值；添加属性即可创建覆盖。"
+            : SelectedScope == "base"
+                ? "此状态尚无自定义属性；基础样式由原版界面提供。"
+                : "此范围尚无自定义属性，预览沿用已有样式；添加属性即可覆盖。";
+        LocalizedUiText.SetText(ComponentScopeHint, source);
+        ComponentScopeHint.Visibility = noComponentOverride || showWhenEmpty && _componentFields.Count == 0
+            ? Visibility.Visible
+            : _componentFields.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetSaveActionsLayout(bool isNew)
@@ -972,8 +1093,8 @@ public partial class SkinEditorView : UserControl
 
         var dialog = new OpenFileDialog
         {
-            Title = "选择背景图片",
-            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.gif|所有文件|*.*",
+            Title = AppLocalization.Get("选择背景图片"),
+            Filter = AppLocalization.Get("图片文件|*.png;*.jpg;*.jpeg;*.gif|所有文件|*.*"),
             CheckFileExists = true,
             Multiselect = false
         };
@@ -1013,7 +1134,7 @@ public partial class SkinEditorView : UserControl
             var info = new FileInfo(path);
             if (info.Length == 0 || info.Length > SkinPackageReader.MaxSingleFileBytes)
             {
-                throw new InvalidDataException("背景图片不能为空或超过单文件大小上限（32 MB）。");
+                throw new InvalidDataException(AppLocalization.Get("背景图片不能为空或超过单文件大小上限（32 MB）。"));
             }
 
             var bytes = File.ReadAllBytes(path);
@@ -1052,7 +1173,7 @@ public partial class SkinEditorView : UserControl
         var rootImagePath = ReadString(rootBackground, "image");
         Draft.SetBackgroundImage(bytes, originalName);
         var imagePath = ReadString(Draft.Manifest["background"] as JsonObject, "image")
-            ?? throw new InvalidDataException("无法保存背景图资源路径。");
+            ?? throw new InvalidDataException(AppLocalization.Get("无法保存背景图资源路径。"));
         if (rootImagePath is null)
         {
             RemoveNode(Draft.Manifest, ["background", "image"]);
@@ -1364,16 +1485,21 @@ public partial class SkinEditorView : UserControl
             foreach (var input in new[] { PaletteHexInput, PaletteRedInput, PaletteGreenInput, PaletteBlueInput })
             {
                 input.SetResourceReference(Control.BorderBrushProperty, "ControlLine");
-                input.ToolTip = null;
+                LocalizedUiText.SetToolTip(input, string.Empty);
             }
 
             return;
         }
 
-        if (source is not null)
+        if (source is null)
         {
-            source.SetResourceReference(Control.BorderBrushProperty, "DangerBorder");
-            source.ToolTip = error;
+            return;
+        }
+
+        source.SetResourceReference(Control.BorderBrushProperty, "DangerBorder");
+        if (error is not null)
+        {
+            LocalizedUiText.SetToolTip(source, error);
         }
     }
 
@@ -1571,7 +1697,8 @@ public partial class SkinEditorView : UserControl
 
     private void ClearValidationError()
     {
-        ValidationErrorText.Text = string.Empty;
+        _validationMessageSource = null;
+        LocalizedUiText.SetText(ValidationErrorText, string.Empty);
         ValidationErrorText.Visibility = Visibility.Collapsed;
     }
 
@@ -1746,21 +1873,35 @@ public partial class SkinEditorView : UserControl
         return percent.ToString("0.##", CultureInfo.InvariantCulture);
     }
 
-    private sealed record EditorOption(string Id, string Label);
+    private sealed class EditorOption(string id, string label) : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public string Id { get; } = id;
+        private string LabelSource { get; } = label;
+        public string Label => AppLocalization.Get(LabelSource);
+
+        public void RefreshLocalization() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Label)));
+    }
 
     public sealed class SkinEditorField : INotifyPropertyChanged
     {
         private readonly Action<SkinEditorField> _changed;
+        private readonly string _labelSource;
+        private readonly object?[] _labelArguments;
+        private readonly string _placeholderSource;
         private string _value;
 
         internal SkinEditorField(IReadOnlyList<string> path, string label, string value, string placeholder, bool isColor, bool isNumeric,
             SkinFieldDisplayTransform displayTransform,
-            Action<SkinEditorField> changed)
+            Action<SkinEditorField> changed,
+            string? labelTemplate = null,
+            object?[]? labelArguments = null)
         {
             Path = path;
-            Label = label;
+            _labelSource = labelTemplate ?? label;
+            _labelArguments = labelArguments ?? [];
             _value = value;
-            Placeholder = placeholder;
+            _placeholderSource = placeholder;
             IsColor = isColor;
             IsNumeric = isNumeric;
             DisplayTransform = displayTransform;
@@ -1769,11 +1910,21 @@ public partial class SkinEditorView : UserControl
 
         public event PropertyChangedEventHandler? PropertyChanged;
         public IReadOnlyList<string> Path { get; }
-        public string Label { get; }
-        public string Placeholder { get; }
+        public string Label => _labelArguments.Length == 0
+            ? AppLocalization.Get(_labelSource)
+            : AppLocalization.Format(_labelSource, _labelArguments
+                .Select(argument => argument is string source ? AppLocalization.Get(source) : argument)
+                .ToArray());
+        public string Placeholder => AppLocalization.Get(_placeholderSource);
         public bool IsColor { get; }
         public bool IsNumeric { get; }
         public SkinFieldDisplayTransform DisplayTransform { get; }
+
+        internal void RefreshLocalization()
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Label)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Placeholder)));
+        }
 
         public string Value
         {

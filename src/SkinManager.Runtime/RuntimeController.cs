@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using SkinManager.Core;
 
 namespace SkinManager.Runtime;
 
@@ -115,6 +116,7 @@ public sealed class RuntimeController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request = request with { Options = new RuntimeCompatibilityOptions(false) };
         Uri endpoint;
         try
         {
@@ -139,7 +141,7 @@ public sealed class RuntimeController
             if (pipe is null)
             {
                 if (!File.Exists(_agentExecutablePath))
-                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), $"找不到后台程序：{_agentExecutablePath}");
+                    return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), AppLocalization.Format("找不到后台程序：{0}", _agentExecutablePath));
                 StartAgentIfNeeded();
                 pipe = await TryConnectAsync(TimeSpan.FromSeconds(12), commandToken).ConfigureAwait(false);
             }
@@ -177,11 +179,11 @@ public sealed class RuntimeController
         {
             if (cancellationToken.IsCancellationRequested)
                 throw;
-            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.TimedOut, endpoint.ToString(), $"语言设置操作在 {AgentResponseTimeout.TotalSeconds:0} 秒内未完成。");
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.TimedOut, endpoint.ToString(), AppLocalization.Format("旧版语言恢复操作在 {0:0} 秒内未完成。", AgentResponseTimeout.TotalSeconds));
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or JsonException or InvalidOperationException or Win32Exception)
         {
-            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), $"语言设置后台通信失败：{ex.Message}");
+            return new RuntimeCompatibilityResult(RuntimeCompatibilityState.Failed, endpoint.ToString(), AppLocalization.Format("旧版语言恢复后台通信失败：{0}", ex.Message));
         }
         finally
         {
@@ -227,7 +229,7 @@ public sealed class RuntimeController
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException or Win32Exception)
         {
-            return Publish(RuntimeStatus.Error($"无法启动 Codex 调试版：{ex.Message}"));
+            return Publish(RuntimeStatus.Error(AppLocalization.Format("无法启动 Codex 调试版：{0}", ex.Message)));
         }
     }
 
@@ -247,7 +249,7 @@ public sealed class RuntimeController
             if (pipe is null && startAgent)
             {
                 if (!File.Exists(_agentExecutablePath))
-                    return Publish(RuntimeStatus.Error($"找不到后台程序：{_agentExecutablePath}"));
+                    return Publish(RuntimeStatus.Error(AppLocalization.Format("找不到后台程序：{0}", _agentExecutablePath)));
                 StartAgentIfNeeded();
                 pipe = await TryConnectAsync(_agentPipeConnectTimeout, commandToken).ConfigureAwait(false);
                 if (pipe is null && !IsAgentRunning())
@@ -264,7 +266,7 @@ public sealed class RuntimeController
                     var detail = IsAgentRunning()
                         ? "后台程序仍在运行，但通信管道未就绪。"
                         : "后台程序已退出或无法启动。";
-                    return Publish(RuntimeStatus.Error($"{detail}未发送本次皮肤请求，请重试。"));
+                    return Publish(RuntimeStatus.Error(AppLocalization.Format("{0}未发送本次皮肤请求，请重试。", detail)));
                 }
                 var stopped = RuntimeStatus.Stopped(operation == AgentOperation.GetStatus
                     ? "当前没有运行中的皮肤连接。"
@@ -294,13 +296,13 @@ public sealed class RuntimeController
         {
             if (cancellationToken.IsCancellationRequested)
                 throw;
-            var timeout = RuntimeStatus.Error($"后台命令在 {AgentResponseTimeout.TotalSeconds:0} 秒内未完成。");
+            var timeout = RuntimeStatus.Error(AppLocalization.Format("后台命令在 {0:0} 秒内未完成。", AgentResponseTimeout.TotalSeconds));
             _lastStatus = timeout;
             return Publish(timeout);
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or JsonException or InvalidOperationException or Win32Exception)
         {
-            var error = RuntimeStatus.Error($"皮肤后台通信失败：{ex.Message}");
+            var error = RuntimeStatus.Error(AppLocalization.Format("皮肤后台通信失败：{0}", ex.Message));
             _lastStatus = error;
             return Publish(error);
         }
@@ -384,6 +386,13 @@ public sealed class RuntimeController
 
     private RuntimeStatus Publish(RuntimeStatus status)
     {
+        status = new RuntimeStatus(status.State, status.SkinId, status.Endpoint,
+            status.Message is null ? null : AppLocalization.Get(status.Message), status.IsDebugPortOpen,
+            status.AppliedTargetCount, status.ConnectedInstance,
+            status.CompatibilityResult is null ? null : status.CompatibilityResult with
+            {
+                Message = status.CompatibilityResult.Message is null ? null : AppLocalization.Get(status.CompatibilityResult.Message)
+            });
         _lastStatus = status;
         var handlers = StatusChanged;
         if (handlers is not null)

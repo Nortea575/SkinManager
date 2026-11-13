@@ -1,4 +1,5 @@
 using System.IO;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -14,20 +15,39 @@ internal static class HistoryChecks
     {
         var releases = ChangelogReader.ReadEmbedded();
         var currentVersionTag = UpdateCoordinator.ReadCurrentVersionTag();
+        var previousBetaVersionTag = GetPreviousBetaVersionTag(currentVersionTag);
+        var expectedPriorVersions = new List<string>();
+        if (previousBetaVersionTag is not null)
+        {
+            expectedPriorVersions.Add(previousBetaVersionTag);
+        }
+        expectedPriorVersions.Add("1.1.3");
+        expectedPriorVersions.Add("1.1.3-beta.1");
+        expectedPriorVersions.Add("1.1.2");
         Check(releases.Count >= 4, "内嵌更新日志包含多个公开版本");
+        var releaseVersions = releases.Select(release => release.Version).ToArray();
+        var priorVersionIndices = expectedPriorVersions
+            .Select(version => Array.IndexOf(releaseVersions, version))
+            .ToArray();
         Check(releases[0].Version == currentVersionTag &&
-              releases[1].Version == "1.1.3" &&
-              releases[2].Version == "1.1.3-beta.1" &&
-              releases[3].Version == "1.1.2",
+              priorVersionIndices.All(index => index > 0) &&
+              priorVersionIndices.SequenceEqual(priorVersionIndices.OrderBy(index => index)),
             "历史版本按 CHANGELOG 顺序显示当前测试版及既有正式版、测试版");
-        Check(releases[0].DateLabel == "2026-11-12" &&
-              releases[0].Body.Contains("GIF", StringComparison.Ordinal) &&
-              releases[0].Body.Contains("自由调色", StringComparison.Ordinal) &&
-              !releases[0].Body.Contains("**", StringComparison.Ordinal),
-            "当前测试版保留发布日期与新功能正文并转成原生纯文本");
-        Check(releases[1].DateLabel == "2026-11-10" &&
-              releases[1].Body.Contains("保持活动连接", StringComparison.Ordinal) &&
-              releases[1].Body.Contains("直接拖动皮肤排序", StringComparison.Ordinal),
+        var currentRelease = releases.Single(release => release.Version == currentVersionTag);
+        Check(!string.IsNullOrWhiteSpace(currentRelease.DateLabel) &&
+              currentRelease.Body.Length > 0 &&
+              !currentRelease.Body.Contains("**", StringComparison.Ordinal),
+            "当前版本历史保留发布日期与正文并转成原生纯文本");
+        var gifBetaRelease = releases.Single(release => release.Version == "1.1.4-beta.1");
+        Check(gifBetaRelease.DateLabel == "2026-11-12" &&
+              gifBetaRelease.Body.Contains("GIF", StringComparison.Ordinal) &&
+              gifBetaRelease.Body.Contains("自由调色", StringComparison.Ordinal) &&
+              !gifBetaRelease.Body.Contains("**", StringComparison.Ordinal),
+            "上一测试版保留 GIF 与自由调色功能条目");
+        var stableRelease = releases.Single(release => release.Version == "1.1.3");
+        Check(stableRelease.DateLabel == "2026-11-10" &&
+              stableRelease.Body.Contains("保持活动连接", StringComparison.Ordinal) &&
+              stableRelease.Body.Contains("直接拖动皮肤排序", StringComparison.Ordinal),
             "1.1.3 正式版历史仍保留连接与排序功能条目");
         var betaOneRelease = releases.Single(release => release.Version == "1.1.3-beta.1");
         Check(betaOneRelease.DateLabel == "2026-11-10" &&
@@ -155,6 +175,25 @@ internal static class HistoryChecks
         }
 
         Console.WriteLine($"通过：{label}");
+    }
+
+    private static string? GetPreviousBetaVersionTag(string currentVersionTag)
+    {
+        const string betaMarker = "-beta.";
+        var markerIndex = currentVersionTag.LastIndexOf(betaMarker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            return null;
+        }
+
+        var betaNumberStart = markerIndex + betaMarker.Length;
+        if (!int.TryParse(currentVersionTag[betaNumberStart..], NumberStyles.None, CultureInfo.InvariantCulture, out var betaNumber) ||
+            betaNumber <= 1)
+        {
+            return null;
+        }
+
+        return $"{currentVersionTag[..betaNumberStart]}{(betaNumber - 1).ToString(CultureInfo.InvariantCulture)}";
     }
 
     private static void TryDeleteDirectory(string path)

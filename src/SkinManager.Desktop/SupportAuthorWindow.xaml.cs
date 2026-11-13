@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
+using SkinManager.Market;
 
 namespace SkinManager.Desktop;
 
@@ -20,12 +21,13 @@ public partial class SupportAuthorWindow : Window
 
     private void SupportAuthorLinkButton_Click(object sender, RoutedEventArgs e)
     {
-        TryOpenUri(SponsorPageUri, "无法打开赞助页，请检查系统浏览器设置。", "支持作者");
+        TryOpenUri(MarketLanguageUri.ForMarketPage(SponsorPageUri),
+            AppLocalization.Get("无法打开赞助页，请检查系统浏览器设置。"), AppLocalization.Get("支持作者"));
     }
 
     private void GitHubLinkButton_Click(object sender, RoutedEventArgs e)
     {
-        TryOpenUri(GitHubRepositoryUri, "无法打开 GitHub 仓库，请检查系统浏览器设置。", "GitHub");
+        TryOpenUri(GitHubRepositoryUri, AppLocalization.Get("无法打开 GitHub 仓库，请检查系统浏览器设置。"), "GitHub");
     }
 
     private void TryOpenUri(Uri uri, string errorMessage, string title)

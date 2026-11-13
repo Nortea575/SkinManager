@@ -112,7 +112,7 @@ public sealed class SkinOrderStore
     private void WriteIds(IReadOnlyList<string> ids)
     {
         var directory = Path.GetDirectoryName(_path)
-            ?? throw new InvalidOperationException("皮肤排序文件路径无效。");
+            ?? throw new InvalidOperationException(AppLocalization.Get("皮肤排序文件路径无效。"));
         Directory.CreateDirectory(directory);
         var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(_path)}.{Guid.NewGuid():N}.tmp");
         try
