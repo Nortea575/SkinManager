@@ -11,6 +11,7 @@ public partial class SupportAuthorWindow : Window
     private static readonly Uri GitHubRepositoryUri = new("https://github.com/Nortea575/SkinManager");
 
     internal Action<Uri> ExternalUriLauncher { get; set; } = OpenExternalUri;
+    internal event EventHandler? FeedbackRequested;
 
     public SupportAuthorWindow()
     {
@@ -29,6 +30,9 @@ public partial class SupportAuthorWindow : Window
     {
         TryOpenUri(GitHubRepositoryUri, AppLocalization.Get("无法打开 GitHub 仓库，请检查系统浏览器设置。"), "GitHub");
     }
+
+    private void FeedbackButton_Click(object sender, RoutedEventArgs e) =>
+        FeedbackRequested?.Invoke(this, EventArgs.Empty);
 
     private void TryOpenUri(Uri uri, string errorMessage, string title)
     {

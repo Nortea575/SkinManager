@@ -154,6 +154,7 @@ internal static class Program
         var betaWorkspaceOnly = args.Contains("--beta-workspace-only", StringComparer.OrdinalIgnoreCase);
         var marketUiOnly = args.Contains("--market-ui-only", StringComparer.OrdinalIgnoreCase);
         var marketCommunityOnly = args.Contains("--market-community-only", StringComparer.OrdinalIgnoreCase);
+        var feedbackUiOnly = args.Contains("--feedback-ui-only", StringComparer.OrdinalIgnoreCase);
         var localizationUiOnly = args.Contains("--localization-ui-only", StringComparer.OrdinalIgnoreCase);
         var settingsLanguageOnly = args.Contains("--settings-language-only", StringComparer.OrdinalIgnoreCase);
         var mainLanguageOnly = args.Contains("--main-language-only", StringComparer.OrdinalIgnoreCase);
@@ -194,6 +195,10 @@ internal static class Program
                     {
                         await GifBackgroundChecks.RunAsync();
                     }
+                }
+                else if (feedbackUiOnly)
+                {
+                    await FeedbackUiChecks.RunAsync();
                 }
                 else if (beta2UiOnly)
                 {

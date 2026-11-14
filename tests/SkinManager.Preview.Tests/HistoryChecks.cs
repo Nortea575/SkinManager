@@ -113,7 +113,7 @@ internal static class HistoryChecks
                   historyScrollViewer.ActualHeight > 100 && historyScrollViewer.ScrollableHeight > 0,
                 "常规窗口内历史条目进入可滚动区域");
             Check(client.CheckCount == 1 && client.DownloadCount == 1 &&
-                  coordinator.Release?.DisplayVersion == "1.1.4-beta.2" && coordinator.HasDownloadedUpdate,
+                  coordinator.Release?.DisplayVersion == "1.1.5-beta.1" && coordinator.HasDownloadedUpdate,
                 "切换到离线历史页不请求网络且保留更新候选和下载结果");
             Check(((StackPanel)window.FindName("UpdateActions")!).Visibility == Visibility.Collapsed &&
                   ((Button)window.FindName("CloseButton")!).Visibility == Visibility.Visible,
@@ -131,7 +131,7 @@ internal static class HistoryChecks
             var updateScrollViewer = (ScrollViewer)window.FindName("UpdateScrollViewer")!;
             Check(((Grid)window.FindName("UpdateView")!).Visibility == Visibility.Visible &&
                   ((Grid)window.FindName("HistoryView")!).Visibility == Visibility.Collapsed &&
-                  ((TextBlock)window.FindName("ReleaseVersionText")!).Text == "可用版本：1.1.4-beta.2（测试版）" &&
+                  ((TextBlock)window.FindName("ReleaseVersionText")!).Text == "可用版本：1.1.5-beta.1（测试版）" &&
                   ((Button)window.FindName("InstallButton")!).Visibility == Visibility.Visible &&
                   ((Button)window.FindName("InstallButton")!).IsEnabled,
                 "切回检查更新后恢复候选版本信息与安装操作");
@@ -216,10 +216,10 @@ internal static class HistoryChecks
     private sealed class CountingUpdateClient(string downloadDirectory) : IUpdateClient
     {
         private readonly UpdateRelease _release = new(
-            new Version(1, 1, 4),
-            "v1.1.4-beta.2",
+            new Version(1, 1, 5),
+            "v1.1.5-beta.1",
             "离线测试候选更新说明。",
-            new Uri("https://updates.invalid/SkinManager-Setup-1.1.4-beta.2.exe"),
+            new Uri("https://updates.invalid/SkinManager-Setup-1.1.5-beta.1.exe"),
             4,
             new string('0', 64))
         {

@@ -33,6 +33,9 @@ public partial class SkinMarketWindow
 {
     private const int CommentsPerPage = 20;
     private readonly ObservableCollection<MarketCommentRow> _comments = [];
+    private MarketAccountSession? _accountSession;
+    private bool _ownsAccountSession;
+    private int? _observedAccountUserId;
     private IMarketAccountAuthProvider? _accountAuthProvider;
     private Func<IReadOnlyList<SkinCatalogEntry>>? _readLocalSkinCatalog;
     private Action<string, string>? _exportLocalSkinPackage;
@@ -64,11 +67,27 @@ public partial class SkinMarketWindow
         bool useDefaultAccountAuth,
         string? accountProfileDirectory,
         Func<IReadOnlyList<SkinCatalogEntry>>? readLocalSkinCatalog,
-        Action<string, string>? exportLocalSkinPackage)
+        Action<string, string>? exportLocalSkinPackage,
+        MarketAccountSession? accountSession)
     {
-        _accountAuthProvider = accountAuthProvider ?? (useDefaultAccountAuth
-            ? new WebView2MarketAccountAuthProvider(AccountCookieBridge, accountProfileDirectory)
-            : null);
+        if (accountSession is not null && !ReferenceEquals(accountSession.Client, _client))
+        {
+            throw new ArgumentException("共享账号会话必须使用当前市场客户端。", nameof(accountSession));
+        }
+
+        _accountAuthProvider = accountSession is not null
+            ? accountSession.AuthProvider
+            : accountAuthProvider ?? (useDefaultAccountAuth
+                ? new WebView2MarketAccountAuthProvider(AccountCookieBridge, accountProfileDirectory)
+                : null);
+        _accountSession = accountSession ?? new MarketAccountSession(
+            _client,
+            _accountAuthProvider,
+            ownsClient: false,
+            ownsAuthProvider: true);
+        _ownsAccountSession = accountSession is null;
+        _observedAccountUserId = _client.Account?.UserId;
+        _accountSession.StateChanged += MarketAccountSession_StateChanged;
         _accountLifetimeCancellation = new CancellationTokenSource();
         _readLocalSkinCatalog = readLocalSkinCatalog;
         _exportLocalSkinPackage = exportLocalSkinPackage;
@@ -78,8 +97,8 @@ public partial class SkinMarketWindow
 
     private async Task InitializeAccountSessionAsync()
     {
-        var provider = _accountAuthProvider;
-        if (provider is null || _isClosed)
+        var accountSession = _accountSession;
+        if (accountSession?.AuthProvider is null || _isClosed)
         {
             return;
         }
@@ -90,21 +109,17 @@ public partial class SkinMarketWindow
         }
 
         _isAccountBusy = true;
-        var oldUserId = _client.Account?.UserId;
         var cancellationToken = _accountLifetimeCancellation?.Token ?? CancellationToken.None;
         SetAccountStatus("正在恢复账号状态…");
         UpdateCommunityControls();
         try
         {
-            await provider.InitializeAsync(cancellationToken);
-            var cookieHeader = await provider.ReadCookieHeaderAsync(cancellationToken);
-            await _client.RefreshAccountAsync(cookieHeader, cancellationToken);
+            await accountSession.RefreshAsync(cancellationToken);
             if (_isClosed || cancellationToken.IsCancellationRequested)
             {
                 return;
             }
 
-            OnAccountChanged(oldUserId);
             if (_client.Account is { } account)
             {
                 SetAccountStatus("已登录：{0}", arguments: [account.DisplayName]);
@@ -138,28 +153,25 @@ public partial class SkinMarketWindow
             return;
         }
 
-        if (_accountAuthProvider is null)
+        var accountSession = _accountSession;
+        if (accountSession?.AuthProvider is null)
         {
             SetAccountStatus("当前窗口没有启用账号登录。", isError: true);
             return;
         }
 
         _isAccountBusy = true;
-        var oldUserId = _client.Account?.UserId;
         var cancellationToken = _accountLifetimeCancellation?.Token ?? CancellationToken.None;
         SetAccountStatus("正在打开本站账号页面…");
         UpdateCommunityControls();
         try
         {
-            await _accountAuthProvider.OpenAsync(this, startUri, cancellationToken);
-            var cookieHeader = await _accountAuthProvider.ReadCookieHeaderAsync(cancellationToken);
-            await _client.RefreshAccountAsync(cookieHeader, cancellationToken);
+            await accountSession.SignInAsync(this, startUri, cancellationToken);
             if (_isClosed || cancellationToken.IsCancellationRequested)
             {
                 return;
             }
 
-            OnAccountChanged(oldUserId);
             if (_client.Account is { } account)
             {
                 SetAccountStatus("已登录：{0}", arguments: [account.DisplayName]);
@@ -390,6 +402,42 @@ public partial class SkinMarketWindow
         }
     }
 
+    private void MarketAccountSession_StateChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (!Dispatcher.HasShutdownStarted)
+            {
+                _ = Dispatcher.BeginInvoke(new Action(() => MarketAccountSession_StateChanged(sender, e)));
+            }
+
+            return;
+        }
+
+        if (_isClosed)
+        {
+            return;
+        }
+
+        var previousUserId = _observedAccountUserId;
+        var currentUserId = _client.Account?.UserId;
+        if (previousUserId != currentUserId)
+        {
+            _observedAccountUserId = currentUserId;
+            OnAccountChanged(previousUserId);
+            if (_client.Account is { } account)
+            {
+                SetAccountStatus("已登录：{0}", arguments: [account.DisplayName]);
+            }
+            else if (previousUserId is not null)
+            {
+                SetAccountStatus("市场账号已退出或失效，请重新登录。", isError: true);
+            }
+        }
+
+        UpdateCommunityControls();
+    }
+
     private void UpdateCommunityControls()
     {
         if (LoginButton is null || _isClosed)
@@ -400,20 +448,22 @@ public partial class SkinMarketWindow
         var account = _client.Account;
         var authenticated = account is not null;
         var authAvailable = _accountAuthProvider is not null;
+        var accountBusy = _isAccountBusy || _accountSession?.IsBusy == true;
         LoginButton.Visibility = authenticated ? Visibility.Collapsed : Visibility.Visible;
         RegisterButton.Visibility = authenticated ? Visibility.Collapsed : Visibility.Visible;
         LogoutButton.Visibility = authenticated ? Visibility.Visible : Visibility.Collapsed;
         AccountDisplayText.Text = account?.DisplayName ?? string.Empty;
         AccountDisplayText.Visibility = authenticated ? Visibility.Visible : Visibility.Collapsed;
-        LoginButton.IsEnabled = authAvailable && !_isAccountBusy;
-        RegisterButton.IsEnabled = authAvailable && !_isAccountBusy;
-        LogoutButton.IsEnabled = !_isAccountBusy && !_isSubmitting && !_isPreparingUpload;
-        OpenUploadButton.IsEnabled = !_isAccountBusy && !_isDownloading && !_isPreparingUpload &&
+        LoginButton.IsEnabled = authAvailable && !accountBusy;
+        RegisterButton.IsEnabled = authAvailable && !accountBusy;
+        LogoutButton.IsEnabled = !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        OpenUploadButton.IsEnabled = !accountBusy && !_isDownloading && !_isPreparingUpload &&
             !_isSubmitting && !_isLikeBusy && !_isCommentBusy;
 
         var canSubmit = account?.CanSubmit == true;
         UploadAccessPrompt.Visibility = _isUploadVisible && !canSubmit ? Visibility.Visible : Visibility.Collapsed;
         UploadForm.Visibility = _isUploadVisible && canSubmit ? Visibility.Visible : Visibility.Collapsed;
+        UploadLoginButton.IsEnabled = authAvailable && !accountBusy;
         if (_isUploadVisible && account is null)
         {
             LocalizedUiText.SetText(UploadAccessMessage, "登录后可以选择本地皮肤或 ZIP 包提交。投稿会由网站审核，审核前不会公开展示。");
@@ -431,25 +481,25 @@ public partial class SkinMarketWindow
             LocalizedUiText.SetText(UploadPermissionSummary, _isUploadVisible ? "投稿内容会经过网站审核。" : string.Empty);
         }
 
-        SubmitUploadButton.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload && _uploadPackagePath is not null &&
+        SubmitUploadButton.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload && _uploadPackagePath is not null &&
             !string.IsNullOrWhiteSpace(UploadDescriptionBox.Text) &&
             Version.TryParse(UploadMinimumVersionBox.Text.Trim(), out _);
         CancelSubmissionButton.Visibility = _isSubmitting ? Visibility.Visible : Visibility.Collapsed;
         CancelSubmissionButton.IsEnabled = _isSubmitting;
-        UploadDescriptionBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        UploadAuthorBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        UploadLicenseBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        UploadMinimumVersionBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        UploadTagsBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        LocalSkinBox.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        ExportLocalSkinButton.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload && LocalSkinBox.Items.Count > 0;
-        PickUploadZipButton.IsEnabled = canSubmit && !_isSubmitting && !_isPreparingUpload;
-        DetailsLikeButton.IsEnabled = IsDetailsVisible && !_isLikeBusy && !_isCommentBusy;
-        CommentInput.IsEnabled = authenticated && IsDetailsVisible && !_isCommentBusy;
+        UploadDescriptionBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        UploadAuthorBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        UploadLicenseBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        UploadMinimumVersionBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        UploadTagsBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        LocalSkinBox.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        ExportLocalSkinButton.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload && LocalSkinBox.Items.Count > 0;
+        PickUploadZipButton.IsEnabled = canSubmit && !accountBusy && !_isSubmitting && !_isPreparingUpload;
+        DetailsLikeButton.IsEnabled = IsDetailsVisible && !accountBusy && !_isLikeBusy && !_isCommentBusy;
+        CommentInput.IsEnabled = authenticated && !accountBusy && IsDetailsVisible && !_isCommentBusy;
         SendCommentButton.Visibility = authenticated ? Visibility.Visible : Visibility.Collapsed;
         LoginToCommentButton.Visibility = authenticated ? Visibility.Collapsed : Visibility.Visible;
-        LoginToCommentButton.IsEnabled = authAvailable && !_isAccountBusy;
-        SendCommentButton.IsEnabled = authenticated && IsDetailsVisible && !_isCommentBusy && !_isLikeBusy &&
+        LoginToCommentButton.IsEnabled = authAvailable && !accountBusy;
+        SendCommentButton.IsEnabled = authenticated && !accountBusy && IsDetailsVisible && !_isCommentBusy && !_isLikeBusy &&
             !string.IsNullOrWhiteSpace(CommentInput.Text);
         PreviousCommentsButton.IsEnabled = IsDetailsVisible && !_isCommentBusy && _commentsPage > 1;
         NextCommentsButton.IsEnabled = IsDetailsVisible && !_isCommentBusy &&
@@ -540,15 +590,19 @@ public partial class SkinMarketWindow
             TryDeleteUploadFile(pendingPath);
             _pendingTemporaryUploadPath = null;
         }
-        if (_accountAuthProvider is not null)
+        if (_accountSession is not null)
         {
             try
             {
-                await _accountAuthProvider.DisposeAsync();
+                _accountSession.StateChanged -= MarketAccountSession_StateChanged;
+                if (_ownsAccountSession)
+                {
+                    await _accountSession.DisposeAsync();
+                }
             }
             catch (Exception exception)
             {
-                Debug.WriteLine($"市场账号桥接关闭失败：{exception}");
+                Debug.WriteLine($"市场账号会话关闭失败：{exception}");
             }
         }
 
@@ -565,7 +619,7 @@ public partial class SkinMarketWindow
 
     private async void LogoutButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isAccountBusy || _isSubmitting || _isPreparingUpload)
+        if (_isAccountBusy || _accountSession?.IsBusy == true || _isSubmitting || _isPreparingUpload)
         {
             return;
         }
@@ -577,12 +631,11 @@ public partial class SkinMarketWindow
             _accountGeneration++;
             _commentsCancellation?.Cancel();
             _communityMutationCancellation?.Cancel();
-            if (_accountAuthProvider is not null)
+            if (_accountSession is not null)
             {
-                await _accountAuthProvider.ClearCookiesAsync(_accountLifetimeCancellation?.Token ?? CancellationToken.None);
+                await _accountSession.SignOutAsync(_accountLifetimeCancellation?.Token ?? CancellationToken.None);
             }
 
-            _client.ClearAccount();
             foreach (var row in _rows)
             {
                 row.SetLikeState(false, row.LikeCount);
@@ -613,7 +666,7 @@ public partial class SkinMarketWindow
 
     private async Task ToggleLikeAsync()
     {
-        if (_isLikeBusy || _selectedRow is not { } row)
+        if (_isLikeBusy || _accountSession?.IsBusy == true || _selectedRow is not { } row)
         {
             return;
         }
@@ -685,7 +738,7 @@ public partial class SkinMarketWindow
 
     private async Task SendCommentAsync()
     {
-        if (_isCommentBusy || _selectedRow is not { } row)
+        if (_isCommentBusy || _accountSession?.IsBusy == true || _selectedRow is not { } row)
         {
             return;
         }
@@ -1032,7 +1085,7 @@ public partial class SkinMarketWindow
 
     private async Task SubmitSkinAsync()
     {
-        if (_isSubmitting || _client.Account is not { CanSubmit: true } account)
+        if (_isSubmitting || _accountSession?.IsBusy == true || _client.Account is not { CanSubmit: true } account)
         {
             UpdateCommunityControls();
             return;
@@ -1190,7 +1243,7 @@ public partial class SkinMarketWindow
             return false;
         }
 
-        OnAccountChanged(expectedUserId);
+        _accountSession?.NotifyAccountChanged();
         SetAccountStatus("{0}请求发现登录状态已过期，请重新登录后继续。", isError: true,
             arguments: [AppLocalization.Get(operation)]);
         if (IsDetailsVisible)

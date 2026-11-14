@@ -63,7 +63,7 @@ internal static class GeneralLocalizationUiChecks
             updatesWindow.UpdateLayout();
             var englishHistory = GetHistoryEntries(updatesWindow);
             Require(englishHistory.Count > 0 && englishHistory[0].Version == UpdateCoordinator.ReadCurrentVersionTag() &&
-                    englishHistory[0].Body.Contains("Settings layout", StringComparison.Ordinal) &&
+                    englishHistory[0].Body.Contains("Submit suggestions", StringComparison.Ordinal) &&
                     !ContainsCjk(englishHistory[0].Body),
                 "English history log is loaded from the embedded English changelog");
             await Program.SaveWindowScreenshotAsync(updatesWindow,
@@ -88,7 +88,7 @@ internal static class GeneralLocalizationUiChecks
             };
             supportWindow.Show();
             await WaitForWindowAsync(supportWindow);
-            Require(supportWindow.Title == "Support the author" &&
+            Require(supportWindow.Title == "Suggestions" &&
                     FindNamed<TextBlock>(supportWindow, "FreeDistributionText").Text.Contains("free", StringComparison.OrdinalIgnoreCase) &&
                     supportWindow.FontFamily.Source.Contains("Space Grotesk", StringComparison.OrdinalIgnoreCase) &&
                     supportWindow.FontFamily.Source.Contains("Noto Sans SC", StringComparison.OrdinalIgnoreCase),
@@ -144,10 +144,10 @@ internal static class GeneralLocalizationUiChecks
 
             Require(updatesWindow.Title == "版本与更新" &&
                     updatesWindow.StatusText.Text == "发现新版本 1.1.5-beta.1" &&
-                    GetHistoryEntries(updatesWindow)[0].Body.Contains("调整设置布局", StringComparison.Ordinal) &&
+                    GetHistoryEntries(updatesWindow)[0].Body.Contains("提出建议", StringComparison.Ordinal) &&
                     FindNamed<TextBox>(updatesWindow, "ReleaseNotesText").Text == "Fixture release notes remain unchanged.",
                 "Open update and history window refreshes to Chinese immediately");
-            Require(supportWindow.Title == "支持作者" &&
+            Require(supportWindow.Title == "提出建议" &&
                     FindNamed<TextBlock>(supportWindow, "FreeDistributionText").Text.Contains("免费", StringComparison.Ordinal),
                 "Open support author panel refreshes to Chinese immediately");
 

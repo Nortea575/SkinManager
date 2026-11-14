@@ -148,8 +148,8 @@ internal static class BetaWorkspaceChecks
                 "导入后仍选中刚导入的 Ayanami");
 
             var version = Find<TextBlock>(window, "AppVersionLabel");
-            Require(version.Text == "1.1.4-beta.2",
-                "主窗口显示本轮公开测试版本标签");
+            Require(version.Text == UpdateCoordinator.ReadCurrentVersionTag(),
+                "主窗口版本标签来自当前程序集公开版本");
             var updateLabel = Find<TextBlock>(window, "UpdateEntryLabel");
             Require(updateLabel.Text == "版本与更新" &&
                     updateLabel.ToolTip?.ToString()?.Contains(version.Text, StringComparison.OrdinalIgnoreCase) == true,

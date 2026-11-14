@@ -1,0 +1,106 @@
+<Window x:Class="SkinManager.Desktop.FeedbackWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:SkinManager.Desktop"
+        Title="{local:Loc '发送反馈'}" Width="640" Height="620" MinWidth="560" MinHeight="540"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="CanResizeWithGrip"
+        Background="{DynamicResource WindowSurface}"
+        FontFamily="{StaticResource KlayBodyFont}"
+        Foreground="{DynamicResource PrimaryText}"
+        Closing="FeedbackWindow_Closing"
+        Closed="FeedbackWindow_Closed">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="16" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="14" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="10" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock x:Name="FeedbackHeading" Text="{local:Loc '发送反馈'}" FontSize="23" FontWeight="SemiBold"
+                       Style="{StaticResource PageTitle}" />
+            <TextBlock Text="{local:Loc '请描述你的建议或遇到的问题。'}" FontSize="13" Margin="0,5,0,0"
+                       Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2">
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{local:Loc '标题'}" FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleCharacterCount" Grid.Column="1" HorizontalAlignment="Right"
+                           FontSize="11" Foreground="{DynamicResource SecondaryText}"
+                           AutomationProperties.Name="{local:Loc '标题输入框'}" />
+            </Grid>
+            <TextBox x:Name="TitleBox" MinHeight="40" Padding="10,1" MaxLength="240"
+                     VerticalContentAlignment="Center"
+                     ToolTip="{local:Loc '用一句话概括你的建议。'}"
+                     AutomationProperties.Name="{local:Loc '标题输入框'}"
+                     TextChanged="TitleBox_TextChanged" />
+        </StackPanel>
+
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{local:Loc '反馈内容'}" FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="MessageCharacterCount" Grid.Column="1" HorizontalAlignment="Right"
+                           FontSize="11" Foreground="{DynamicResource SecondaryText}"
+                           AutomationProperties.Name="{local:Loc '反馈内容输入框'}" />
+            </Grid>
+            <TextBox x:Name="MessageBox" Grid.Row="1" MinHeight="130" Padding="10,8"
+                     VerticalContentAlignment="Top"
+                     AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                     MaxLength="20000" ToolTip="{local:Loc '请描述你的建议或遇到的问题。'}"
+                     AutomationProperties.Name="{local:Loc '反馈内容输入框'}"
+                     TextChanged="MessageBox_TextChanged" />
+            <TextBlock Grid.Row="2" Text="{local:Loc '暂不支持附件。'}" FontSize="11"
+                       Foreground="{DynamicResource SecondaryText}" Margin="0,5,0,0" />
+        </Grid>
+
+        <Border Grid.Row="6" Background="{DynamicResource PanelSurface}"
+                BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                CornerRadius="12" Padding="12,9" Margin="0,0,0,9">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="AccountStatusText" VerticalAlignment="Center" FontSize="12"
+                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                <Button x:Name="LoginButton" Grid.Column="1" Content="{local:Loc '登录'}"
+                        Padding="11,6" Margin="10,0,0,0"
+                        AutomationProperties.Name="{local:Loc '登录皮肤市场账号'}"
+                        Click="LoginButton_Click" />
+            </Grid>
+        </Border>
+
+        <TextBlock x:Name="OperationStatusText" Grid.Row="7" FontSize="12" Margin="0,0,0,9"
+                   TextWrapping="Wrap" Foreground="{DynamicResource SecondaryText}" />
+
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CloseButton" Content="{local:Loc '取消'}" MinWidth="88" Margin="0,0,9,0"
+                    Click="CloseButton_Click" />
+            <Button x:Name="SubmitButton" Content="{local:Loc '发送反馈'}" MinWidth="112"
+                    Style="{StaticResource PrimaryButton}" Click="SubmitButton_Click"
+                    AutomationProperties.Name="{local:Loc '发送反馈'}" />
+        </StackPanel>
+    </Grid>
+</Window>

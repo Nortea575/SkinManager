@@ -300,7 +300,7 @@ internal static class MainWindowLanguageChecks
 
         Require(window.Title == AppLocalization.Get("ChatGPT 皮肤管理器") &&
                 AutomationProperties.GetName(marketButton) == AppLocalization.Get("打开皮肤市场") &&
-                AutomationProperties.GetName(supportButton) == AppLocalization.Get("支持作者") &&
+                AutomationProperties.GetName(supportButton) == AppLocalization.Get("提出建议") &&
                 AutomationProperties.GetName(updatesButton) == AppLocalization.Get("版本与更新") &&
                 AutomationProperties.GetName(settingsButton) == AppLocalization.Get("设置") &&
                 newSkinButton.Content?.ToString() == AppLocalization.Get("新建皮肤") &&

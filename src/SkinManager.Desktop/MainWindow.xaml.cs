@@ -82,6 +82,8 @@ public partial class MainWindow : Window
     private SkinMarketWindow? _skinMarketWindow;
     private SettingsWindow? _settingsWindow;
     private SupportAuthorWindow? _supportAuthorWindow;
+    private FeedbackWindow? _feedbackWindow;
+    private MarketAccountSession? _marketAccountSession;
     private SkinPackage? _editOriginalPackage;
     private string? _editOriginalId;
     private int _previewTransparency = 30;
@@ -202,7 +204,7 @@ public partial class MainWindow : Window
         SkinEditor.EditorModeChanged += SkinEditor_EditorModeChanged;
         Closing += MainWindow_Closing;
         AppLocalization.LanguageChanged += MainWindow_AppLocalization_LanguageChanged;
-        Closed += (_, _) =>
+        Closed += async (_, _) =>
         {
             _windowClosed = true;
             _startupLifetimeCancellation.Cancel();
@@ -215,8 +217,14 @@ public partial class MainWindow : Window
                 _updateCoordinator.Dispose();
             }
             _skinMarketWindow?.Close();
+            _feedbackWindow?.Close();
             _settingsWindow?.Close();
             _supportAuthorWindow?.Close();
+            if (_marketAccountSession is { } accountSession)
+            {
+                _marketAccountSession = null;
+                await accountSession.DisposeAsync();
+            }
             _previewStatusSequence++;
             _originalTransitionSequence++;
             _editorPreviewTimer.Stop();
@@ -620,6 +628,7 @@ public partial class MainWindow : Window
         }
 
         var window = new SupportAuthorWindow { Owner = this };
+        window.FeedbackRequested += (_, _) => OpenFeedbackWindow(window);
         _supportAuthorWindow = window;
         window.Closed += (_, _) =>
         {
@@ -764,8 +773,9 @@ public partial class MainWindow : Window
             return existing;
         }
 
-        var client = clientOverride ?? _skinMarketClientFactory?.Invoke() ?? new SkinMarketClient();
-        var accountAuthProvider = _marketAccountAuthProviderFactory?.Invoke();
+        var accountSession = clientOverride is null ? GetMarketAccountSession() : null;
+        var client = clientOverride ?? accountSession?.Client ?? new SkinMarketClient();
+        var accountAuthProvider = clientOverride is null ? null : _marketAccountAuthProviderFactory?.Invoke();
         var window = new SkinMarketWindow(
             client,
             UpdateCoordinator.ReadCurrentVersion(),
@@ -774,9 +784,11 @@ public partial class MainWindow : Window
             SaveMarketPackageAsync,
             ReadInstalledSkinVersions,
             accountAuthProvider,
-            useDefaultAccountAuth: clientOverride is null && _skinMarketClientFactory is null && _marketAccountAuthProviderFactory is null,
+            useDefaultAccountAuth: clientOverride is null && accountSession is null &&
+                                   _skinMarketClientFactory is null && _marketAccountAuthProviderFactory is null,
             readLocalSkinCatalog: _store.GetCatalog,
-            exportLocalSkinPackage: (id, path) => _store.ExportZip(id, path, overwriteExisting: true))
+            exportLocalSkinPackage: (id, path) => _store.ExportZip(id, path, overwriteExisting: true),
+            accountSession: accountSession)
         {
             Owner = this
         };
@@ -793,6 +805,48 @@ public partial class MainWindow : Window
     }
 
     internal SkinMarketWindow? MarketWindow => _skinMarketWindow;
+
+    private MarketAccountSession GetMarketAccountSession()
+    {
+        if (_marketAccountSession is not null)
+        {
+            return _marketAccountSession;
+        }
+
+        var client = _skinMarketClientFactory?.Invoke() ?? new SkinMarketClient();
+        var authProvider = _marketAccountAuthProviderFactory?.Invoke();
+        if (_marketAccountAuthProviderFactory is null && _skinMarketClientFactory is null)
+        {
+            authProvider = new WebView2MarketAccountAuthProvider(AccountCookieBridge);
+        }
+
+        _marketAccountSession = new MarketAccountSession(
+            client,
+            authProvider,
+            ownsClient: true,
+            ownsAuthProvider: authProvider is not null);
+        return _marketAccountSession;
+    }
+
+    private void OpenFeedbackWindow(Window owner)
+    {
+        if (_feedbackWindow is { IsVisible: true } existing)
+        {
+            existing.Activate();
+            return;
+        }
+
+        var window = new FeedbackWindow(GetMarketAccountSession()) { Owner = owner };
+        _feedbackWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_feedbackWindow, window))
+            {
+                _feedbackWindow = null;
+            }
+        };
+        window.Show();
+    }
 
     private async Task<bool> SaveMarketPackageAsync(SkinPackage package)
     {

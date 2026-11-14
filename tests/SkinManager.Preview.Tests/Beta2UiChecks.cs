@@ -537,13 +537,14 @@ internal static class Beta2UiChecks
                 Path.Combine(screenshotDirectory, "皮肤市场-夜间-说明.png"));
 
             Find<Button>(window, "SupportAuthorButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            support = await WaitForWindowAsync<SupportAuthorWindow>("打开支持作者面板");
+            support = await WaitForWindowAsync<SupportAuthorWindow>("打开提出建议面板");
             support.UpdateLayout();
             var supportText = FindVisualChildren<TextBlock>(support).Select(block => block.Text).ToArray();
             var githubStarText = Find<TextBlock>(support, "GithubStarText");
             var freeDistributionText = Find<TextBlock>(support, "FreeDistributionText");
             var supportDirectionText = Find<TextBlock>(support, "SupportDirectionText");
-            Require(supportText.Contains("作者：Ancimen") &&
+            Require(support.Title == "提出建议" &&
+                    supportText.Contains("作者：Ancimen") &&
                     supportText.Contains("感谢您使用SkinManager！若您愿意，希望您为Github仓库Star~💖") &&
                     supportText.Contains("本软件为免费无偿分发软件，若您为付费购买请举报售卖方并联系作者") &&
                     supportText.Contains("若您愿意支持作者，您可以点击“支持作者”前往赞助页") &&
@@ -556,11 +557,11 @@ internal static class Beta2UiChecks
                 "支持作者面板保留原两段说明，并显示新增 GitHub 邀请与完整换行文案");
             var supportActions = Find<StackPanel>(support, "ActionButtons").Children.OfType<Button>().ToArray();
             Require(supportActions.Select(button => button.Name)
-                        .SequenceEqual(["SupportAuthorLinkButton", "GitHubLinkButton"], StringComparer.Ordinal) &&
+                        .SequenceEqual(["SupportAuthorLinkButton", "GitHubLinkButton", "FeedbackButton"], StringComparer.Ordinal) &&
                     !supportActions[1].IsDefault && support.WindowStyle != WindowStyle.None &&
                     AutomationProperties.GetName(supportActions[1]) == "打开 GitHub 仓库" &&
                     FindVisualChildren<System.Windows.Shapes.Path>(supportActions[1]).Any(),
-                "支持作者按钮保留且 GitHub 入口使用五角星矢量图标，不设默认打开动作并保留标题栏关闭按钮");
+                "支持方式、GitHub 与反馈入口并列显示，GitHub 保留五角星矢量图标和原生标题栏关闭按钮");
             var requestedExternalUris = new List<Uri>();
             support.ExternalUriLauncher = requestedExternalUris.Add;
             supportActions[0].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -575,7 +576,7 @@ internal static class Beta2UiChecks
                     requestedExternalUris[1].AbsoluteUri == "https://github.com/Nortea575/SkinManager",
                 "点击 GitHub 按钮只向可替换的外部启动器请求仓库地址");
             await SaveWindowScreenshotAsync(support,
-                Path.Combine(screenshotDirectory, "支持作者-夜间.png"));
+                Path.Combine(screenshotDirectory, "提出建议-夜间.png"));
 
             instances = new InstancesWindow(fakeInstances) { Owner = window };
             updates = new UpdatesWindow(null) { Owner = window };
@@ -652,7 +653,7 @@ internal static class Beta2UiChecks
             await SaveWindowScreenshotAsync(settings,
                 Path.Combine(screenshotDirectory, "设置-白昼-760x570.png"));
             await SaveWindowScreenshotAsync(support,
-                Path.Combine(screenshotDirectory, "支持作者-白昼.png"));
+                Path.Combine(screenshotDirectory, "提出建议-白昼.png"));
             await SaveWindowScreenshotAsync(confirmation,
                 Path.Combine(screenshotDirectory, "确认切换-白昼.png"));
             await SaveVisualAsync(menu, Path.Combine(screenshotDirectory, "更多菜单-白昼.png"));

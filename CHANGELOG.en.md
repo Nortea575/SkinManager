@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.4 · 2026-11-14
+
+- **GIF backgrounds**: Import, edit, preview, and export animated backgrounds while preserving the original GIF. Market covers remain static, and downloaded skins keep the animation.
+- **Free-form color picker**: Adjust colors with a hue ring and saturation/brightness area, with HEX, RGB, and alpha support. Preview changes live, then confirm or cancel them.
+- **Startup options**: Start SkinManager when signing in to Windows, and choose whether it starts the Codex debug build and applies the last selected skin.
+- **Organized settings and UI languages**: Settings are grouped under General, Appearance, and Compatibility. Choose System, Simplified Chinese, or English for SkinManager; Codex's interface language is left unchanged.
+- **Submit suggestions**: Sign in with a skin market account and choose Suggestions → Feedback in the app, or Feedback beside My submissions on the website. Emails include account details and the submission source; app submissions also include the SkinManager version. Replies go to the account email. Attachments are not supported.
+- **Smoother editing**: Fine-editor preview refreshes are coalesced during continuous adjustments, then show the final value when the interaction ends.
+
+Install over an existing version to keep the skin library and preferences. Reapply the skin after upgrading.
+
 ## 1.1.4-beta.2 · 2026-11-13
 
 - **Settings layout**: Settings now uses horizontal General, Appearance, and Compatibility tabs, with related options grouped by purpose.

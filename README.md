@@ -8,16 +8,13 @@
 
 <p align="center">
   <a href="https://github.com/Nortea575/SkinManager/releases/latest">下载正式版</a> ·
-  <a href="https://github.com/Nortea575/SkinManager/releases/tag/v1.1.4-beta.2">下载测试版</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="https://blog.ancimen.top/?page_id=39">皮肤市场</a> ·
   <a href="CHANGELOG.md">更新日志</a> ·
   <a href="CHANGELOG.en.md">Changelog (English)</a>
 </p>
 
-SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在应用前预览效果。你可以从皮肤市场下载现成主题，也可以从一张图片或纯色背景开始，制作自己的皮肤。
-
-当前测试版为 **1.1.4-beta.2**，提供设置分类、SkinManager 中英界面和语言相关页面适配，并保留 GIF 背景、自由调色与开机启动设置。已安装 1.1.2 或更新版本的用户可在“版本与更新”中开启“接收测试版更新”，再点击“检查更新”；首次安装可从上方测试版入口下载安装包。正式版下载入口仍提供 1.1.3。
+SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在应用前预览效果。你可以从皮肤市场下载现成主题，也可以从一张图片或纯色背景开始，制作自己的皮肤。1.1.4 正式版加入 GIF 动画背景、自由调色、开机启动选项、设置分类和中英界面，并支持登录市场账号后提交建议。
 
 ## 效果展示
 
@@ -115,7 +112,7 @@ SkinManager 让你为 Codex 桌面版更换背景、颜色与透明度，并在�
 
 在“设置 → 常规”中选择“跟随系统”“简体中文”或“English”。跟随系统时，中文 Windows 使用简体中文，其他 Windows 显示语言使用 English。语言选择只影响 SkinManager，不会更改 Codex 语言；切换时会立即更新界面并保留当前编辑内容。
 
-市场账号页面沿用网站语言，更新历史记录与安装器提示会使用界面语言。beta.2 移除了旧版“固定使用简体中文”选项；管理器不再主动更改 Codex 语言，仅在旧版本写入的语言覆盖仍由管理器控制时恢复原值。
+市场账号页面沿用网站语言，更新历史记录与安装器提示会使用界面语言。SkinManager 不会更改 Codex 的界面语言；如果旧版本设置的语言覆盖仍由管理器控制，管理器会恢复原值。
 
 ### Magpie
 
@@ -189,15 +186,15 @@ dotnet publish .\src\SkinManager.Agent\SkinManager.Agent.csproj -c Release -r wi
 
 ## 反馈与贡献
 
-欢迎通过 [Issues](https://github.com/Nortea575/SkinManager/issues) 反馈问题和提出建议，或通过 **Pull Request** 贡献改进。
+欢迎通过 [GitHub Issues](https://github.com/Nortea575/SkinManager/issues) 反馈问题，或通过 **Pull Request** 贡献改进。登录皮肤市场账号后，可在软件内依次打开“提出建议 → 反馈”，或在网站“我的投稿”旁点击“反馈”，填写标题和内容。网站邮件会附带账号信息和来源；软件内提交还会附上 SkinManager 版本，并使用账号邮箱作为回复地址。暂不支持附件；需要提交截图或文件时，请使用 GitHub Issues。
 
-反馈问题时，请提供 SkinManager 版本、Codex 版本、皮肤名称、复现步骤和相关截图，便于定位。
+反馈问题时，请提供 SkinManager 版本、Codex 版本、皮肤名称和复现步骤，便于定位。
 
 ## 作者与版权
 
 作者：**Ancimen**。
 
-SkinManager 免费分发。支持项目开发可访问[赞助页](https://blog.ancimen.top/?page_id=170)，或点击软件内的“支持作者”。
+SkinManager 免费分发。支持项目开发可访问[赞助页](https://blog.ancimen.top/?page_id=170)，或在软件内打开“提出建议 → 支持作者”。
 
 官方皮肤由 Ancimen 发布，**保留所有权利**。第三方皮肤及素材遵循各自的授权声明。
 

@@ -142,6 +142,85 @@ internal static partial class Program
         }
     }
 
+    private static async Task FeedbackContractAsync()
+    {
+        var requests = new List<ObservedRequest>();
+        var rejectNextFeedback = false;
+        using var client = new SkinMarketClient(new StubHandler(request =>
+        {
+            var observed = ObserveRequest(request);
+            requests.Add(observed);
+            if (observed.Query.Contains("page_id=39", StringComparison.Ordinal))
+            {
+                return HtmlResponse(BootstrapHtml(isLoggedIn: true, userId: 42, canSubmit: false));
+            }
+
+            if (observed.Query.Contains("/wp/v2/users/me", StringComparison.OrdinalIgnoreCase))
+            {
+                return JsonResponse("{\"id\":42,\"name\":\"离线反馈用户\"}");
+            }
+
+            if (observed.Method == HttpMethod.Post &&
+                observed.Query.Contains("/skin-manager/v1/feedback", StringComparison.Ordinal))
+            {
+                if (rejectNextFeedback)
+                {
+                    rejectNextFeedback = false;
+                    return new HttpResponseMessage(HttpStatusCode.Forbidden)
+                    {
+                        Content = new StringContent(
+                            "{\"code\":\"smm_authentication_required\",\"message\":\"登录状态已失效\",\"data\":{\"status\":403}}",
+                            Encoding.UTF8,
+                            "application/json")
+                    };
+                }
+
+                return JsonResponse("{\"success\":true,\"message\":\"反馈已发送\"}");
+            }
+
+            throw new InvalidDataException($"未预期的反馈接口请求：{observed.Method} {observed.Query}");
+        }));
+
+        await client.RefreshAccountAsync(TestCookie);
+        var title = new string("标"[0], 119) + "🧑";
+        var message = new string("好"[0], 9999) + "🧑";
+        var result = await client.SubmitFeedbackAsync(title, message, "1.1.4");
+        var writeRequest = requests.Last();
+        using (var document = JsonDocument.Parse(writeRequest.Body))
+        {
+            var payload = document.RootElement;
+            Check(payload.GetProperty("title").GetString() == title &&
+                  payload.GetProperty("message").GetString() == message &&
+                  payload.GetProperty("source").GetString() == "skinmanager" &&
+                  payload.GetProperty("appVersion").GetString() == "1.1.4",
+                "反馈 JSON 保留原文并包含 source 与正式版本号，120/10000 字符按 Unicode 标量计数");
+        }
+
+        Check(result.Message == "反馈已发送" &&
+              writeRequest.Method == HttpMethod.Post &&
+              writeRequest.Query.Contains("rest_route=/skin-manager/v1/feedback", StringComparison.Ordinal) &&
+              writeRequest.Cookie == TestCookie && writeRequest.Nonce == TestNonce,
+            "反馈 POST 使用既有同源 rest_route、共享 Cookie/X-WP-Nonce 并读取本地化成功消息");
+
+        var postsBeforeInvalidInput = requests.Count(request => request.Method == HttpMethod.Post);
+        await ThrowsAsync<ArgumentException>(
+            () => client.SubmitFeedbackAsync(new string('x', 120) + "🧑", "正文", "1.1.4"),
+            "反馈标题长度按 Unicode 标量限制");
+        await ThrowsAsync<ArgumentException>(
+            () => client.SubmitFeedbackAsync("标题", new string('x', 10001), "1.1.4"),
+            "反馈正文长度按服务端限制校验");
+        Check(requests.Count(request => request.Method == HttpMethod.Post) == postsBeforeInvalidInput,
+            "超长反馈在客户端拒绝，不发送请求");
+
+        rejectNextFeedback = true;
+        await ThrowsAsync<SkinMarketReauthenticationException>(
+            () => client.SubmitFeedbackAsync("再次验证", "状态已过期", "1.1.4"),
+            "反馈 403 返回重新认证异常");
+        Check(requests.Count(request => request.Method == HttpMethod.Post) == postsBeforeInvalidInput + 1 &&
+              client.Account is null,
+            "反馈认证失败清除共享账号且 POST 不自动重试");
+    }
+
     private static async Task AnonymousCommunityReadAndUnauthenticatedWritesAsync()
     {
         var requestCount = 0;

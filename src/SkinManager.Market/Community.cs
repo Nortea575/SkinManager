@@ -209,6 +209,45 @@ public sealed partial class SkinMarketClient
         return new SkinMarketCommentResult(comment, pending, message);
     }
 
+    public async Task<SkinMarketFeedbackResult> SubmitFeedbackAsync(
+        string title,
+        string message,
+        string appVersion,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateFeedbackField(title, SkinMarketFeedbackRules.MaxTitleCharacters, "反馈标题", nameof(title));
+        ValidateFeedbackField(message, SkinMarketFeedbackRules.MaxMessageCharacters, "反馈内容", nameof(message));
+        ArgumentException.ThrowIfNullOrWhiteSpace(appVersion);
+
+        var session = CaptureRequiredSession();
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            title,
+            message,
+            source = "skinmanager",
+            appVersion
+        });
+        using var content = new ByteArrayContent(payload);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        using var document = await SendCommunityJsonAsync(
+            HttpMethod.Post,
+            "/skin-manager/v1/feedback",
+            query: null,
+            content,
+            session,
+            cancellationToken,
+            treatForbiddenAsReauthentication: true).ConfigureAwait(false);
+
+        var root = document.RootElement;
+        if (!RequiredBoolean(root, "success"))
+        {
+            throw new InvalidDataException(AppLocalization.Get("市场服务器没有确认反馈已发送。"));
+        }
+
+        return new SkinMarketFeedbackResult(CommunityRequiredString(root, "message", 500));
+    }
+
     public async Task<SkinMarketSubmissionResult> SubmitSkinAsync(
         SkinMarketSubmissionDraft draft,
         CancellationToken cancellationToken = default)
@@ -356,7 +395,8 @@ public sealed partial class SkinMarketClient
         HttpContent? content,
         AccountSession session,
         CancellationToken cancellationToken,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        bool treatForbiddenAsReauthentication = false)
     {
         var uri = BuildRestUri(route, query);
         using var operationCancellation = CreateOperationCancellation(cancellationToken, timeout);
@@ -390,7 +430,7 @@ public sealed partial class SkinMarketClient
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw CreateHttpException(response.StatusCode, bytes, session);
+                throw CreateHttpException(response.StatusCode, bytes, session, treatForbiddenAsReauthentication);
             }
 
             try
@@ -491,7 +531,11 @@ public sealed partial class SkinMarketClient
         }
     }
 
-    private HttpRequestException CreateHttpException(HttpStatusCode statusCode, byte[] body, AccountSession? session)
+    private HttpRequestException CreateHttpException(
+        HttpStatusCode statusCode,
+        byte[] body,
+        AccountSession? session,
+        bool treatForbiddenAsReauthentication = false)
     {
         string? serverMessage = null;
         string? code = null;
@@ -510,6 +554,7 @@ public sealed partial class SkinMarketClient
         }
 
         var isAuthenticationFailure = statusCode == HttpStatusCode.Unauthorized ||
+            (treatForbiddenAsReauthentication && statusCode == HttpStatusCode.Forbidden) ||
             ((int)statusCode == 403 && code is "rest_cookie_invalid_nonce" or "rest_not_logged_in" or "smm_authentication_required");
         if (isAuthenticationFailure)
         {
@@ -665,6 +710,23 @@ public sealed partial class SkinMarketClient
         return count;
     }
 
+    private static void ValidateFeedbackField(string value, int maximum, string fieldName, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(value, parameterName);
+        var count = SkinMarketFeedbackRules.CountUnicodeCharacters(value);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException(AppLocalization.Format("{0}不能为空。", AppLocalization.Get(fieldName)), parameterName);
+        }
+
+        if (count > maximum)
+        {
+            throw new ArgumentException(
+                AppLocalization.Format("{0}不能超过 {1} 个字符。", AppLocalization.Get(fieldName), maximum),
+                parameterName);
+        }
+    }
+
     private static Uri CreateDefaultLoginUri() => new(
         "https://blog.ancimen.top/wp-login.php?redirect_to=" +
         Uri.EscapeDataString(MarketLanguageUri.ForMarketPage(DefaultMarketUri).AbsoluteUri));
@@ -806,6 +868,26 @@ public sealed record SkinMarketSubmissionDraft(
     IReadOnlyList<string> Tags);
 
 public sealed record SkinMarketSubmissionResult(int PostId, string SkinId, string Name, string Status, string Message);
+
+public sealed record SkinMarketFeedbackResult(string Message);
+
+public static class SkinMarketFeedbackRules
+{
+    public const int MaxTitleCharacters = 120;
+    public const int MaxMessageCharacters = 10000;
+
+    public static int CountUnicodeCharacters(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var count = 0;
+        foreach (var _ in value.EnumerateRunes())
+        {
+            count++;
+        }
+
+        return count;
+    }
+}
 
 public sealed class SkinMarketReauthenticationException(HttpStatusCode statusCode)
     : HttpRequestException(AppLocalization.Get("市场登录状态或安全验证已失效，请重新登录后重试。"), null, statusCode);

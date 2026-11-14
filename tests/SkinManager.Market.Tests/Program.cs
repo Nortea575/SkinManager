@@ -58,6 +58,7 @@ internal static partial class Program
             await RejectCrossOriginAccountConfigAsync();
             await CancelAccountRefreshAsync();
             await IgnoreLateAccountRefreshAsync();
+            await FeedbackContractAsync();
             Console.WriteLine("市场客户端离线验收通过。");
             return 0;
         }

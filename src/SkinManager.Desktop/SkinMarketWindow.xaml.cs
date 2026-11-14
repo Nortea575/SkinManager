@@ -294,6 +294,7 @@ public partial class SkinMarketWindow : Window
 {
     private const int ItemsPerPage = 12;
     private readonly SkinMarketClient _client;
+    private readonly bool _ownsClient;
     private readonly Version _managerVersion;
     private readonly Func<SkinPackage, Task<bool>> _installPackage;
     private readonly Func<IReadOnlyDictionary<string, string>> _readInstalledVersions;
@@ -327,9 +328,11 @@ public partial class SkinMarketWindow : Window
         bool useDefaultAccountAuth = true,
         string? accountProfileDirectory = null,
         Func<IReadOnlyList<SkinCatalogEntry>>? readLocalSkinCatalog = null,
-        Action<string, string>? exportLocalSkinPackage = null)
+        Action<string, string>? exportLocalSkinPackage = null,
+        MarketAccountSession? accountSession = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _ownsClient = accountSession is null;
         _managerVersion = managerVersion ?? throw new ArgumentNullException(nameof(managerVersion));
         ArgumentNullException.ThrowIfNull(basePackage);
         _ = unusedProfilePath;
@@ -337,7 +340,7 @@ public partial class SkinMarketWindow : Window
         _readInstalledVersions = readInstalledVersions ?? throw new ArgumentNullException(nameof(readInstalledVersions));
         InitializeComponent();
         InitializeCommunity(accountAuthProvider, useDefaultAccountAuth, accountProfileDirectory,
-            readLocalSkinCatalog, exportLocalSkinPackage);
+            readLocalSkinCatalog, exportLocalSkinPackage, accountSession);
         Icon = App.ReadApplicationIcon();
         WindowMotion.Attach(this, animateWindow: false, animateClose: false);
         GridCards.ItemsSource = _rows;
@@ -375,6 +378,7 @@ public partial class SkinMarketWindow : Window
     internal Button LoginButtonForTests => LoginButton;
     internal Button RegisterButtonForTests => RegisterButton;
     internal Button LogoutButtonForTests => LogoutButton;
+    internal TextBlock AccountDisplayTextForTests => AccountDisplayText;
     internal Button OpenUploadButtonForTests => OpenUploadButton;
     internal Button DetailsLikeButtonForTests => DetailsLikeButton;
     internal TextBox CommentInputForTests => CommentInput;
@@ -1248,7 +1252,10 @@ public partial class SkinMarketWindow : Window
     {
         AppLocalization.LanguageChanged -= SkinMarketWindow_LanguageChanged;
         _ = DisposeCommunityAsync();
-        _client.Dispose();
+        if (_ownsClient)
+        {
+            _client.Dispose();
+        }
         _catalogCancellation?.Dispose();
         _thumbnailCancellation?.Dispose();
         _downloadCancellation?.Dispose();
