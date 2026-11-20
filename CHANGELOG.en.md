@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.5-beta.2 · 2026-11-21
+
+- The skin market shows a confirmation when a submission succeeds.
+- Upload instructions wrap so you can read them in full in narrower windows.
+- The market skips malformed skin entries and keeps the rest of the catalog available.
+
 ## 1.1.5-beta.1 · 2026-11-21
 
 - Fixed the chat area and right-hand panel covering the wallpaper after a Codex update.

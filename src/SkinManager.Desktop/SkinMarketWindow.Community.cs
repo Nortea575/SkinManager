@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using Microsoft.Win32;
 using SkinManager.Core;
@@ -546,8 +547,15 @@ public partial class SkinMarketWindow
         }
 
         LocalizedUiText.SetText(UploadStatusText, source, arguments);
+        var hasStatus = !string.IsNullOrWhiteSpace(source);
+        UploadStatusText.Visibility = hasStatus ? Visibility.Visible : Visibility.Collapsed;
+        UploadPermissionSummary.Visibility = hasStatus ? Visibility.Collapsed : Visibility.Visible;
         UploadStatusText.SetResourceReference(TextBlock.ForegroundProperty,
-            isError ? "ErrorText" : "SecondaryText");
+            isError ? "ErrorText" : "PrimaryText");
+        if (hasStatus)
+        {
+            UIElementAutomationPeer.FromElement(UploadStatusText)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
     }
 
     private void CancelCommunityOperations()
@@ -861,6 +869,7 @@ public partial class SkinMarketWindow
                 if (!string.Equals(_uploadPackage?.Id, skinId, StringComparison.OrdinalIgnoreCase))
                 {
                     CleanupUploadPackage();
+                    SetUploadStatus(string.Empty);
                 }
 
                 LoadLocalSkins(skinId);
@@ -883,6 +892,7 @@ public partial class SkinMarketWindow
 
         _isUploadVisible = true;
         UploadPane.Visibility = Visibility.Visible;
+        SetUploadStatus(string.Empty);
         LoadLocalSkins(skinId);
         UpdateCommunityControls();
     }

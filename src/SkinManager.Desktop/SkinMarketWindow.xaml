@@ -429,29 +429,29 @@
 
         <Grid x:Name="UploadPane" Grid.Row="2" Visibility="Collapsed">
             <Grid.RowDefinitions>
-                <RowDefinition Height="48" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="12" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="10" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <Grid Grid.Row="0">
+            <Grid x:Name="UploadHeader" Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="14" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="BackFromUploadButton" Content="{local:Loc '返回市场'}" Padding="12,7"
+                <Button x:Name="BackFromUploadButton" Content="{local:Loc '返回市场'}" Padding="12,7" VerticalAlignment="Center"
                         Click="BackFromUploadButton_Click" AutomationProperties.Name="{local:Loc '返回皮肤市场'}" />
                 <StackPanel Grid.Column="2" VerticalAlignment="Center">
                     <TextBlock Text="{local:Loc '上传皮肤'}" FontSize="22" Style="{StaticResource PageTitle}" />
-                    <TextBlock Text="{local:Loc '投稿会经过网站审核，通过前不会公开展示。'}" FontSize="12"
-                               Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" />
-                    <TextBlock Text="{local:Loc '市场投稿需要在整体范围添加背景图片。'}" FontSize="12"
+                    <TextBlock x:Name="UploadReviewHint" Text="{local:Loc '投稿会经过网站审核，通过前不会公开展示。'}" FontSize="12"
+                               Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="UploadBackgroundHint" Text="{local:Loc '市场投稿需要在整体范围添加背景图片。'}" FontSize="12"
                                Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer x:Name="UploadFormScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Margin="0,0,8,0" MaxWidth="820" HorizontalAlignment="Stretch">
                     <StackPanel x:Name="UploadAccessPrompt" Visibility="Collapsed" Margin="0,12,0,0">
                         <TextBlock x:Name="UploadAccessMessage" FontSize="14" TextWrapping="Wrap" />
@@ -517,16 +517,22 @@
                                 <TextBox x:Name="UploadTagsBox" AutomationProperties.Name="{local:Loc '投稿皮肤标签'}" />
                             </StackPanel>
                         </Grid>
-                        <TextBlock x:Name="UploadStatusText" FontSize="12" Margin="0,12,0,0"
-                                   Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
             <Grid Grid.Row="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
                 <TextBlock x:Name="UploadPermissionSummary" FontSize="12"
                            Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
-                           TextWrapping="Wrap" Margin="0,0,12,0" />
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                           TextWrapping="Wrap" />
+                <TextBlock x:Name="UploadStatusText" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
+                           Foreground="{DynamicResource PrimaryText}" TextWrapping="Wrap" Visibility="Collapsed"
+                           AutomationProperties.LiveSetting="Polite" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="CancelSubmissionButton" Content="{local:Loc '取消提交'}" Margin="0,0,6,0"
                             Visibility="Collapsed" Click="CancelSubmissionButton_Click" />
                     <Button x:Name="SubmitUploadButton" Content="{local:Loc '提交审核'}" MinWidth="120"

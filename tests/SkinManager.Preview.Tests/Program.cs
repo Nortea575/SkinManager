@@ -537,8 +537,8 @@ internal static class Program
     {
         var appAssembly = typeof(MainWindow).Assembly;
         Check(UpdateCoordinator.ReadCurrentVersion(appAssembly) == new Version(1, 1, 5) &&
-              UpdateCoordinator.ReadCurrentVersionTag(appAssembly) == "1.1.5-beta.1",
-            "更新比较读取数值版本 1.1.5 和测试版标记 1.1.5-beta.1");
+              UpdateCoordinator.ReadCurrentVersionTag(appAssembly) == "1.1.5-beta.2",
+            "更新比较读取数值版本 1.1.5 和测试版标记 1.1.5-beta.2");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);

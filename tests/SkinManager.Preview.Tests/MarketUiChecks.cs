@@ -19,6 +19,8 @@ namespace SkinManager.Preview.Tests;
 
 internal static class MarketUiChecks
 {
+    private const string MalformedPagingQuery = "zhipu-paging-fixture";
+
     public static Func<SkinMarketClient> CreateReviewClientFactory(byte[] originalPackageBytes)
     {
         ArgumentNullException.ThrowIfNull(originalPackageBytes);
@@ -193,6 +195,8 @@ internal static class MarketUiChecks
                     "深色外观筛选只显示 Saya");
                 marketWindow.FilterAllButtonForTests.IsChecked = true;
                 await WaitUntilAsync(() => marketWindow.Rows.Count == 2, "恢复全部外观目录");
+
+                await VerifyMalformedCatalogPagingAsync(marketWindow);
             }
 
             await SaveWindowScreenshotAsync(
@@ -270,6 +274,30 @@ internal static class MarketUiChecks
                 mainWindow.Close();
             }
         }
+    }
+
+    private static async Task VerifyMalformedCatalogPagingAsync(SkinMarketWindow window)
+    {
+        var previous = (Button)window.FindName("PreviousPageButton");
+        var next = (Button)window.FindName("NextPageButton");
+        window.SearchBoxForTests.Text = MalformedPagingQuery;
+        await window.RefreshAsync(resetPage: true);
+        Check(window.Rows.Count == 0 && !previous.IsEnabled && next.IsEnabled,
+            "第 1 页只含 Zhipu 等无效目录记录时仍可前往第 2 页");
+
+        next.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => !window.IsLoading && previous.IsEnabled && !next.IsEnabled &&
+            window.Rows.Select(row => row.Id).SequenceEqual(new[] { "ayanami", "saya" }),
+            "点击下一页显示有效的 Ayanami 和 Saya 皮肤");
+
+        previous.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => !window.IsLoading && window.Rows.Count == 0 && !previous.IsEnabled && next.IsEnabled,
+            "点击上一页回到空页后仍可再次向后分页");
+
+        window.SearchBoxForTests.Text = string.Empty;
+        await window.RefreshAsync(resetPage: true);
+        Check(window.Rows.Select(row => row.Id).SequenceEqual(new[] { "ayanami", "saya" }),
+            "清除分页测试查询后恢复正常皮肤目录");
     }
 
     private static MarketSkinFixture CreateSkinFixture(byte[] packageBytes, byte[]? thumbnailBytes = null)
@@ -366,6 +394,31 @@ internal static class MarketUiChecks
             }).ToArray(),
             pagination = new { page, perPage, total, totalPages }
         });
+
+    private static string CreateMalformedPagingCatalogJson(IReadOnlyList<MarketSkinFixture> skins, int page, bool includeAvailableTags)
+    {
+        const int perPage = 12;
+        var json = CreateCatalogJson(page == 1 ? [skins[0]] : skins, page, perPage, perPage + skins.Count, 2, includeAvailableTags);
+        if (page != 1)
+        {
+            return json;
+        }
+
+        var catalog = JsonNode.Parse(json)!.AsObject();
+        var items = catalog["items"]!.AsArray();
+        var template = items[0]!.AsObject();
+        items.Clear();
+        for (var index = 0; index < perPage; index++)
+        {
+            var item = template.DeepClone().AsObject();
+            item["id"] = index == 0 ? "zhipu" : $"malformed-fixture-{index}";
+            item["name"] = index == 0 ? "Zhipu" : $"Malformed fixture {index}";
+            item["minManagerVersion"] = string.Empty;
+            items.Add(item);
+        }
+
+        return catalog.ToJsonString();
+    }
 
     private static HttpResponseMessage ContentResponse(byte[] bytes, string contentType) => new(HttpStatusCode.OK)
     {
@@ -588,6 +641,14 @@ internal static class MarketUiChecks
                 source.RecordCatalogQuery(uri.Query);
                 await source.WaitAtCatalogGateAsync(cancellationToken);
                 var query = ParseQuery(uri.Query);
+                if (query.TryGetValue("q", out var search) && search == MalformedPagingQuery)
+                {
+                    var page = int.Parse(query["page"], System.Globalization.CultureInfo.InvariantCulture);
+                    return ContentResponse(
+                        Encoding.UTF8.GetBytes(CreateMalformedPagingCatalogJson(skins, page, source.IncludeAvailableTags)),
+                        "application/json");
+                }
+
                 IEnumerable<MarketSkinFixture> filtered = skins;
                 if (query.TryGetValue("appearance", out var appearance) && !string.IsNullOrWhiteSpace(appearance))
                 {
@@ -599,7 +660,7 @@ internal static class MarketUiChecks
                     filtered = filtered.Where(skin => (skin.Package.Id.Equals("saya", StringComparison.OrdinalIgnoreCase) ? "18" : "12") == tag);
                 }
 
-                if (query.TryGetValue("q", out var search) && !string.IsNullOrWhiteSpace(search))
+                if (!string.IsNullOrWhiteSpace(search))
                 {
                     filtered = filtered.Where(skin => skin.Package.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                         skin.Package.Id.Contains(search, StringComparison.OrdinalIgnoreCase));

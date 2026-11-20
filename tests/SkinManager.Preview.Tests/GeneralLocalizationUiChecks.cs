@@ -54,7 +54,7 @@ internal static class GeneralLocalizationUiChecks
             await WaitForWindowAsync(updatesWindow, () => updatesWindow.StatusText.Text.Length > 0);
 
             Require(updatesWindow.Title == "Version and updates" &&
-                    updatesWindow.StatusText.Text == "Version 1.1.5-beta.2 is available" &&
+                    updatesWindow.StatusText.Text == "Version 1.1.5-beta.3 is available" &&
                     updatesWindow.ChannelText.Text == "Update channel: stable and beta",
                 "Updates window title, channel, and live status render in English");
 
@@ -145,7 +145,7 @@ internal static class GeneralLocalizationUiChecks
 
             var chineseHistory = GetHistoryEntries(updatesWindow);
             Require(updatesWindow.Title == "版本与更新" &&
-                    updatesWindow.StatusText.Text == "发现新版本 1.1.5-beta.2" &&
+                    updatesWindow.StatusText.Text == "发现新版本 1.1.5-beta.3" &&
                     chineseHistory.Count > 0 && chineseHistory[0].Version == UpdateCoordinator.ReadCurrentVersionTag() &&
                     ContainsCjk(chineseHistory[0].Body) &&
                     chineseHistory.Any(entry => entry.Version == "1.1.4" &&
@@ -393,9 +393,9 @@ internal static class GeneralLocalizationUiChecks
     {
         private readonly UpdateRelease _release = new(
             new Version(1, 1, 5),
-            "v1.1.5-beta.2",
+            "v1.1.5-beta.3",
             "Fixture release notes remain unchanged.",
-            new Uri("https://updates.invalid/SkinManager-Setup-1.1.5-beta.2.exe"),
+            new Uri("https://updates.invalid/SkinManager-Setup-1.1.5-beta.3.exe"),
             1024,
             new string('0', 64))
         {

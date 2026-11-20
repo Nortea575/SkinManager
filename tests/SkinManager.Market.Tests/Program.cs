@@ -14,6 +14,7 @@ namespace SkinManager.Market.Tests;
 internal static partial class Program
 {
     private const string PackageResource = "SkinManager.Market.Tests.Resources.Ayanami.zip";
+    private const string SayaPackageResource = "SkinManager.Market.Tests.Resources.Saya.zip";
     private const string GifResource = "SkinManager.Market.Tests.Resources.transparent-animation.gif";
 
     private static async Task<int> Main()
@@ -25,7 +26,8 @@ internal static partial class Program
             await CatalogContractAsync(package, zipBytes);
             await ExtendedCatalogContractAsync(package, zipBytes);
             await LegacyCatalogCompatibilityAsync(package, zipBytes);
-            await RejectMalformedOptionalCountsAsync(package, zipBytes);
+            await SkipMalformedOptionalCountsAsync(package, zipBytes);
+            await PreserveDirectoryWithMalformedEntriesAsync(package, zipBytes);
             await ValidateDetailUriAsync();
             await PreferThumbnailUrlAsync(package, zipBytes);
             await RejectCrossOriginThumbnailAsync(package, zipBytes);
@@ -144,12 +146,58 @@ internal static partial class Program
             "旧 schema v1 缺少新增字段时使用空值默认值");
     }
 
-    private static async Task RejectMalformedOptionalCountsAsync(SkinPackage package, byte[] zipBytes)
+    private static async Task SkipMalformedOptionalCountsAsync(SkinPackage package, byte[] zipBytes)
     {
         var root = JsonNode.Parse(CreateCatalogJson(CreateItem(package, zipBytes), 1, 12, 1, 1))!.AsObject();
         root["items"]!.AsArray()[0]!["likeCount"] = -1;
         using var client = new SkinMarketClient(new StubHandler(_ => JsonResponse(root.ToJsonString())));
-        await ThrowsAsync<InvalidDataException>(() => client.GetPageAsync(), "拒绝负点赞计数");
+        var page = await client.GetPageAsync();
+        Check(page.Items.Count == 0 && page.Pagination is { Page: 1, PerPage: 12, Total: 1, TotalPages: 1 },
+            "跳过点赞计数为负的条目，保留目录原始分页");
+    }
+
+    private static async Task PreserveDirectoryWithMalformedEntriesAsync(SkinPackage package, byte[] zipBytes)
+    {
+        var ayaItem = CreateItem(package, zipBytes);
+        var sayaBytes = ReadEmbeddedPackage(SayaPackageResource);
+        var sayaItem = CreateItem(SkinPackageReader.ReadZipBytes(sayaBytes), sayaBytes);
+        var mixedPage = JsonNode.Parse(CreateCatalogJson(ayaItem, page: 2, perPage: 4, total: 11, totalPages: 3))!.AsObject();
+        var mixedItems = mixedPage["items"]!.AsArray();
+        var zhipu = mixedItems[0]!.DeepClone().AsObject();
+        zhipu["id"] = "zhipu";
+        zhipu["name"] = "智谱";
+        zhipu["downloadUrl"] = "https://blog.ancimen.top/?rest_route=/skin-manager/v1/skins/zhipu/download";
+        zhipu["minManagerVersion"] = string.Empty;
+        var sayaEntry = JsonNode.Parse(CreateCatalogJson(sayaItem, page: 2, perPage: 4, total: 11, totalPages: 3))!["items"]![0]!;
+        mixedItems.Add(zhipu);
+        mixedItems.Add(42);
+        mixedItems.Add(sayaEntry.DeepClone());
+        mixedPage["availableTags"] = new JsonArray(new JsonObject { ["id"] = "daily", ["name"] = "日常" });
+
+        using var mixedClient = new SkinMarketClient(new StubHandler(_ => JsonResponse(mixedPage.ToJsonString())));
+        var mixed = await mixedClient.GetPageAsync(page: 2, perPage: 4);
+        Check(mixed.Items.Select(item => item.Id).SequenceEqual(["ayanami", "saya"]) &&
+              mixed.Pagination is { Page: 2, PerPage: 4, Total: 11, TotalPages: 3 } &&
+              mixed.AvailableTags is { Count: 1 } && mixed.AvailableTags[0].Id == "daily",
+            "跳过最低版本为空的 zhipu 和非对象记录，保留 Ayanami、Saya 的顺序、原始分页与可用标签");
+
+        mixedPage["pagination"]!["perPage"] = 2;
+        await ThrowsAsync<InvalidDataException>(() => mixedClient.GetPageAsync(page: 2, perPage: 2),
+            "目录原始条目超出每页上限仍拒绝整个响应");
+
+        var rejectedPage = JsonNode.Parse(CreateCatalogJson(ayaItem, page: 1, perPage: 2, total: 3, totalPages: 2))!.AsObject();
+        rejectedPage["items"] = new JsonArray(zhipu.DeepClone(), null);
+        using var pagedClient = new SkinMarketClient(new StubHandler(request =>
+            request.RequestUri!.Query.Split('&').Contains("page=2", StringComparer.Ordinal)
+                ? JsonResponse(CreateCatalogJson(sayaItem, page: 2, perPage: 2, total: 3, totalPages: 2))
+                : JsonResponse(rejectedPage.ToJsonString())));
+
+        var first = await pagedClient.GetPageAsync(page: 1, perPage: 2);
+        Check(first.Items.Count == 0 && first.Pagination is { Page: 1, PerPage: 2, Total: 3, TotalPages: 2 },
+            "整页条目都无效时仍返回服务器分页信息");
+        var next = await pagedClient.GetPageAsync(page: first.Pagination.Page + 1, perPage: first.Pagination.PerPage);
+        Check(next.Items.Count == 1 && next.Items[0].Id == "saya" && next.Pagination.Page == 2,
+            "整页条目都无效后仍可以读取下一页的 Saya");
     }
 
     private static Task ValidateDetailUriAsync()
@@ -572,10 +620,10 @@ internal static partial class Program
         Content = new ByteArrayContent(bytes) { Headers = { ContentType = new MediaTypeHeaderValue("image/png") } }
     };
 
-    private static byte[] ReadEmbeddedPackage()
+    private static byte[] ReadEmbeddedPackage(string resourceName = PackageResource)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(PackageResource)
-            ?? throw new FileNotFoundException($"缺少离线验收包资源：{PackageResource}");
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+            ?? throw new FileNotFoundException($"缺少离线验收包资源：{resourceName}");
         using var output = new MemoryStream();
         stream.CopyTo(output);
         return output.ToArray();

@@ -237,6 +237,10 @@ internal static class MarketCommunityUiChecks
             window.OpenUploadForSkin("ayanami");
             await WaitUntilAsync(() => window.IsUploadVisibleForTests && window.ExportLocalSkinButtonForTests.IsEnabled,
                 "投稿页载入隔离本地皮肤库");
+            await SetWindowSizeAsync(window, 880, 620);
+            VerifyUploadInstructions(window, english: false);
+            VerifyUploadFooter(window, FindNamed<TextBlock>(window, "UploadPermissionSummary"));
+            await SaveScreenshotAsync(window, Path.Combine(screenshotDirectory, "市场投稿说明-中文-880x620.png"));
             Check(window.LocalSkinBoxForTests.Items.Count == 2,
                 "投稿皮肤选择器只显示 Ayanami 与 Saya");
             var selectedLocalSkin = window.LocalSkinBoxForTests.SelectedItem as MarketLocalSkinOption;
@@ -264,22 +268,40 @@ internal static class MarketCommunityUiChecks
 
             FillUploadForm(window, "本地皮肤库投稿：等待管理员审核。", "轻量,浅色");
             await SaveScreenshotAsync(window, Path.Combine(screenshotDirectory, "市场社区-白昼-投稿完整表单.png"));
+            var scroll = FindNamed<ScrollViewer>(window, "UploadFormScroll");
+            var descriptionMinHeight = window.UploadDescriptionBoxForTests.MinHeight;
+            window.UploadDescriptionBoxForTests.MinHeight = 280;
+            scroll.ScrollToTop();
+            window.UpdateLayout();
+            Check(scroll.ScrollableHeight > 0 && scroll.VerticalOffset == 0, "投稿表单可滚动且当前停在顶部");
             Check(window.SubmitUploadButtonForTests.IsEnabled, "选包并填写表单后启用投稿按钮");
             Click(window.SubmitUploadButtonForTests, "提交本地库临时 ZIP");
             await WaitUntilAsync(() => server.SubmissionPostCount == 1 &&
-                window.UploadStatusTextForTests.Text.Contains("等待管理员审核", StringComparison.Ordinal),
-                "投稿成功显示服务器 pending 审核状态");
+                window.UploadStatusTextForTests.Text == "投稿已提交，等待管理员审核。",
+                "仅含状态的 pending 响应生成中文投稿回执");
+            window.UpdateLayout();
+            Check(scroll.VerticalOffset == 0, "收到回执后表单仍停在顶部");
+            VerifyUploadFooter(window, window.UploadStatusTextForTests);
             await WaitUntilAsync(() => !File.Exists(temporaryPackagePath), "成功提交后清理客户端拥有的临时 ZIP");
             await SaveScreenshotAsync(window, Path.Combine(screenshotDirectory, "市场社区-白昼-投稿待审核结果.png"));
 
+            window.UploadDescriptionBoxForTests.MinHeight = descriptionMinHeight;
+            AppLocalization.SetLanguage(AppLanguage.English);
+            await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.ContextIdle);
+            VerifyUploadInstructions(window, english: true);
             await window.LoadUploadPackageForTestsAsync(originalZipPath);
-            FillUploadForm(window, "用户原始 ZIP 成功提交后必须保留。", "浅色");
+            FillUploadForm(window, "The original ZIP is kept after submission.", "Light");
+            server.PublishNextSubmission();
             Click(window.SubmitUploadButtonForTests, "提交用户原始 ZIP");
             await WaitUntilAsync(() => server.SubmissionPostCount == 2 &&
-                window.UploadStatusTextForTests.Text.Contains("等待管理员审核", StringComparison.Ordinal),
-                "用户原始 ZIP 投稿成功并得到 pending 状态");
+                window.UploadStatusTextForTests.Text == "Skin approved and published.",
+                "仅含状态的 publish 响应生成英文上架回执");
+            window.UpdateLayout();
+            VerifyUploadFooter(window, window.UploadStatusTextForTests);
+            await SaveScreenshotAsync(window, Path.Combine(screenshotDirectory, "市场投稿说明及上架回执-英文-880x620.png"));
             Check(File.Exists(originalZipPath), "原始 ZIP 成功投稿后仍存在");
 
+            AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
             await window.LoadUploadPackageForTestsAsync(originalZipPath);
             FillUploadForm(window, "nonce 过期时保留投稿说明。", "浅色");
             server.ExpireNextSubmissionNonce();
@@ -532,6 +554,51 @@ internal static class MarketCommunityUiChecks
         }, DispatcherPriority.Render);
     }
 
+    private static void VerifyUploadInstructions(SkinMarketWindow window, bool english)
+    {
+        var pane = FindNamed<Grid>(window, "UploadPane");
+        var header = FindNamed<Grid>(window, "UploadHeader");
+        var review = FindNamed<TextBlock>(window, "UploadReviewHint");
+        var background = FindNamed<TextBlock>(window, "UploadBackgroundHint");
+        var form = FindNamed<ScrollViewer>(window, "UploadFormScroll");
+        var headerBounds = BoundsIn(header, pane);
+        var reviewBounds = BoundsIn(review, pane);
+        var backgroundBounds = BoundsIn(background, pane);
+        Check(review.Text == (english ? "Submissions are reviewed by the website and stay hidden until approved." : "投稿会经过网站审核，通过前不会公开展示。") &&
+            background.Text == (english ? "Market submissions require a background image in the overall scope." : "市场投稿需要在整体范围添加背景图片。") &&
+            FitsWrappedText(review) && FitsWrappedText(background) &&
+            headerBounds.Contains(reviewBounds) && headerBounds.Contains(backgroundBounds) &&
+            reviewBounds.Bottom <= backgroundBounds.Top && backgroundBounds.Bottom <= BoundsIn(form, pane).Top,
+            $"最小窗口的{(english ? "英文" : "中文")}投稿说明可完整显示，未与表单重叠");
+    }
+
+    private static void VerifyUploadFooter(SkinMarketWindow window, TextBlock message)
+    {
+        var pane = FindNamed<Grid>(window, "UploadPane");
+        var form = FindNamed<ScrollViewer>(window, "UploadFormScroll");
+        var bounds = BoundsIn(message, pane);
+        var submit = BoundsIn(window.SubmitUploadButtonForTests, pane);
+        Check(FitsWrappedText(message) && bounds.Top >= BoundsIn(form, pane).Bottom &&
+            bounds.Right < submit.Left && bounds.Bottom <= pane.ActualHeight + 1,
+            "页脚文字完整显示在滚动区外且不会盖住提交按钮");
+    }
+
+    private static bool FitsWrappedText(TextBlock text)
+    {
+        if (!text.IsVisible || text.TextWrapping != TextWrapping.Wrap || text.ActualWidth <= 0)
+        {
+            return false;
+        }
+
+        var copy = new FormattedText(text.Text, AppLocalization.Culture, text.FlowDirection,
+            new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch), text.FontSize,
+            text.Foreground, VisualTreeHelper.GetDpi(text).PixelsPerDip) { MaxTextWidth = text.ActualWidth };
+        return text.ActualHeight + 1 >= copy.Height;
+    }
+
+    private static Rect BoundsIn(FrameworkElement element, Visual ancestor) =>
+        element.TransformToAncestor(ancestor).TransformBounds(new Rect(element.RenderSize));
+
     private static async Task SaveScreenshotAsync(Window window, string path)
     {
         await window.Dispatcher.InvokeAsync(() =>
@@ -622,7 +689,8 @@ internal static class MarketCommunityUiChecks
             Success,
             Fail,
             ExpiredNonce,
-            Block
+            Block,
+            Publish
         }
 
         private readonly IReadOnlyDictionary<string, SkinPackage> _packages;
@@ -670,6 +738,7 @@ internal static class MarketCommunityUiChecks
         public void ExpireNextCommentNonce() => Interlocked.Exchange(ref _nextCommentReply, (int)ReplyKind.ExpiredNonce);
         public void ExpireNextSubmissionNonce() => Interlocked.Exchange(ref _nextSubmissionReply, (int)ReplyKind.ExpiredNonce);
         public void FailNextSubmission() => Interlocked.Exchange(ref _nextSubmissionReply, (int)ReplyKind.Fail);
+        public void PublishNextSubmission() => Interlocked.Exchange(ref _nextSubmissionReply, (int)ReplyKind.Publish);
 
         public TaskCompletionSource BlockNextSubmission()
         {
@@ -883,7 +952,7 @@ internal static class MarketCommunityUiChecks
                 item = new
                 {
                     postId = 900 + SubmissionPostCount,
-                    status = "pending",
+                    status = outcome == ReplyKind.Publish ? "publish" : "pending",
                     id = "ayanami",
                     name = "Ayanami"
                 }

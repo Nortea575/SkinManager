@@ -148,10 +148,17 @@ public sealed partial class SkinMarketClient : IDisposable
             {
                 if (itemElement.ValueKind != JsonValueKind.Object)
                 {
-                    throw new InvalidDataException(AppLocalization.Get("市场目录中的皮肤条目格式无效。"));
+                    continue;
                 }
 
-                items.Add(ReadItem(itemElement));
+                try
+                {
+                    items.Add(ReadItem(itemElement));
+                }
+                catch (InvalidDataException)
+                {
+                    // Keep valid entries and the server's pagination when an item fails schema validation.
+                }
             }
 
             var availableTags = ReadTags(root, "availableTags");
