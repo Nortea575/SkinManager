@@ -54,7 +54,7 @@ internal static class GeneralLocalizationUiChecks
             await WaitForWindowAsync(updatesWindow, () => updatesWindow.StatusText.Text.Length > 0);
 
             Require(updatesWindow.Title == "Version and updates" &&
-                    updatesWindow.StatusText.Text == "Version 1.1.5-beta.1 is available" &&
+                    updatesWindow.StatusText.Text == "Version 1.1.5-beta.2 is available" &&
                     updatesWindow.ChannelText.Text == "Update channel: stable and beta",
                 "Updates window title, channel, and live status render in English");
 
@@ -63,8 +63,9 @@ internal static class GeneralLocalizationUiChecks
             updatesWindow.UpdateLayout();
             var englishHistory = GetHistoryEntries(updatesWindow);
             Require(englishHistory.Count > 0 && englishHistory[0].Version == UpdateCoordinator.ReadCurrentVersionTag() &&
-                    englishHistory[0].Body.Contains("Submit suggestions", StringComparison.Ordinal) &&
-                    !ContainsCjk(englishHistory[0].Body),
+                    englishHistory[0].Body.Length > 0 && !ContainsCjk(englishHistory[0].Body) &&
+                    englishHistory.Any(entry => entry.Version == "1.1.4" &&
+                        entry.Body.Contains("Submit suggestions", StringComparison.Ordinal)),
                 "English history log is loaded from the embedded English changelog");
             await Program.SaveWindowScreenshotAsync(updatesWindow,
                 Path.Combine(screenshotDirectory, "updates-en-history.png"));
@@ -142,9 +143,13 @@ internal static class GeneralLocalizationUiChecks
             await instancesWindow!.Dispatcher.InvokeAsync(instancesWindow.UpdateLayout, DispatcherPriority.Background);
             var chineseSupportButton = FindNamed<Button>(supportWindow, "SupportAuthorLinkButton");
 
+            var chineseHistory = GetHistoryEntries(updatesWindow);
             Require(updatesWindow.Title == "版本与更新" &&
-                    updatesWindow.StatusText.Text == "发现新版本 1.1.5-beta.1" &&
-                    GetHistoryEntries(updatesWindow)[0].Body.Contains("提出建议", StringComparison.Ordinal) &&
+                    updatesWindow.StatusText.Text == "发现新版本 1.1.5-beta.2" &&
+                    chineseHistory.Count > 0 && chineseHistory[0].Version == UpdateCoordinator.ReadCurrentVersionTag() &&
+                    ContainsCjk(chineseHistory[0].Body) &&
+                    chineseHistory.Any(entry => entry.Version == "1.1.4" &&
+                        entry.Body.Contains("提出建议", StringComparison.Ordinal)) &&
                     FindNamed<TextBox>(updatesWindow, "ReleaseNotesText").Text == "Fixture release notes remain unchanged.",
                 "Open update and history window refreshes to Chinese immediately");
             Require(supportWindow.Title == "提出建议" &&
@@ -388,9 +393,9 @@ internal static class GeneralLocalizationUiChecks
     {
         private readonly UpdateRelease _release = new(
             new Version(1, 1, 5),
-            "v1.1.5-beta.1",
+            "v1.1.5-beta.2",
             "Fixture release notes remain unchanged.",
-            new Uri("https://updates.invalid/SkinManager-Setup-1.1.5-beta.1.exe"),
+            new Uri("https://updates.invalid/SkinManager-Setup-1.1.5-beta.2.exe"),
             1024,
             new string('0', 64))
         {

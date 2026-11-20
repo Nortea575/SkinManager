@@ -24,8 +24,8 @@ public partial class SkinEditorView : UserControl
     private readonly ObservableCollection<EditorOption> _componentOptions = [];
     private readonly ObservableCollection<EditorOption> _componentStateOptions = [];
     private readonly ObservableCollection<EditorOption> _componentPropertyOptions = [];
-    private readonly Stack<JsonObject> _undo = new();
-    private readonly Stack<JsonObject> _redo = new();
+    private readonly Stack<EditorSnapshot> _undo = new();
+    private readonly Stack<EditorSnapshot> _redo = new();
     private SkinDraft? _draft;
     private SkinEditorField? _activeColorField;
     private SkinEditorField? _creationAccentField;
@@ -126,6 +126,7 @@ public partial class SkinEditorView : UserControl
         UpdateCreationBackgroundLabels();
         UpdateBackgroundImageLabels();
         UpdateComponentScopeHint();
+        RefreshCanvasInspector();
         if (_validationMessageSource is not null)
         {
             LocalizedUiText.SetText(ValidationErrorText, _validationMessageSource);
@@ -153,6 +154,12 @@ public partial class SkinEditorView : UserControl
 
         CancelColorPickerSession();
 
+        if (IsCreationMode && SelectedCanvasComponent is not null)
+        {
+            SetCanvasSelection(null);
+            CanvasSelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         if (EditorModeTabs.SelectedIndex != 0 && BackgroundFocusModeCheckBox.IsChecked == true)
         {
             BackgroundFocusModeCheckBox.IsChecked = false;
@@ -170,13 +177,16 @@ public partial class SkinEditorView : UserControl
     public event EventHandler? BackgroundFocusModeChanged;
     public event EventHandler? EditorModeChanged;
     public event EventHandler? PreviewFlushRequested;
+    public event EventHandler? CanvasSelectionChanged;
 
     public SkinDraft Draft => _draft ?? throw new InvalidOperationException(AppLocalization.Get("皮肤草稿尚未初始化。"));
     public string SelectedScope => (ScopeInput.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "base";
     public bool IsDirty => _draft is not null && !string.Equals(_baseline, Draft.Manifest.ToJsonString(), StringComparison.Ordinal);
     public bool IsNew => _isNew;
     public bool IsCreationMode => EditorModeTabs.SelectedIndex == 0;
+    public bool IsCanvasComponentMode => ReferenceEquals(EditorModeTabs.SelectedItem, CanvasComponentTab);
     public bool IsBackgroundFocusEditing => EditorModeTabs.SelectedIndex == 0 && BackgroundFocusModeCheckBox.IsChecked == true;
+    public string? SelectedCanvasComponent { get; private set; }
 
     public void SetDraft(SkinDraft draft, bool isNew)
     {
@@ -192,6 +202,8 @@ public partial class SkinEditorView : UserControl
         _loading = true;
         try
         {
+            SetCanvasSelection(null);
+            CanvasScopeInput.SelectedIndex = 0;
             LocalizedUiText.SetText(EditorTitle, isNew ? "新建皮肤" : "编辑皮肤");
             LocalizedUiText.SetContent(SaveButton, isNew ? "创建皮肤" : "保存修改");
             SetSaveActionsLayout(isNew);
@@ -286,7 +298,15 @@ public partial class SkinEditorView : UserControl
     {
         if (SkinDefinitionCatalog.Components.Any(item => item.Id == componentId && item.EditorVisible))
         {
+            CancelColorPickerSession();
+            SetCanvasSelection(componentId);
             ComponentInput.SelectedValue = componentId;
+            if (IsCanvasComponent(componentId))
+            {
+                EditorModeTabs.SelectedItem = CanvasComponentTab;
+                return;
+            }
+
             EditorModeTabs.SelectedIndex = 1;
             var componentsTab = EditorTabs.Items.OfType<TabItem>()
                 .FirstOrDefault(item => item.Name == "ComponentsTab");
@@ -616,14 +636,14 @@ public partial class SkinEditorView : UserControl
         OpenColorPicker(button, field);
     }
 
-    private void OpenColorPicker(Button button, SkinEditorField field)
+    private void OpenColorPicker(Button button, SkinEditorField field, CssRgba? initialColor = null)
     {
         CancelColorPickerSession();
         EndBackgroundFocusGesture();
         _activeColorField = field;
         _colorPickerOriginalManifest = Draft.Manifest.DeepClone().AsObject();
         _colorPickerOriginalValue = field.Value;
-        _colorPickerOriginalColor = ResolveColorForField(field);
+        _colorPickerOriginalColor = initialColor ?? ResolveColorForField(field);
         _colorPickerCurrentColor = _colorPickerOriginalColor;
         _colorPickerInputsValid = true;
         _colorPickerSessionActive = true;
@@ -704,7 +724,7 @@ public partial class SkinEditorView : UserControl
     }
 
     private void CreationSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => BeginBackgroundFocusGesture();
-    private void CreationSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndBackgroundFocusGesture();
+    private void CreationSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => FinishSliderGesture(sender);
     private void CreationSlider_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End)
@@ -713,9 +733,19 @@ public partial class SkinEditorView : UserControl
         }
     }
 
-    private void CreationSlider_PreviewKeyUp(object sender, KeyEventArgs e) => EndBackgroundFocusGesture();
-    private void CreationSlider_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => EndBackgroundFocusGesture();
-    private void CreationSlider_LostMouseCapture(object sender, MouseEventArgs e) => EndBackgroundFocusGesture();
+    private void CreationSlider_PreviewKeyUp(object sender, KeyEventArgs e) => FinishSliderGesture(sender);
+    private void CreationSlider_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => FinishSliderGesture(sender);
+    private void CreationSlider_LostMouseCapture(object sender, MouseEventArgs e) => FinishSliderGesture(sender);
+
+    private void FinishSliderGesture(object sender)
+    {
+        var flushCanvas = sender is Slider { Tag: "fillOpacity" or "radius" } && _gestureSnapshotPushed;
+        EndBackgroundFocusGesture();
+        if (flushCanvas)
+        {
+            PreviewFlushRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     private void BackgroundFocusModeCheckBox_Changed(object sender, RoutedEventArgs e)
     {
@@ -902,17 +932,15 @@ public partial class SkinEditorView : UserControl
         DraftChanged?.Invoke(this, new SkinEditorChangedEventArgs(resourcesChanged));
     }
 
-    private void PushUndoSnapshot()
-    {
-        if (_draft is null)
-        {
-            return;
-        }
+    private EditorSnapshot CaptureSnapshot(JsonObject? manifest = null) =>
+        new((manifest ?? Draft.Manifest).DeepClone().AsObject(), SelectedCanvasComponent, CanvasScope, EditorModeTabs.SelectedIndex);
 
-        _undo.Push(Draft.Manifest.DeepClone().AsObject());
-        while (_undo.Count > 40)
+    private void PushUndoSnapshot(JsonObject? manifest = null)
+    {
+        _undo.Push(CaptureSnapshot(manifest));
+        if (_undo.Count > 40)
         {
-            var keepNewest = _undo.Take(39).Reverse().ToArray();
+            var keepNewest = _undo.Take(40).Reverse().ToArray();
             _undo.Clear();
             foreach (var snapshot in keepNewest)
             {
@@ -930,8 +958,9 @@ public partial class SkinEditorView : UserControl
         }
 
         var previousImages = GetImageReferences(Draft.Manifest);
-        _redo.Push(Draft.Manifest.DeepClone().AsObject());
-        RestoreManifest(_undo.Pop());
+        var snapshot = _undo.Pop();
+        _redo.Push(snapshot with { Manifest = Draft.Manifest.DeepClone().AsObject() });
+        RestoreManifest(snapshot);
         FinishHistoryMove(previousImages);
     }
 
@@ -944,20 +973,41 @@ public partial class SkinEditorView : UserControl
         }
 
         var previousImages = GetImageReferences(Draft.Manifest);
-        _undo.Push(Draft.Manifest.DeepClone().AsObject());
-        RestoreManifest(_redo.Pop());
+        var snapshot = _redo.Pop();
+        _undo.Push(snapshot with { Manifest = Draft.Manifest.DeepClone().AsObject() });
+        RestoreManifest(snapshot);
         FinishHistoryMove(previousImages);
     }
 
-    private void RestoreManifest(JsonObject snapshot)
+    private void RestoreManifest(EditorSnapshot snapshot)
     {
-        var restored = (JsonObject)snapshot.DeepClone();
-        Draft.Manifest.Clear();
-        Draft.RestoreManifest(restored);
+        var restoreSelection = snapshot.SelectedComponent != SelectedCanvasComponent;
+        var restoreCanvas = snapshot.ModeIndex == EditorModeTabs.Items.IndexOf(CanvasComponentTab);
+        var leaveCanvas = IsCanvasComponentMode && !restoreCanvas && restoreSelection;
+        Draft.RestoreManifest(snapshot.Manifest);
 
         _loading = true;
         try
         {
+            if (restoreSelection)
+            {
+                SetCanvasSelection(snapshot.SelectedComponent);
+                if (snapshot.SelectedComponent is { } componentId)
+                {
+                    ComponentInput.SelectedValue = componentId;
+                }
+            }
+
+            if (restoreCanvas)
+            {
+                SelectCanvasScope(CanvasScopeInput, snapshot.CanvasScope);
+            }
+
+            if (restoreCanvas || leaveCanvas)
+            {
+                EditorModeTabs.SelectedIndex = snapshot.ModeIndex;
+            }
+
             LoadMetadata();
             LoadTokenFields();
             LoadBackgroundFields();
@@ -968,6 +1018,11 @@ public partial class SkinEditorView : UserControl
         finally
         {
             _loading = false;
+        }
+
+        if (restoreSelection)
+        {
+            CanvasSelectionChanged?.Invoke(this, EventArgs.Empty);
         }
 
         PruneDraftResources();
@@ -1569,20 +1624,6 @@ public partial class SkinEditorView : UserControl
         _colorPickerInputsValid = true;
     }
 
-    private void PushUndoSnapshot(JsonObject snapshot)
-    {
-        _undo.Push(snapshot.DeepClone().AsObject());
-        while (_undo.Count > 40)
-        {
-            var keepNewest = _undo.Take(39).Reverse().ToArray();
-            _undo.Clear();
-            foreach (var item in keepNewest)
-            {
-                _undo.Push(item);
-            }
-        }
-    }
-
     private CssRgba ResolveColorForField(SkinEditorField field)
     {
         if (CssColorParser.TryParse(field.Value, out var direct))
@@ -1704,7 +1745,7 @@ public partial class SkinEditorView : UserControl
 
     public void PruneDraftResources()
     {
-        _draft?.PruneUnreferencedResources(_undo.Concat(_redo));
+        _draft?.PruneUnreferencedResources(_undo.Concat(_redo).Select(snapshot => snapshot.Manifest));
     }
 
     private static string? ReadString(JsonObject? parent, string key) =>
@@ -1800,12 +1841,14 @@ public partial class SkinEditorView : UserControl
     private JsonObject? GetScopedObject(params string[] path) =>
         _draft is null ? null : GetNode(Draft.Manifest, ScopedPath(path)) as JsonObject;
 
-    private IReadOnlyList<string> ScopedPath(params string[] path)
+    private IReadOnlyList<string> ScopedPath(params string[] path) => ScopedPathFor(SelectedScope, path);
+
+    private static IReadOnlyList<string> ScopedPathFor(string scope, string[] path)
     {
-        var prefix = SelectedScope switch
+        var prefix = scope switch
         {
-            "light" or "dark" => new[] { "variants", SelectedScope },
-            "home" or "conversation" => new[] { "scenes", SelectedScope },
+            "light" or "dark" => new[] { "variants", scope },
+            "home" or "conversation" => new[] { "scenes", scope },
             _ => []
         };
         return prefix.Concat(path).ToArray();
@@ -1872,6 +1915,8 @@ public partial class SkinEditorView : UserControl
             : storedValue * 100;
         return percent.ToString("0.##", CultureInfo.InvariantCulture);
     }
+
+    private sealed record EditorSnapshot(JsonObject Manifest, string? SelectedComponent, string CanvasScope, int ModeIndex);
 
     private sealed class EditorOption(string id, string label) : INotifyPropertyChanged
     {

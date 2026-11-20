@@ -321,6 +321,10 @@
                     </Grid.RowDefinitions>
 
                     <Grid x:Name="SelectedSummary" Grid.Row="0" Margin="0,0,0,7">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -352,6 +356,17 @@
                                 </Button.ContextMenu>
                             </Button>
                         </StackPanel>
+                        <WrapPanel x:Name="SavedSkinActions" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Visibility="Collapsed">
+                            <TextBlock Text="{local:Loc '皮肤已保存'}" VerticalAlignment="Center"
+                                       FontSize="12" Foreground="{DynamicResource SecondaryText}" Margin="0,0,10,0" />
+                            <Button x:Name="ExportSavedSkinButton" Content="{local:Loc '导出 ZIP'}" Click="ExportButton_Click"
+                                    Padding="9,5" Margin="0,0,6,0" />
+                            <Button x:Name="SubmitSavedSkinButton" Content="{local:Loc '前往投稿'}" Click="SubmitSavedSkinButton_Click"
+                                    Padding="9,5" Margin="0,0,10,0"
+                                    ToolTipService.ShowOnDisabled="True" ToolTip="{Binding Text, ElementName=SavedSkinMarketHint}" />
+                            <TextBlock x:Name="SavedSkinMarketHint" Text="{local:Loc '市场投稿需要在整体范围添加背景图片。'}"
+                                       VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource SecondaryText}" />
+                        </WrapPanel>
                     </Grid>
 
                     <Expander x:Name="PreviewSettingsExpander" Grid.Row="1" IsExpanded="False"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.5-beta.1 · 2026-11-21
+
+- Fixed the chat area and right-hand panel covering the wallpaper after a Codex update.
+- Select the input panel, sidebar, or a message in the preview to adjust its surface color, fill transparency, and corner radius live. Undo an entire slider drag in one step.
+- See which styles a component inherits, apply edits to a particular appearance or view, and restore inherited values.
+- Export a ZIP or open the market submission form after saving. SkinManager flags missing background images before submission.
+
+Install over an existing version to keep your skin library and preferences. Reapply your skin after upgrading.
+
 ## 1.1.4 · 2026-11-14
 
 - **GIF backgrounds**: Import, edit, preview, and export animated backgrounds while preserving the original GIF. Market covers remain static, and downloaded skins keep the animation.

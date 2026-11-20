@@ -144,7 +144,7 @@
                     </Setter>
                 </Style>
             </TabControl.Resources>
-            <TabItem Header="{local:Loc '创作'}">
+            <TabItem x:Name="OverallEditorTab" Header="{local:Loc '整体'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="1,10,5,8">
                         <TextBlock Text="{local:Loc '从素材开始'}" FontSize="16" FontWeight="SemiBold" />
@@ -520,7 +520,89 @@
                 </ScrollViewer>
             </TabItem>
         </TabControl>
-                </Grid>
+        </Grid>
+            </TabItem>
+            <TabItem x:Name="CanvasComponentTab" Visibility="Collapsed">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="1,12,5,8">
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock DockPanel.Dock="Left" Text="{local:Loc '写入范围'}" Margin="0,0,12,0" VerticalAlignment="Center" />
+                            <ComboBox x:Name="CanvasScopeInput" SelectedIndex="0" SelectionChanged="CanvasScopeInput_SelectionChanged"
+                                      AutomationProperties.Name="{local:Loc '写入范围'}">
+                                <ComboBoxItem Content="{local:Loc '整体默认'}" Tag="base" />
+                                <ComboBoxItem Content="{local:Loc '仅浅色'}" Tag="light" />
+                                <ComboBoxItem Content="{local:Loc '仅深色'}" Tag="dark" />
+                                <ComboBoxItem Content="{local:Loc '仅首页'}" Tag="home" />
+                                <ComboBoxItem Content="{local:Loc '仅对话'}" Tag="conversation" />
+                            </ComboBox>
+                        </DockPanel>
+                        <TextBlock x:Name="CanvasScopeNotice" Foreground="{DynamicResource SecondaryText}" FontSize="11"
+                                   TextWrapping="Wrap" Margin="0,0,0,12" Visibility="Collapsed" />
+
+                        <Grid Margin="0,2,0,3">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{local:Loc '表面颜色'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button x:Name="CanvasColorReset" Grid.Column="1" Content="{local:Loc '恢复跟随'}" Padding="8,5"
+                                    Tag="background" Click="CanvasResetButton_Click" />
+                        </Grid>
+                        <DockPanel Margin="0,1,0,13">
+                            <Button x:Name="CanvasColorButton" DockPanel.Dock="Left" Width="38" Padding="3" Margin="0,0,8,0"
+                                    Click="CanvasColorButton_Click" AutomationProperties.Name="{local:Loc '表面颜色'}"
+                                    ToolTip="{local:Loc '选择颜色'}">
+                                <Border x:Name="CanvasColorSwatch" Width="22" Height="22" CornerRadius="4"
+                                        BorderBrush="{DynamicResource ControlLine}" BorderThickness="1" />
+                            </Button>
+                            <TextBlock x:Name="CanvasColorStatus" Foreground="{DynamicResource SecondaryText}" FontSize="11"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </DockPanel>
+
+                        <Grid Margin="0,2,0,2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{local:Loc '填充透明度'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button x:Name="CanvasOpacityReset" Grid.Column="1" Content="{local:Loc '恢复跟随'}" Padding="8,5"
+                                    Tag="fillOpacity" Click="CanvasResetButton_Click" />
+                        </Grid>
+                        <Grid Margin="0,4,0,2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" MinWidth="40" /></Grid.ColumnDefinitions>
+                            <Slider x:Name="CanvasTransparencySlider" Margin="0,0,10,0" Minimum="0" Maximum="100"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                    Tag="fillOpacity" ValueChanged="CanvasSlider_ValueChanged"
+                                    PreviewMouseLeftButtonDown="CreationSlider_PreviewMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
+                                    PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
+                                    LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
+                                    AutomationProperties.Name="{local:Loc '填充透明度'}" />
+                            <TextBlock x:Name="CanvasTransparencyValue" Grid.Column="1" FontSize="11"
+                                       VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
+                        <TextBlock x:Name="CanvasOpacityStatus" Foreground="{DynamicResource SecondaryText}" FontSize="11"
+                                   TextWrapping="Wrap" Margin="0,0,0,13" />
+
+                        <Grid Margin="0,2,0,3">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{local:Loc '圆角'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button x:Name="CanvasRadiusReset" Grid.Column="1" Content="{local:Loc '恢复跟随'}" Padding="8,5"
+                                    Tag="radius" Click="CanvasResetButton_Click" />
+                        </Grid>
+                        <Grid Margin="0,4,0,2">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" MinWidth="40" /></Grid.ColumnDefinitions>
+                            <Slider x:Name="CanvasRadiusSlider" Margin="0,0,10,0" Minimum="0" Maximum="32"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                    Tag="radius" ValueChanged="CanvasSlider_ValueChanged"
+                                    PreviewMouseLeftButtonDown="CreationSlider_PreviewMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="CreationSlider_PreviewMouseLeftButtonUp"
+                                    PreviewKeyDown="CreationSlider_PreviewKeyDown" PreviewKeyUp="CreationSlider_PreviewKeyUp"
+                                    LostKeyboardFocus="CreationSlider_LostKeyboardFocus" LostMouseCapture="CreationSlider_LostMouseCapture"
+                                    AutomationProperties.Name="{local:Loc '圆角'}" />
+                            <TextBlock x:Name="CanvasRadiusValue" Grid.Column="1" FontSize="11"
+                                       VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
+                        <TextBlock x:Name="CanvasRadiusStatus" Foreground="{DynamicResource SecondaryText}" FontSize="11"
+                                   TextWrapping="Wrap" Margin="0,0,0,13" />
+                        <Button x:Name="CanvasAdvancedButton" Content="{local:Loc '更多属性和状态'}" HorizontalAlignment="Left"
+                                Padding="10,6" Click="CanvasAdvancedButton_Click" />
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
         </TabControl>
 

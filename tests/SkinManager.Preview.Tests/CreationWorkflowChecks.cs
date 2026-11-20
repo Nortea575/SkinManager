@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -301,6 +302,10 @@ internal static class CreationWorkflowChecks
             $"退出编辑后恢复原有应用透明度偏好 (enabled={transparencyFollowEnabled}, value={restoredUserTransparency}, input={transparencyInput.Text})");
         Check(store.LoadSkin(newId).Definition.Author == "创作作者验收",
             "新建皮肤保存重载后保留填写的作者");
+        Check(Find<Button>(window, "ExportSavedSkinButton").IsVisible &&
+            !Find<Button>(window, "SubmitSavedSkinButton").IsEnabled && Find<TextBlock>(window, "SavedSkinMarketHint").IsVisible,
+            "纯色皮肤保存后可直接导出，投稿入口明确提示整体背景图要求");
+        VerifySavedZip(store, newId, Path.Combine(testRoot, "solid-color.zip"));
 
         CloseTestWindow(window);
     }
@@ -423,6 +428,9 @@ internal static class CreationWorkflowChecks
         Find<Button>(editor, "CancelButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await WaitUntilAsync(() => Task.FromResult(editor.Visibility == Visibility.Collapsed), "取消第二个未改动草稿");
 
+        await VerifyComposerCanvasAsync(window, editor, browser, renderer, store, ayanami, SkinScene.Home, screenshotDirectory);
+        await VerifyComposerCanvasAsync(window, editor, browser, renderer, store, saya, SkinScene.Conversation, screenshotDirectory);
+
         SelectSkin(window, saya.Id);
         await WaitUntilAsync(() => Task.FromResult(renderer.CurrentResolvedSkin?.Appearance == SkinAppearance.Dark),
             "选中Saya深色样例");
@@ -455,6 +463,9 @@ internal static class CreationWorkflowChecks
         var savedCopy = store.LoadSkin(firstCopyId);
         Check(savedCopy.Name == "Saya 副本验收" && savedCopy.Definition.Author == saya.Definition.Author && FilesEqual(savedCopy, saya),
             "副本保存名称且保留作者与背景图片资源");
+        Check(Find<Button>(window, "ExportSavedSkinButton").IsVisible && Find<Button>(window, "SubmitSavedSkinButton").IsEnabled,
+            "图片皮肤保存后同时提供导出和投稿入口");
+        VerifySavedZip(store, firstCopyId, Path.Combine(testRoot, "saya-copy.zip"));
 
         SelectSkin(window, saya.Id);
         await WaitUntilAsync(() => Task.FromResult(GetSelectedPackageId(window) == saya.Id), "重新选中Saya作为副本来源");
@@ -503,6 +514,264 @@ internal static class CreationWorkflowChecks
             "唯一副本ID通过验证并保存");
 
         CloseTestWindow(window);
+    }
+
+    private static async Task VerifyComposerCanvasAsync(
+        MainWindow window,
+        SkinEditorView editor,
+        WebView2 browser,
+        ThemePreviewRenderer renderer,
+        SkinStore store,
+        SkinPackage source,
+        SkinScene scene,
+        string screenshotDirectory)
+    {
+        var label = $"{source.Name} {scene}";
+        SelectSkin(window, source.Id);
+        await WaitUntilAsync(() => Task.FromResult(GetSelectedPackageId(window) == source.Id), $"{label} 载入样例");
+        Find<Button>(window, "EditSkinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        SelectByTag(Find<ComboBox>(window, "PreviewSceneBox"), scene == SkinScene.Home ? "home" : "conversation");
+        await WaitUntilAsync(async () => editor.IsVisible && editor.Opacity >= 0.99 &&
+            Find<Border>(window, "LibraryBorder").Visibility == Visibility.Collapsed &&
+            Find<Grid>(window, "SelectedSummary").Visibility == Visibility.Collapsed &&
+            Find<TextBlock>(window, "PreviewStatus").Text == "预览草稿 · 点击组件可切换编辑目标" &&
+            renderer.CurrentResolvedSkin is { } resolved &&
+            resolved.Appearance == source.Appearance && resolved.Scene == scene &&
+            Math.Abs(JsonSerializer.Deserialize<double>(await renderer.ExecuteScriptAsync("innerHeight")) - browser.ActualHeight) < 2 &&
+            await renderer.ExecuteScriptAsync("window.__SKIN_MANAGER_COMPONENT_PICKER__?.enabled === true;") == "true",
+            $"{label} 画布可点选");
+
+        var savedManifest = editor.Draft.Manifest.ToJsonString();
+        var slider = Find<Slider>(editor, "CanvasTransparencySlider");
+        Check(!slider.IsVisible, $"{label} 未点选时隐藏组件透明度");
+        var original = await ReadCanvasStyleAsync(renderer);
+        await ClickCanvasElementAsync(browser, renderer, """
+            document.querySelector('[data-skin-part="composer.editor"]')?.firstElementChild ??
+            document.querySelector('[data-skin-part="composer.editor"]')
+            """);
+        await WaitUntilAsync(async () => slider.IsVisible && slider.IsEnabled &&
+            editor.SelectedCanvasComponent == "composer" && (await ReadCanvasStyleAsync(renderer)).Picked,
+            $"{label} 点击输入文字区的子节点高亮可见输入面板");
+        Near((1 - original.Alpha) * 100, slider.Value, 0.5, $"{label} 滑块读取实际填充透明度");
+
+        if (scene == SkinScene.Home)
+        {
+            RaiseSliderMouse(slider, UIElement.PreviewMouseLeftButtonDownEvent);
+        }
+        else
+        {
+            RaiseSliderKeyDown(slider, Key.Right);
+        }
+
+        slider.Value = 42;
+        await WaitUntilAsync(async () =>
+        {
+            var live = await ReadCanvasStyleAsync(renderer);
+            return live.Picked && live.Document == original.Document && live.SidebarColor == original.SidebarColor &&
+                Math.Abs(live.Alpha - 0.58) < 0.01;
+        }, $"{label} 手势进行中输入面板单独刷新，无需重新载入页面");
+        slider.Value = 53;
+        slider.Value = 67;
+        if (scene == SkinScene.Home)
+        {
+            RaiseSliderMouse(slider, UIElement.PreviewMouseLeftButtonUpEvent);
+        }
+        else
+        {
+            RaiseSliderLostKeyboardFocus(slider, window);
+        }
+
+        Near(0.33, ReadNumber(editor.Draft.Manifest["components"]?["composer"]?["fillOpacity"], double.NaN), 0.001,
+            $"{label} 滑块只写入输入面板的填充透明度");
+        Check(SkinDraft.FromPackage(store.LoadSkin(source.Id)).Manifest.ToJsonString() == savedManifest,
+            $"{label} 实时调整期间已保存的皮肤内容保持原值");
+        await WaitUntilAsync(async () => Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - 0.33) < 0.01,
+            $"{label} 预览应用手势最终值");
+        await CaptureAsync(window, browser, Path.Combine(screenshotDirectory, $"画布点选-{source.Name}.png"));
+
+        if (scene == SkinScene.Home)
+        {
+            var scope = Find<ComboBox>(editor, "CanvasScopeInput");
+            SelectByTag(scope, "dark");
+            Check(Find<TextBlock>(editor, "CanvasOpacityStatus").Text == "沿用组件默认" &&
+                Find<TextBlock>(editor, "CanvasScopeNotice").IsVisible && Math.Abs(slider.Value - 67) < 0.5,
+                $"{label} 非当前预览范围仍可选，并区分继承的组件值与整体令牌");
+            SelectByTag(scope, "base");
+            await ClickCanvasElementAsync(browser, renderer, "document.querySelector('[data-skin-part=\"sidebar\"]')");
+            await WaitUntilAsync(() => Task.FromResult(editor.SelectedCanvasComponent == "sidebar" &&
+                Find<TabItem>(editor, "CanvasComponentTab").Header as string == "侧栏" && slider.IsVisible),
+                $"{label} 点选侧栏后显示对应组件控件");
+        }
+
+        var undo = Find<Button>(editor, "UndoButton");
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(async () =>
+        {
+            var restored = await ReadCanvasStyleAsync(renderer);
+            return !undo.IsEnabled && slider.IsVisible && slider.IsEnabled && editor.SelectedCanvasComponent == "composer" && restored.Picked &&
+                Math.Abs(original.Alpha - restored.Alpha) < 0.01 &&
+                Math.Abs((1 - original.Alpha) * 100 - slider.Value) < 0.5;
+        }, $"{label} 一次撤销恢复整段手势、滑块数值与点选高亮");
+        Check(editor.Draft.Manifest.ToJsonString() == savedManifest && !editor.IsDirty,
+            $"{label} 撤销恢复原始草稿");
+        if (scene == SkinScene.Conversation)
+        {
+            await VerifyContextScopeAsync(window, editor, browser, renderer, original.Alpha, screenshotDirectory);
+        }
+
+        Find<TabControl>(editor, "EditorModeTabs").SelectedItem = Find<TabItem>(editor, "OverallEditorTab");
+        await WaitUntilAsync(async () => editor.SelectedCanvasComponent is null &&
+            Find<Border>(editor, "BackgroundDropZone").IsVisible &&
+            await renderer.ExecuteScriptAsync("document.querySelector('[data-skin-editor-picked]') === null;") == "true",
+            $"{label} 返回整体入口恢复背景工具并退出组件选中");
+        Find<Button>(editor, "CancelButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => Task.FromResult(!editor.IsVisible), $"{label} 退出画布编辑");
+    }
+
+    private static async Task VerifyContextScopeAsync(
+        MainWindow window, SkinEditorView editor, WebView2 browser, ThemePreviewRenderer renderer,
+        double originalAlpha, string screenshotDirectory)
+    {
+        var scope = Find<ComboBox>(editor, "CanvasScopeInput");
+        var scene = Find<ComboBox>(window, "PreviewSceneBox");
+        var appearance = Find<ComboBox>(window, "PreviewAppearanceBox");
+        var slider = Find<Slider>(editor, "CanvasTransparencySlider");
+        var status = Find<TextBlock>(editor, "CanvasOpacityStatus");
+        var undo = Find<Button>(editor, "UndoButton");
+        var opacityPath = editor.Draft.Manifest;
+        SelectByTag(scope, "conversation");
+        Check(status.Text == "跟随整体", "显式令牌引用被识别为跟随整体");
+        ChangeSliderInOneGesture(slider, 52, 63, 72);
+        SelectByTag(scene, "home");
+        SelectByTag(appearance, "light");
+        await WaitUntilAsync(async () => renderer.CurrentResolvedSkin is { Scene: SkinScene.Home, Appearance: SkinAppearance.Light } &&
+            scope.SelectedItem is ComboBoxItem { Tag: "conversation" } && Find<TextBlock>(editor, "CanvasScopeNotice").IsVisible &&
+            Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - originalAlpha) < 0.01,
+            "手势后立即切换预览场景和明暗仍保留写入范围，首页不应用对话覆盖");
+        Near(0.28, ReadNumber(opacityPath["scenes"]?["conversation"]?["components"]?["composer"]?["fillOpacity"], double.NaN), 0.001,
+            "仅对话写入 scenes.conversation.components.composer.fillOpacity");
+        Check(ReadString(opacityPath["components"]?["composer"]?["fillOpacity"]) == "{material.fillOpacity}",
+            "场景编辑保留基础输入面板的整体令牌引用");
+
+        SelectByTag(appearance, "skin");
+        SelectByTag(scene, "conversation");
+        await WaitUntilAsync(async () => renderer.CurrentResolvedSkin is { Scene: SkinScene.Conversation, Appearance: SkinAppearance.Dark } &&
+            Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - 0.28) < 0.01, "回到对话预览后显示已写入的覆盖");
+        SelectByTag(scope, "base");
+        await WaitUntilAsync(() => Task.FromResult(status.Text.Contains("仅对话", StringComparison.Ordinal)),
+            "整体范围清楚提示当前预览使用对话覆盖");
+
+        SelectByTag(scope, "conversation");
+        var reset = Find<Button>(editor, "CanvasOpacityReset");
+        Check(reset.IsEnabled, "存在场景覆盖时启用恢复跟随");
+        reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(async () => !reset.IsEnabled && status.Text == "跟随整体" &&
+            Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - originalAlpha) < 0.01,
+            "恢复跟随只删除当前范围覆盖，CSS 恢复整体填充");
+        Check(editor.Draft.Manifest["scenes"]?["conversation"]?["components"]?["composer"]?["fillOpacity"] is null,
+            "草稿中对话覆盖字段已移除");
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        SelectByTag(appearance, "light");
+        await WaitUntilAsync(async () => reset.IsEnabled && scope.SelectedItem is ComboBoxItem { Tag: "conversation" } &&
+            renderer.CurrentResolvedSkin is { Scene: SkinScene.Conversation, Appearance: SkinAppearance.Light } &&
+            Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - 0.28) < 0.01,
+            "撤销恢复场景覆盖，同时保留独立的预览外观和写入范围");
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(async () => !editor.IsDirty && Math.Abs((await ReadCanvasStyleAsync(renderer)).Alpha - originalAlpha) < 0.01,
+            "撤销场景编辑恢复原始皮肤");
+
+        SelectByTag(appearance, "skin");
+        await WaitUntilAsync(() => Task.FromResult(renderer.CurrentResolvedSkin?.Appearance == SkinAppearance.Dark), "对话组件检查恢复Saya深色");
+        Check(await renderer.ExecuteScriptAsync("""
+            (() => {
+              const surface = document.querySelector('[data-skin-part="message.user"] > div');
+              surface.style.setProperty('background-color', 'color(srgb 1 0 0 / 0.5)', 'important');
+              return getComputedStyle(surface).backgroundColor.startsWith('color(srgb');
+            })()
+            """) == "true", "WebView2 原生消息表面返回 CSS Color 4 计算值");
+        await ClickCanvasElementAsync(browser, renderer, "document.querySelector('[data-skin-part=\"message.user\"] > div')");
+        await WaitUntilAsync(() => Task.FromResult(editor.SelectedCanvasComponent == "message.user" && Find<Button>(editor, "CanvasColorButton").IsEnabled),
+            "点选真实消息气泡打开对应检查器");
+        var swatch = Find<Border>(editor, "CanvasColorSwatch");
+        Check(swatch.Background is SolidColorBrush { Color: { R: 255, G: 0, B: 0, A: 128 } } &&
+            Math.Abs(slider.Value - 50) < 0.5 && !editor.IsDirty,
+            "原生 CSS Color 4 色样保留 sRGB 色彩与半透明度，草稿无写入");
+        await renderer.ExecuteScriptAsync("""
+            document.querySelector('[data-skin-part="message.user"] > div').style.removeProperty('background-color');
+            """);
+        var radius = Find<Slider>(editor, "CanvasRadiusSlider");
+        ChangeSliderInOneGesture(radius, 18, 20);
+        Find<Button>(editor, "CanvasColorButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Find<ColorPickerControl>(editor, "ColorPicker").SetColor(new CssRgba(43, 104, 92, 255), notify: true);
+        Find<Button>(editor, "PaletteConfirmButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(async () => await renderer.ExecuteScriptAsync("""
+            (() => {
+              const surface = document.querySelector('[data-skin-part="message.user"] > div');
+              const style = getComputedStyle(surface);
+              return surface.dataset.skinEditorPicked === 'true' && style.borderTopLeftRadius === '20px' &&
+                /^rgba?\(43, 104, 92(?:,|\))/.test(style.backgroundColor);
+            })()
+            """) == "true", "消息气泡圆角与表面颜色使用真实预览样式");
+        window.Width = 960;
+        window.Height = 640;
+        await CaptureAsync(window, browser, Path.Combine(screenshotDirectory, "画布点选-Saya-960x640.png"));
+        window.Width = 1240;
+        window.Height = 840;
+        await window.Dispatcher.InvokeAsync(window.UpdateLayout);
+
+        Find<Button>(editor, "CanvasAdvancedButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(() => Task.FromResult(Find<ComboBox>(editor, "ComponentStateInput").IsVisible &&
+            Find<ComboBox>(editor, "ComponentInput").SelectedValue as string == "message.user" &&
+            Find<ComboBox>(editor, "ScopeInput").SelectedItem is ComboBoxItem { Tag: "conversation" }),
+            "更多属性和状态直接打开对应组件及写入范围");
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await WaitUntilAsync(async () => !editor.IsDirty && editor.IsCanvasComponentMode &&
+            await renderer.ExecuteScriptAsync("""
+                !/^rgba?\(43, 104, 92(?:,|\))/.test(getComputedStyle(document.querySelector('[data-skin-part="message.user"] > div')).backgroundColor)
+                """) == "true", "撤销气泡颜色和圆角并返回对应检查器");
+    }
+
+    private static async Task ClickCanvasElementAsync(WebView2 browser, ThemePreviewRenderer renderer, string selectorScript)
+    {
+        var result = await renderer.ExecuteScriptAsync($$"""
+            (() => {
+              const target = {{selectorScript}};
+              target.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+              const rect = target.getBoundingClientRect();
+              return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+            })()
+            """);
+        var coordinates = JsonSerializer.Deserialize<double[]>(result)
+            ?? throw new InvalidOperationException("无法取得画布点选坐标。");
+        var core = browser.CoreWebView2!;
+        foreach (var type in new[] { "mousePressed", "mouseReleased" })
+        {
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent",
+                JsonSerializer.Serialize(new { type, x = coordinates[0], y = coordinates[1], button = "left", clickCount = 1 }));
+        }
+    }
+
+    private static async Task<(double Alpha, bool Picked, string Document, string SidebarColor)> ReadCanvasStyleAsync(ThemePreviewRenderer renderer)
+    {
+        var result = await renderer.ExecuteScriptAsync("""
+            (() => {
+              const owner = document.querySelector('[data-skin-part="composer"]');
+              const surface = owner.matches('[data-composer-utility-bar-variant="home"]')
+                ? owner.querySelector('[data-composer-body]') : owner;
+              const style = getComputedStyle(surface);
+              const color = style.backgroundColor.match(/[\d.]+/g);
+              const outline = style.outlineStyle === 'solid' && parseFloat(style.outlineWidth) > 0;
+              const picked = surface.dataset.skinEditorPicked === 'true' && outline &&
+                document.querySelectorAll('[data-skin-editor-picked="true"]').length === 1;
+              const sidebar = document.querySelector('[data-skin-part="sidebar"]');
+              return [color?.[3] ?? '1', String(picked), location.pathname, getComputedStyle(sidebar).backgroundColor];
+            })()
+            """);
+        var values = JsonSerializer.Deserialize<string[]>(result)
+            ?? throw new InvalidOperationException("无法读取画布输入面板的计算样式。");
+        return (double.Parse(values[0], System.Globalization.CultureInfo.InvariantCulture),
+            values[1] == "true", values[2], values[3]);
     }
 
     private static MainWindow CreateWindow(SkinStore store, BasePackage basePackage, string previewPath) => new(
@@ -567,20 +836,20 @@ internal static class CreationWorkflowChecks
 
     private static void ChangeSliderInOneGesture(Slider slider, params double[] values)
     {
-        slider.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
-        {
-            RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent
-        });
+        RaiseSliderMouse(slider, UIElement.PreviewMouseLeftButtonDownEvent);
         foreach (var value in values)
         {
             slider.Value = value;
         }
 
+        RaiseSliderMouse(slider, UIElement.PreviewMouseLeftButtonUpEvent);
+    }
+
+    private static void RaiseSliderMouse(Slider slider, RoutedEvent routedEvent) =>
         slider.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
         {
-            RoutedEvent = UIElement.PreviewMouseLeftButtonUpEvent
+            RoutedEvent = routedEvent
         });
-    }
 
     private static void RaiseSliderKeyDown(Slider slider, Key key)
     {
@@ -627,6 +896,16 @@ internal static class CreationWorkflowChecks
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
         return leftFiles.Count == rightFiles.Count && leftFiles.All(pair =>
             rightFiles.TryGetValue(pair.Key, out var bytes) && pair.Value.AsSpan().SequenceEqual(bytes));
+    }
+
+    private static void VerifySavedZip(SkinStore store, string id, string path)
+    {
+        store.ExportZip(id, path, overwriteExisting: false);
+        var exported = SkinPackageReader.ReadZipFile(path);
+        var saved = store.LoadSkin(id);
+        Check(exported.Definition.FormatVersion == 1 && FilesEqual(saved, exported) &&
+            SkinDraft.FromPackage(exported).Manifest.ToJsonString() == SkinDraft.FromPackage(saved).Manifest.ToJsonString(),
+            $"{id} 导出 ZIP 回读保持 V1 清单和完整资源");
     }
 
     private static string? ReadString(System.Text.Json.Nodes.JsonObject? parent, string key) =>

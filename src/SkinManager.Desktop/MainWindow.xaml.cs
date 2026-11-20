@@ -86,6 +86,7 @@ public partial class MainWindow : Window
     private MarketAccountSession? _marketAccountSession;
     private SkinPackage? _editOriginalPackage;
     private string? _editOriginalId;
+    private string? _recentlySavedSkinId;
     private int _previewTransparency = 30;
     private long _editorPreviewSequence;
     private long _previewStatusSequence;
@@ -196,6 +197,7 @@ public partial class MainWindow : Window
         _runtimeController.StatusChanged += RuntimeController_StatusChanged;
         SkinEditor.DraftChanged += SkinEditor_DraftChanged;
         SkinEditor.PreviewFlushRequested += SkinEditor_PreviewFlushRequested;
+        SkinEditor.CanvasSelectionChanged += SkinEditor_CanvasSelectionChanged;
         SkinEditor.ScopeChanged += SkinEditor_ScopeChanged;
         SkinEditor.SaveRequested += SkinEditor_SaveRequested;
         SkinEditor.CancelRequested += SkinEditor_CancelRequested;
@@ -728,6 +730,23 @@ public partial class MainWindow : Window
 
     private void MarketEntryButton_Click(object sender, RoutedEventArgs e) => OpenMarketWindow();
 
+    private void SubmitSavedSkinButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPackage is { ImagePath: not null } package)
+        {
+            OpenMarketWindow()?.OpenUploadForSkin(package.Id);
+        }
+    }
+
+    private void UpdateSavedSkinActions(SkinPackage package)
+    {
+        SavedSkinActions.Visibility = string.Equals(_recentlySavedSkinId, package.Id, StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible : Visibility.Collapsed;
+        var canSubmit = package.ImagePath is not null;
+        SubmitSavedSkinButton.IsEnabled = canSubmit;
+        SavedSkinMarketHint.Visibility = canSubmit ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private void SettingsEntryButton_Click(object sender, RoutedEventArgs e)
     {
         if (_runtimeOperationInProgress || _isBusy || _isEditing)
@@ -1162,6 +1181,14 @@ public partial class MainWindow : Window
     private void SkinEditor_PreviewFlushRequested(object? sender, EventArgs e) =>
         QueueEditorPreviewUpdate(resourcesChanged: false, flushImmediately: true);
 
+    private async void SkinEditor_CanvasSelectionChanged(object? sender, EventArgs e)
+    {
+        if (_isEditing && _previewRenderer is { } renderer)
+        {
+            await renderer.SetComponentSelectionModeAsync(true, SkinEditor.SelectedCanvasComponent);
+        }
+    }
+
     private void SkinEditor_ScopeChanged(object? sender, EventArgs e)
     {
         if (!_isEditing)
@@ -1195,7 +1222,7 @@ public partial class MainWindow : Window
             SelectPreviewValue(PreviewSceneBox, "home");
             QueueEditorPreviewUpdate(resourcesChanged: false);
         }
-        else
+        else if (!SkinEditor.IsCanvasComponentMode)
         {
             SkinEditor_ScopeChanged(sender, e);
         }
@@ -1330,6 +1357,7 @@ public partial class MainWindow : Window
 
             PreviewBrowser.Visibility = Visibility.Visible;
             SetPreviewStatus("预览草稿 · 点击组件可切换编辑目标");
+            await UpdateCanvasInspectorAsync(renderer);
             UpdateTransparencyControls();
         }
         catch (OperationCanceledException) when (
@@ -1423,6 +1451,7 @@ public partial class MainWindow : Window
             SetBusy(true);
             await Task.Run(() => _store.Save(package, replace));
             SkinEditor.MarkSaved();
+            _recentlySavedSkinId = package.Id;
             _selectedPackage = package;
             ExitEditor(restoreSavedPreview: false);
             RefreshList(package.Id);
@@ -1736,7 +1765,7 @@ public partial class MainWindow : Window
             {
                 _editorResourcesChanged = true;
                 await UpdateEditorPreviewAsync(force: true);
-                await renderer.SetComponentSelectionModeAsync(true);
+                await renderer.SetComponentSelectionModeAsync(true, SkinEditor.SelectedCanvasComponent);
                 await renderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
             }
             else if (_selectedPackage is { } package)
@@ -1970,7 +1999,7 @@ public partial class MainWindow : Window
 
         try
         {
-        _store.ExportZip(_selectedPackage.Id, dialog.FileName, overwriteExisting: true);
+            _store.ExportZip(_selectedPackage.Id, dialog.FileName, overwriteExisting: true);
             MessageBox.Show(this, AppLocalization.Get("皮肤包已导出。"), AppLocalization.Get("导出完成"), MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception exception)
@@ -2414,7 +2443,7 @@ public partial class MainWindow : Window
             {
                 _editorResourcesChanged = true;
                 await UpdateEditorPreviewAsync(force: true);
-                await _previewRenderer!.SetComponentSelectionModeAsync(true);
+                await _previewRenderer!.SetComponentSelectionModeAsync(true, SkinEditor.SelectedCanvasComponent);
                 await _previewRenderer.SetBackgroundPositionModeAsync(SkinEditor.IsBackgroundFocusEditing);
             }
             else if (_selectedPackage is { } package)
@@ -3068,6 +3097,7 @@ public partial class MainWindow : Window
         var preserveOriginalUntilPreviewReady = OriginalImageLayer.Visibility == Visibility.Visible;
         var originalTransition = ++_originalTransitionSequence;
         _selectedPackage = package;
+        UpdateSavedSkinActions(package);
         _previewNeedsRefresh = true;
         _showingOriginal = false;
         _showingOriginalGif = false;
@@ -3521,6 +3551,11 @@ public partial class MainWindow : Window
         {
             if (_isEditing)
             {
+                if (!_editorPreviewUpdateInProgress && !_editorPreviewPending && sender is ThemePreviewRenderer renderer)
+                {
+                    _ = UpdateCanvasInspectorAsync(renderer);
+                }
+
                 UpdateTransparencyControls();
                 return;
             }
@@ -3538,11 +3573,28 @@ public partial class MainWindow : Window
     {
         _ = Dispatcher.InvokeAsync(() =>
         {
-            if (_isEditing)
+            if (_isEditing && sender is ThemePreviewRenderer renderer)
             {
                 SkinEditor.SelectComponent(e.ComponentId);
+                _ = UpdateCanvasInspectorAsync(renderer);
             }
         });
+    }
+
+    private async Task UpdateCanvasInspectorAsync(ThemePreviewRenderer renderer)
+    {
+        var component = SkinEditor.SelectedCanvasComponent;
+        if (!SkinEditorView.IsCanvasComponent(component) || renderer.CurrentResolvedSkin is not { } preview)
+        {
+            return;
+        }
+
+        var style = await renderer.ReadCanvasSurfaceStyleAsync(component!);
+        if (_isEditing && ReferenceEquals(renderer, _previewRenderer) && ReferenceEquals(preview, renderer.CurrentResolvedSkin) &&
+            component == SkinEditor.SelectedCanvasComponent)
+        {
+            SkinEditor.UpdateCanvasInspector(preview, style);
+        }
     }
 
     private void ShowNoSelection(string title, string message)

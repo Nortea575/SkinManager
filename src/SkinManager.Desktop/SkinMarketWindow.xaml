@@ -447,6 +447,8 @@
                     <TextBlock Text="{local:Loc '上传皮肤'}" FontSize="22" Style="{StaticResource PageTitle}" />
                     <TextBlock Text="{local:Loc '投稿会经过网站审核，通过前不会公开展示。'}" FontSize="12"
                                Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" />
+                    <TextBlock Text="{local:Loc '市场投稿需要在整体范围添加背景图片。'}" FontSize="12"
+                               Foreground="{DynamicResource SecondaryText}" Margin="0,3,0,0" TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
             <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

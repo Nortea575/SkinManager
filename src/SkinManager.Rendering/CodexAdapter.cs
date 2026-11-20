@@ -292,6 +292,12 @@ public static class CodexAdapter
     internal static IReadOnlyList<string> BackgroundSurfaceResetRules =>
     [
         $":where({AppFrameSelector},[data-app-shell-page-surface=\"true\"],[data-app-shell-workspace-row=\"true\"],[data-app-shell-main-surface],aside.app-shell-left-panel,[data-sidebar-navigation-root],.thread-scroll-container,[data-fixture-page-panel]) {{background-color:transparent !important;background-image:none !important;}}",
+        """
+        :root[data-skin-background-active="true"] :where(
+          [data-app-shell-workspace="true"] > [data-app-shell-surface-backing="true"],
+          aside[data-app-shell-focus-area="right-panel"] [data-app-shell-tabs="true"] > div:has(> [data-app-shell-tab-panel-controller="right"])
+        ) {background-color:transparent !important;}
+        """,
         ":root[data-theme] [data-thread-scroll-footer=\"true\"] > ._background_18hic_2._surface_18hic_2 {inset-inline:0 !important;translate:calc(0px - var(--thread-content-x, 0px)) 0 !important;}",
         ":root[data-theme] .thread-scroll-container ._background_18hic_2._fade_18hic_2 {inset-inline:0 !important;translate:calc(0px - var(--thread-content-x, 0px)) 0 !important;}"
     ];

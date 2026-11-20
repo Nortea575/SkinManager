@@ -171,11 +171,12 @@ internal static class Program
         var chatReplyOnly = args.Contains("--chat-reply-only", StringComparer.OrdinalIgnoreCase);
         var creationOnly = args.Contains("--creation-only", StringComparer.OrdinalIgnoreCase);
         var connectionOnly = args.Contains("--connection-only", StringComparer.OrdinalIgnoreCase);
+        var backdropOnly = args.Contains("--backdrop-only", StringComparer.OrdinalIgnoreCase);
         AppLocalization.Initialize(Path.Combine(FindTestOutputDirectory(), "language-harness", "language.json"));
         AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources = LoadOfflineApplicationResources();
-        if (!chatReplyOnly && !connectionOnly && !updateChannelOnly)
+        if (!chatReplyOnly && !connectionOnly && !updateChannelOnly && !backdropOnly)
         {
             VerifyPackagedThemeFonts();
             VerifyThemeTextContrast();
@@ -289,6 +290,15 @@ internal static class Program
                 else if (connectionOnly)
                 {
                     await RunConnectionOnlyAsync();
+                }
+                else if (backdropOnly)
+                {
+                    var testRoot = Path.Combine(Path.GetTempPath(), "SkinManagerBackdrop", Guid.NewGuid().ToString("N"));
+                    _cleanupRoot = testRoot;
+                    await RunBackdropChecksAsync(testRoot,
+                        SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Ayanami")),
+                        SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Saya")),
+                        SkinPackageReader.ReadZipBytes(ReadEmbeddedPackage("Native")));
                 }
                 else if (updateChannelOnly)
                 {
@@ -525,8 +535,10 @@ internal static class Program
 
     private static async Task RunReviewUiAsync(bool captureScreenshots)
     {
-        Check(UpdateCoordinator.ReadCurrentVersion(typeof(MainWindow).Assembly) == new Version(1, 1, 2),
-            "更新比较读取公开软件版本 1.1.2");
+        var appAssembly = typeof(MainWindow).Assembly;
+        Check(UpdateCoordinator.ReadCurrentVersion(appAssembly) == new Version(1, 1, 5) &&
+              UpdateCoordinator.ReadCurrentVersionTag(appAssembly) == "1.1.5-beta.1",
+            "更新比较读取数值版本 1.1.5 和测试版标记 1.1.5-beta.1");
         var reviewRoot = Path.Combine(Path.GetTempPath(), "SkinManagerPreviewReview", Guid.NewGuid().ToString("N"));
         _cleanupRoot = reviewRoot;
         Directory.CreateDirectory(reviewRoot);
@@ -978,14 +990,6 @@ internal static class Program
             VerticalAlignment = VerticalAlignment.Center
         };
         var rendererWindow = CreatePreviewWindow(browser, 960, 540);
-        var footerTestBrowser = new WebView2
-        {
-            Width = 960,
-            Height = 540,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var footerTestWindow = CreatePreviewWindow(footerTestBrowser, 960, 540);
         var renderer = new ThemePreviewRenderer(browser, Path.Combine(testRoot, "renderer-data", "PreviewBrowser"), basePackage);
         var requestedWebHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var backgroundResponses = new List<string>();
@@ -1216,12 +1220,7 @@ internal static class Program
                 "WebView2 僅請求本地離線預覽源，沒有外部網路來源");
             Console.WriteLine($"背景資源響應：{string.Join(" | ", backgroundResponses)}");
 
-            footerTestWindow.Show();
-            var footerEnvironment = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(
-                null,
-                Path.Combine(testRoot, "footer-browser-data"));
-            await footerTestBrowser.EnsureCoreWebView2Async(footerEnvironment);
-            await FooterBackdropLayoutTests.VerifyAsync(footerTestBrowser.CoreWebView2!, ayanami);
+            await RunBackdropChecksAsync(testRoot, ayanami, saya, native);
         }
         finally
         {
@@ -1237,14 +1236,33 @@ internal static class Program
             renderer.Dispose();
             rendererWindow.Content = null;
             rendererWindow.Close();
-            footerTestWindow.Content = null;
-            footerTestBrowser.Dispose();
-            footerTestWindow.Close();
         }
 
         await VerifyUpdatesAndInstallHandoffAsync(testRoot, basePackage, screenshotDirectory);
         await VerifyInstanceManagementAsync(screenshotDirectory);
         await VerifyManagerControlsAsync(testRoot, basePackage, ayanamiBytes, nativeBytes, sayaBytes, ayanami, saya, declaredDark);
+    }
+
+    private static async Task RunBackdropChecksAsync(string testRoot, SkinPackage ayanami, SkinPackage saya, SkinPackage native)
+    {
+        using var browser = new WebView2 { Width = 960, Height = 540 };
+        var window = CreatePreviewWindow(browser, 960, 540);
+        window.Left = -2_000;
+        window.Top = -2_000;
+        window.ShowActivated = false;
+        window.Show();
+        try
+        {
+            var environment = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(
+                null, Path.Combine(testRoot, "backdrop-browser-data"));
+            await browser.EnsureCoreWebView2Async(environment);
+            await FooterBackdropLayoutTests.VerifyAsync(browser.CoreWebView2!, ayanami, saya, native);
+        }
+        finally
+        {
+            window.Content = null;
+            window.Close();
+        }
     }
 
     private static async Task RunInstanceReviewUiAsync()

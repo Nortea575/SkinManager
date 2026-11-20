@@ -234,15 +234,16 @@ internal static class MarketCommunityUiChecks
                 "重新登录恢复投稿权限");
 
             AppThemeService.SetMode(AppThemeMode.Day);
-            Click(window.OpenUploadButtonForTests, "打开投稿页");
+            window.OpenUploadForSkin("ayanami");
             await WaitUntilAsync(() => window.IsUploadVisibleForTests && window.ExportLocalSkinButtonForTests.IsEnabled,
                 "投稿页载入隔离本地皮肤库");
             Check(window.LocalSkinBoxForTests.Items.Count == 2,
                 "投稿皮肤选择器只显示 Ayanami 与 Saya");
-            window.LocalSkinBoxForTests.SelectedIndex = 0;
             var selectedLocalSkin = window.LocalSkinBoxForTests.SelectedItem as MarketLocalSkinOption;
             Check(selectedLocalSkin?.Entry.Id.Equals("ayanami", StringComparison.OrdinalIgnoreCase) == true,
-                "本地皮肤目录可选择 Ayanami");
+                "从保存入口打开投稿页时预选 Ayanami");
+            Check(window.UploadPackagePathForTests is null && server.SubmissionPostCount == 0,
+                "预选保存皮肤不创建待提交包或发起上传");
             await window.Dispatcher.InvokeAsync(() => window.LocalSkinBoxForTests.UpdateLayout(), DispatcherPriority.Render);
             var localSkinTextBlocks = FindVisualDescendants<TextBlock>(window.LocalSkinBoxForTests)
                 .Select(textBlock => textBlock.Text.Trim()).ToArray();

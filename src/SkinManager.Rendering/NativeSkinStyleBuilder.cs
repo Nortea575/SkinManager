@@ -234,9 +234,6 @@ public static class NativeSkinStyleBuilder
               const payload = {{payloadJson}};
               const codex = {{CodexAdapter.RuntimeContractJson}};
               {{SkinFillEngine.Source}}
-              const root = document.documentElement;
-              if (payload.background) root.setAttribute("data-skin-background-active", "true");
-              else root.removeAttribute("data-skin-background-active");
               const styleId = "skin-manager-native-style";
               let style = document.getElementById(styleId);
               if (!style) {
@@ -244,166 +241,54 @@ public static class NativeSkinStyleBuilder
                 style.id = styleId;
                 document.head.appendChild(style);
               }
-              style.textContent = payload.css || "";
+              style.setAttribute("data-skin-manager-owned", "true");
+              if (style.textContent !== (payload.css || "")) style.textContent = payload.css || "";
 
               const managerKey = "__SKIN_MANAGER_NATIVE_FILL__";
-              const manager = window[managerKey] || (window[managerKey] = {
-                originalBackground: new WeakMap(),
-                fillApplied: new WeakMap(),
-                elements: new Set(),
-                bindings: new WeakMap(),
-                backgroundCache: new Map(),
-                ownerHandlers: new Map(),
-                ownerSurfaces: new Map(),
-                ownerFrames: new Map(),
-                payload: null,
-                update: null,
-              });
-              manager.ownerHandlers ||= new Map();
-              manager.ownerSurfaces ||= new Map();
-              manager.ownerFrames ||= new Map();
-              manager.fillOriginals ||= manager.originalBackground || new WeakMap();
-              manager.originalBackground = manager.fillOriginals;
-              manager.fillApplied ||= new WeakMap();
-              manager.backgroundCache ||= new Map();
-              manager.payload = payload;
-              const fillEngine = createSkinFillEngine({
-                document,
-                getComputedStyle: (element) => getComputedStyle(element),
-                root,
-                statePriority: codex.statePriority,
-                stateSelectors: codex.stateSelectors,
-                fillOriginals: manager.fillOriginals,
-                fillApplied: manager.fillApplied,
-                nativeBackgroundCache: manager.backgroundCache,
-                isBackgroundActive: () => root.getAttribute("data-skin-background-active") === "true",
-              });
-              const attachOwner = (owner) => {
-                if (manager.ownerHandlers.has(owner)) return;
-                const updateOwnerFill = () => {
-                  if (manager.ownerFrames.has(owner)) return;
-                  const frame = requestAnimationFrame(() => {
-                    manager.ownerFrames.delete(owner);
-                    for (const surface of manager.ownerSurfaces.get(owner) || []) {
-                      const binding = manager.bindings.get(surface);
-                      if (!binding) continue;
-                      const config = manager.payload?.fillOpacity?.[binding.part];
-                      if (config) fillEngine.applyFill(surface, owner, config);
-                    }
-                  });
-                  manager.ownerFrames.set(owner, frame);
+              let manager = window[managerKey];
+              if (!manager) {
+                const surfaceFor = (owner, part) => {
+                  if (part === "composer" && owner.matches(codex.composerHomeVariantSelector)) {
+                    return owner.querySelector(":scope " + codex.composerBodySelector);
+                  }
+                  if (part === "message.user" || part === "message.assistant") {
+                    return owner.querySelector(":scope > div");
+                  }
+                  return owner;
                 };
-                for (const eventName of ["pointerover", "pointerout", "pointerdown", "pointerup", "focus", "blur", "focusin", "focusout"]) {
-                  owner.addEventListener(eventName, updateOwnerFill, true);
-                }
-                manager.ownerHandlers.set(owner, updateOwnerFill);
-              };
+                const getStyle = (element) => getComputedStyle(element);
+                const background = createSkinBackground({
+                  document, codex, getComputedStyle: getStyle,
+                  id: "skin-manager-background",
+                  resolveImageUrl: (url) => url,
+                });
+                const fills = createSkinFillBindings({
+                  document, codex, getComputedStyle: getStyle, surfaceFor,
+                  watchStaticFills: true,
+                  isBackgroundActive: background.isActive,
+                });
+                manager = window[managerKey] = {
+                  fills, background, surfaceFor,
+                  bindings: fills.bindings, elements: fills.bindings,
+                  update: null, payload: null,
+                };
+              }
+
+              manager.payload = payload;
               manager.update = () => {
-                for (const surface of manager.elements) fillEngine.restoreFill(surface);
-                for (const [owner, handler] of manager.ownerHandlers) {
-                  for (const eventName of ["pointerover", "pointerout", "pointerdown", "pointerup", "focus", "blur", "focusin", "focusout"]) {
-                    owner.removeEventListener(eventName, handler, true);
-                  }
-                  const frame = manager.ownerFrames.get(owner);
-                  if (frame !== undefined) cancelAnimationFrame(frame);
-                }
-                manager.ownerHandlers.clear();
-                manager.ownerFrames.clear();
-                manager.ownerSurfaces.clear();
-                manager.elements.clear();
-                manager.bindings = new WeakMap();
-                manager.backgroundCache.clear();
+                manager.background.sync(payload.background);
+                manager.fills.reset();
                 for (const [part, config] of Object.entries(payload.fillOpacity || {})) {
-                  const ownerSelector = "[data-skin-part=\"" + CSS.escape(part) + "\"]";
-                  for (const owner of document.querySelectorAll(ownerSelector)) {
-                    const surface = part === "composer"
-                      ? owner.matches(codex.composerHomeVariantSelector)
-                        ? owner.querySelector(":scope " + codex.composerBodySelector)
-                        : owner
-                      : ["message.user", "message.assistant"].includes(part)
-                        ? owner.querySelector(":scope > div")
-                        : owner;
-                    if (!surface) continue;
-                    manager.elements.add(surface);
-                    manager.bindings.set(surface, { part, owner });
-                    if (!manager.ownerSurfaces.has(owner)) manager.ownerSurfaces.set(owner, new Set());
-                    manager.ownerSurfaces.get(owner).add(surface);
-                    attachOwner(owner);
-                    fillEngine.applyFill(surface, owner, config);
-                  }
+                  const ownerSelector = '[data-skin-part="' + CSS.escape(part) + '"]';
+                  for (const owner of document.querySelectorAll(ownerSelector)) manager.fills.bind(owner, part, config);
                 }
               };
               manager.update();
-
-              const backgroundId = "skin-manager-background";
-              let background = document.getElementById(backgroundId);
-              if (!payload.background) {
-                background?.remove();
-                root.removeAttribute("data-skin-background-active");
-                return;
-              }
-              if (!background) {
-                background = document.createElement("div");
-                background.id = backgroundId;
-                background.setAttribute("aria-hidden", "true");
-                Object.assign(background.style, {
-                  position: "fixed",
-                  inset: "0",
-                  zIndex: "0",
-                  pointerEvents: "none",
-                  overflow: "hidden",
-                });
-                const shell = document.querySelector(codex.partSelectors.window);
-                if (shell?.parentElement === document.body) document.body.insertBefore(background, shell);
-                else document.body.prepend(background);
-              }
-              root.setAttribute("data-skin-background-active", "true");
-              const computedRoot = getComputedStyle(root);
-              const fallback = codex.nativeBackgroundFallbackVariables.map((variable) => computedRoot.getPropertyValue(variable).trim()).find(Boolean)
-                || getComputedStyle(document.body).backgroundColor;
-              background.style.backgroundColor = payload.background.color || fallback;
-
-              let image = background.querySelector(".skin-manager-image");
-              if (payload.background.imageUrl) {
-                if (!image) {
-                  image = document.createElement("div");
-                  image.className = "skin-manager-image";
-                  Object.assign(image.style, { position: "absolute", inset: "0", backgroundRepeat: "no-repeat" });
-                  background.appendChild(image);
-                }
-                const imageBackground = `url(${JSON.stringify(payload.background.imageUrl)})`;
-                if (image.style.backgroundImage !== imageBackground) image.style.backgroundImage = imageBackground;
-                image.style.backgroundSize = payload.background.fit || "";
-                image.style.backgroundPosition = payload.background.focusX !== null && payload.background.focusY !== null
-                  ? `${payload.background.focusX * 100}% ${payload.background.focusY * 100}%`
-                  : payload.background.focusX !== null
-                    ? `${payload.background.focusX * 100}%`
-                    : payload.background.focusY !== null
-                      ? `center ${payload.background.focusY * 100}%`
-                      : "";
-                image.style.opacity = payload.background.opacity ?? "";
-              } else {
-                image?.remove();
-              }
-
-              let overlay = background.querySelector(".skin-manager-overlay");
-              if (payload.background.overlayColor) {
-                if (!overlay) {
-                  overlay = document.createElement("div");
-                  overlay.className = "skin-manager-overlay";
-                  Object.assign(overlay.style, { position: "absolute", inset: "0" });
-                  background.appendChild(overlay);
-                }
-                overlay.style.backgroundColor = payload.background.overlayColor;
-                overlay.style.opacity = payload.background.overlayOpacity ?? "";
-              } else {
-                overlay?.remove();
-              }
             })()
             """;
     }
 
-    private static Dictionary<string, NativeFillOpacity> BuildFillOpacity(ResolvedSkin? skin)
+    internal static Dictionary<string, NativeFillOpacity> BuildFillOpacity(ResolvedSkin? skin)
     {
         var result = new Dictionary<string, NativeFillOpacity>(StringComparer.Ordinal);
         if (skin is null)

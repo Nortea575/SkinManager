@@ -187,7 +187,8 @@ NativeCaptionBackgroundTests.VerifyRuntime(
     skinChangeRuntimeScript: sayaRuntimeScript,
     expectedChangedForDarkSymbolsBackground: "#91C7B0",
     expectedChangedForLightSymbolsBackground: "#13202B",
-    noCaptionRuntimeScript: nativeRuntimeScript);
+    noCaptionRuntimeScript: nativeRuntimeScript,
+    marketRuntimeTemplate: SkinRuntimeCompiler.BuildPreviewRuntimeTemplate());
 
 var captionLogDirectory = Path.Combine(FindRepositoryRoot(), "artifacts", "test-results", "logs");
 Directory.CreateDirectory(captionLogDirectory);

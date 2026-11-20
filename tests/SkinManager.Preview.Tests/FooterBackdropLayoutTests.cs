@@ -8,7 +8,13 @@ namespace SkinManager.Preview.Tests;
 
 internal static class FooterBackdropLayoutTests
 {
-    public static async Task VerifyAsync(CoreWebView2 core, SkinPackage package)
+    public static async Task VerifyAsync(CoreWebView2 core, SkinPackage ayanami, SkinPackage saya, SkinPackage native)
+    {
+        await VerifyFooterLayoutAsync(core, ayanami).ConfigureAwait(true);
+        await VerifyWorkspaceSurfacesAsync(core, ayanami, saya, native).ConfigureAwait(true);
+    }
+
+    private static async Task VerifyFooterLayoutAsync(CoreWebView2 core, SkinPackage package)
     {
         ArgumentNullException.ThrowIfNull(core);
         ArgumentNullException.ThrowIfNull(package);
@@ -96,6 +102,75 @@ internal static class FooterBackdropLayoutTests
         }
 
         Console.WriteLine("通过：footer surface 在 0、-154 CSS px 与宽/窄布局下贴合工作区；fade 保持滚动内容区基线，正文和输入框保留原生位移。");
+    }
+
+    private static async Task VerifyWorkspaceSurfacesAsync(CoreWebView2 core, SkinPackage ayanami, SkinPackage saya, SkinPackage native)
+    {
+        const string transparent = "rgba(0, 0, 0, 0)";
+        const string activeAttribute = "data-skin-background-active";
+        var original = await ReadSurfaceColorsAsync(core).ConfigureAwait(true);
+        Require(original["workspace-backing"] == "rgb(245, 248, 255)" && original["right-backing"] == original["workspace-backing"],
+            "Both host background layers start opaque in the native light fixture.");
+
+        foreach (var (package, theme) in new[] { (ayanami, "light"), (saya, "dark") })
+        {
+            await core.ExecuteScriptAsync(SkinRuntimeCompiler.BuildRuntimeScript(package)).ConfigureAwait(true);
+            var skinned = await ReadSurfaceColorsAsync(core).ConfigureAwait(true);
+            Require(skinned["theme"] == theme && skinned["wallpaper"] == "true", $"{package.Name} installs the expected theme and wallpaper.");
+            Require(skinned["workspace-backing"] == transparent && skinned["right-backing"] == transparent,
+                $"{package.Name} exposes the wallpaper through both the conversation and right-side panel.");
+            Require(skinned["right-header"] == original["right-header"] && skinned["right-header"] == transparent,
+                "The right tab header retains its native transparent panel variable.");
+            Require(skinned["right-card"] != transparent && skinned["composer-input"].StartsWith("rgba(", StringComparison.Ordinal)
+                    && skinned["composer-input"] != transparent && skinned["dialog"] == original["dialog"],
+                "The right panel card and dialog retain their fills, and the composer keeps its skin fill.");
+            foreach (var decoy in new[] { "nested-backing", "other-tabs", "other-pane" })
+            {
+                Require(skinned[decoy] == original[decoy], $"The structural rule leaves {decoy} untouched.");
+            }
+
+            await core.ExecuteScriptAsync($"document.documentElement.removeAttribute('{activeAttribute}')").ConfigureAwait(true);
+            var withoutMarker = await ReadSurfaceColorsAsync(core).ConfigureAwait(true);
+            Require(withoutMarker["workspace-backing"] != transparent && withoutMarker["right-backing"] != transparent,
+                "Both structural overrides require an active skin background even when the stylesheet remains installed.");
+            await core.ExecuteScriptAsync($"document.documentElement.setAttribute('{activeAttribute}', 'true')").ConfigureAwait(true);
+        }
+
+        await core.ExecuteScriptAsync(SkinRuntimeCompiler.BuildRuntimeScript(native)).ConfigureAwait(true);
+        var restored = await ReadSurfaceColorsAsync(core).ConfigureAwait(true);
+        Require(original.All(item => restored[item.Key] == item.Value),
+            "Switching to Native clears the wallpaper/style and restores both original background colors and theme.");
+
+        await core.ExecuteScriptAsync(SkinRuntimeCompiler.BuildRuntimeScript(ayanami)).ConfigureAwait(true);
+        await core.ExecuteScriptAsync(SkinRuntimeCompiler.BuildRemoveScript()).ConfigureAwait(true);
+        var removed = await ReadSurfaceColorsAsync(core).ConfigureAwait(true);
+        Require(original.All(item => removed[item.Key] == item.Value),
+            "Removing the runtime also restores the unmodified host surfaces.");
+        Console.WriteLine("通过：Ayanami 浅色与 Saya 深色露出工作区和右侧面板壁纸，卡片、对话框及输入区保留各自填充，原版与撤销恢复宿主背景。");
+    }
+
+    private static async Task<Dictionary<string, string>> ReadSurfaceColorsAsync(CoreWebView2 core)
+    {
+        var result = await core.ExecuteScriptAsync("""
+            (() => {
+              const colors = Object.fromEntries([
+                'workspace-backing', 'right-backing', 'right-header', 'right-card', 'composer-input', 'dialog',
+                'nested-backing', 'other-tabs', 'other-pane'
+              ].map(id => [id, getComputedStyle(document.getElementById(id)).backgroundColor]));
+              return {
+                ...colors,
+                theme: document.documentElement.dataset.theme,
+                wallpaper: String(!!document.querySelector('.skin-manager-runtime-background .skin-manager-image')),
+              };
+            })()
+            """).ConfigureAwait(true);
+        return JsonSerializer.Deserialize<Dictionary<string, string>>(result)
+            ?? throw new InvalidDataException("The offline workspace fixture did not return surface colors.");
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
     }
 
     private static async Task NavigateToFixtureAsync(CoreWebView2 core, string html)
@@ -231,26 +306,54 @@ internal static class FooterBackdropLayoutTests
               .scroll-content > ._background_18hic_2._fade_18hic_2 { position: absolute; inset-inline: 0; bottom: 114px; height: 32px; background: linear-gradient(transparent, #13202b); }
               #other-panel { position: absolute; left: var(--work-width); top: 0; width: 200px; height: 600px; overflow: hidden; background: #24323a; }
               #other-panel > ._background_18hic_2._surface_18hic_2 { position: absolute; inset-inline: 16px; top: 0; bottom: 0; background: #13202b; }
+              :root[data-theme="light"] { --color-surface: rgb(245, 248, 255); }
+              :root[data-theme="dark"] { --color-surface: rgb(36, 46, 56); }
+              .bg-surface { background-color: var(--color-surface); }
+              .panel-fill { background-color: var(--app-shell-panel-background, var(--color-surface)); }
+              #workspace-backing { position: absolute; inset: 0; }
+              #right-header { --app-shell-panel-background: transparent; }
+              #dialog, #nested-backing, #other-tabs, #other-pane { background-color: rgb(68, 81, 94); }
             </style>
           </head>
           <body>
-            <main id="app-shell">
-              <section id="chat-workspace">
-                <div id="thread-scroll-layout" class="group/thread-scroll-layout">
-                  <div class="thread-scroll-container">
-                    <div class="scroll-content">
-                      <div class="transcript"><div id="transcript-message">The transcript follows the native content shift.</div></div>
-                      <div id="footer-fade" class="_background_18hic_2 _fade_18hic_2"></div>
+            <div id="app-shell" data-app-shell-frame="true">
+              <div data-app-shell-workspace="true">
+                <div id="workspace-backing" data-app-shell-surface-backing="true" class="bg-surface"></div>
+                <main id="chat-workspace" data-app-shell-main-surface="default">
+                  <div id="thread-scroll-layout" class="group/thread-scroll-layout">
+                    <div class="thread-scroll-container">
+                      <div class="scroll-content">
+                        <div class="transcript"><div id="transcript-message">The transcript follows the native content shift.</div></div>
+                        <div id="footer-fade" class="_background_18hic_2 _fade_18hic_2"></div>
+                      </div>
                     </div>
+                    <footer data-thread-scroll-footer="true" class="_footer_1q9qf_2 _shiftWithTranscript_1q9qf_2">
+                      <div id="footer-surface" class="_background_18hic_2 _surface_18hic_2"></div>
+                      <div id="composer-input" class="_ComposerLayoutRoot_backdrop"></div>
+                    </footer>
                   </div>
-                  <footer data-thread-scroll-footer="true" class="_footer_1q9qf_2 _shiftWithTranscript_1q9qf_2">
-                    <div id="footer-surface" class="_background_18hic_2 _surface_18hic_2"></div>
-                    <div id="composer-input"></div>
-                  </footer>
-                </div>
-              </section>
+                  <div id="nested-backing" data-app-shell-surface-backing="true"></div>
+                  <div id="dialog" role="dialog"></div>
+                </main>
+                <aside data-app-shell-focus-area="right-panel">
+                  <div data-app-shell-tabs="true">
+                    <header id="right-header" class="panel-fill"></header>
+                    <div id="right-backing" class="panel-fill">
+                      <div data-app-shell-tab-panel-controller="right">
+                        <article id="right-card" class="panel-fill"></article>
+                      </div>
+                    </div>
+                    <div id="other-tabs"><div data-app-shell-tab-panel-controller="other"></div></div>
+                  </div>
+                </aside>
+                <aside data-app-shell-focus-area="left-panel">
+                  <div data-app-shell-tabs="true">
+                    <div id="other-pane"><div data-app-shell-tab-panel-controller="right"></div></div>
+                  </div>
+                </aside>
+              </div>
               <aside id="other-panel"><div id="other-surface" class="_background_18hic_2 _surface_18hic_2"></div></aside>
-            </main>
+            </div>
           </body>
         </html>
         """;

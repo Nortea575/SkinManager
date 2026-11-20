@@ -49,6 +49,17 @@ internal static class GifRuntimeChecks
         Require(imageValue.GetString() == $"data:image/gif;base64,{Convert.ToBase64String(gifBytes)}",
             "Runtime declares image/gif and embeds the original animation bytes without re-encoding.");
 
+        var exportedImages = 0;
+        var preview = SkinRuntimeCompiler.BuildPreviewRuntimePackage(package, (key, path, bytes) =>
+        {
+            exportedImages++;
+            Require(key == expectedKey && path == "assets/transparent-animation.gif" && bytes.AsSpan().SequenceEqual(gifBytes),
+                "Market export references the same content key and original GIF bytes.");
+            return $"images/{key}.gif";
+        });
+        Require(exportedImages == 1 && preview.Images[expectedKey] == $"images/{expectedKey}.gif",
+            "An image reused across scenes is exported once via the asset resolver.");
+
         var styles = runtime.RootElement.GetProperty("styles");
         foreach (var appearance in styles.EnumerateObject())
         {
@@ -56,12 +67,17 @@ internal static class GifRuntimeChecks
             {
                 Require(scene.Value.GetProperty("background").GetProperty("imageUrl").GetString() == expectedKey,
                     "Color, opacity, focus, appearance, and scene payloads keep the same source image key.");
+                var marketStyle = preview.Styles[appearance.Name][scene.Name];
+                Require(marketStyle.Background?.ImageUrl == expectedKey && marketStyle.Css == scene.Value.GetProperty("css").GetString(),
+                    "Market and live packages compile the same scene stylesheet and background key.");
+                Require(preview.PanelFillTargets[appearance.Name][scene.Name]["window"].Default == 1,
+                    "Market export provides explicit panel opacity targets even when the skin has no default fill.");
             }
         }
 
         Require(script.Contains("manager.blobUrls", StringComparison.Ordinal) &&
                 script.Contains("manager.syncImageUrls", StringComparison.Ordinal) &&
-                script.Contains("manager.backgroundElement", StringComparison.Ordinal) &&
+                script.Contains("const background = createSkinBackground", StringComparison.Ordinal) &&
                 script.Contains("if (image.style.backgroundImage !== imageBackground)", StringComparison.Ordinal),
             "Runtime reuses the content-keyed Blob URL and existing background element when applying style updates.");
     }

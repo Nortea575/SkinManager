@@ -843,10 +843,29 @@ public partial class SkinMarketWindow
         }
     }
 
-    private void OpenUploadButton_Click(object sender, RoutedEventArgs e)
+    private void OpenUploadButton_Click(object sender, RoutedEventArgs e) => ShowUploadPane();
+
+    internal void OpenUploadForSkin(string skinId) => ShowUploadPane(skinId);
+
+    private void ShowUploadPane(string? skinId = null)
     {
         if (_isSubmitting || _isPreparingUpload)
         {
+            return;
+        }
+
+        if (_isUploadVisible)
+        {
+            if (skinId is not null)
+            {
+                if (!string.Equals(_uploadPackage?.Id, skinId, StringComparison.OrdinalIgnoreCase))
+                {
+                    CleanupUploadPackage();
+                }
+
+                LoadLocalSkins(skinId);
+            }
+
             return;
         }
 
@@ -864,7 +883,7 @@ public partial class SkinMarketWindow
 
         _isUploadVisible = true;
         UploadPane.Visibility = Visibility.Visible;
-        LoadLocalSkins();
+        LoadLocalSkins(skinId);
         UpdateCommunityControls();
     }
 
@@ -898,9 +917,9 @@ public partial class SkinMarketWindow
         UpdateCommunityControls();
     }
 
-    private void LoadLocalSkins()
+    private void LoadLocalSkins(string? preferredId)
     {
-        var previousId = (LocalSkinBox.SelectedItem as MarketLocalSkinOption)?.Entry.Id;
+        var previousId = preferredId ?? (LocalSkinBox.SelectedItem as MarketLocalSkinOption)?.Entry.Id;
         IReadOnlyList<SkinCatalogEntry> catalog;
         try
         {
@@ -1001,7 +1020,13 @@ public partial class SkinMarketWindow
 
                 var packageBytes = File.ReadAllBytes(path);
                 cancellation.Token.ThrowIfCancellationRequested();
-                return SkinPackageReader.ReadZipBytes(packageBytes);
+                var skin = SkinPackageReader.ReadZipBytes(packageBytes);
+                if (skin.ImagePath is null)
+                {
+                    throw new InvalidDataException(AppLocalization.Get("市场投稿需要在整体范围添加背景图片。"));
+                }
+
+                return skin;
             }, cancellation.Token);
             if (_isClosed || cancellation.IsCancellationRequested)
             {

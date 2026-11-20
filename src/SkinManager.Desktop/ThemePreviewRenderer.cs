@@ -1,8 +1,6 @@
 using System.IO;
 using System.Globalization;
 using System.Text.Json;
-using System.Windows;
-using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SkinManager.Core;
@@ -98,6 +96,7 @@ public sealed class ThemePreviewRenderer : IDisposable
     private bool _isSuspended;
     private bool _currentDocumentReady;
     private bool _componentSelectionMode;
+    private string? _selectedComponent;
     private bool _backgroundPositionMode;
     private long _displayRequestSequence;
     private ResolvedSkin? _currentResolvedSkin;
@@ -329,10 +328,11 @@ public sealed class ThemePreviewRenderer : IDisposable
         return fallback && await DisplayAsync(package, options);
     }
 
-    public async Task SetComponentSelectionModeAsync(bool enabled)
+    public async Task SetComponentSelectionModeAsync(bool enabled, string? selectedComponent = null)
     {
         ThrowIfDisposed();
         _componentSelectionMode = enabled;
+        _selectedComponent = enabled ? selectedComponent : null;
         if (_initializationTask is not { IsCompletedSuccessfully: true } initialization)
         {
             return;
@@ -405,6 +405,39 @@ public sealed class ThemePreviewRenderer : IDisposable
         ArgumentNullException.ThrowIfNull(script);
         var core = await EnsureInitializedAsync();
         return await core.ExecuteScriptAsync(script);
+    }
+
+    internal async Task<CanvasSurfaceStyle?> ReadCanvasSurfaceStyleAsync(string componentId)
+    {
+        var component = JsonSerializer.Serialize(componentId);
+        var json = await ExecuteScriptAsync($$"""
+            (() => {
+              const part = {{component}};
+              const owner = [...document.querySelectorAll(`[data-skin-part="${CSS.escape(part)}"]`)]
+                .find(item => item.getClientRects().length > 0 && !item.closest('[aria-hidden="true"]'));
+              const fill = window.__SKIN_MANAGER_NATIVE_FILL__;
+              const surface = owner ? fill?.surfaceFor(owner, part) : null;
+              if (!surface) return null;
+              const style = getComputedStyle(surface);
+              let background = style.backgroundColor;
+              let alpha = Number(background.match(/^rgba\(.*?,\s*([\d.]+)\)$/)?.[1] ?? 1);
+              if (!/^rgba?\(/.test(background)) {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = 1;
+                const context = canvas.getContext('2d', { willReadFrequently: true });
+                if (context) {
+                  context.fillStyle = background;
+                  context.fillRect(0, 0, 1, 1);
+                  const [red, green, blue, opacity] = context.getImageData(0, 0, 1, 1).data;
+                  alpha = opacity / 255;
+                  background = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+                }
+              }
+              return { Background: background, Radius: parseFloat(style.borderTopLeftRadius),
+                FillOpacity: fill.payload?.fillOpacity?.[part]?.default ?? alpha };
+            })()
+            """);
+        return JsonSerializer.Deserialize<CanvasSurfaceStyle>(json);
     }
 
     public async Task CapturePreviewAsync(Stream destination)
@@ -560,7 +593,7 @@ public sealed class ThemePreviewRenderer : IDisposable
         if (!isCurrent()) return;
         await core.ExecuteScriptAsync(BuildSystemAppearanceListener(document));
         if (!isCurrent()) return;
-        await core.ExecuteScriptAsync(BuildComponentSelectionScript(_componentSelectionMode, document.Generation));
+        await core.ExecuteScriptAsync(BuildComponentSelectionScript(_componentSelectionMode && !_backgroundPositionMode, document.Generation));
     }
 
     private Task<CoreWebView2> EnsureInitializedAsync()
@@ -672,37 +705,49 @@ public sealed class ThemePreviewRenderer : IDisposable
             """;
     }
 
-    private static string BuildComponentSelectionScript(bool enabled, string generation)
+    private string BuildComponentSelectionScript(bool enabled, string generation)
     {
         var enabledJson = JsonSerializer.Serialize(enabled);
         var generationJson = JsonSerializer.Serialize(generation);
-        var accent = Application.Current?.TryFindResource("FocusAccent") is SolidColorBrush brush
-            ? brush.Color
-            : Color.FromRgb(0xD9, 0xFB, 0x06);
-        var accentCssColor = $"#{accent.R:X2}{accent.G:X2}{accent.B:X2}";
+        var selectedJson = JsonSerializer.Serialize(_selectedComponent);
         return $$"""
             (() => {
               if (location.protocol !== "https:" || location.hostname !== "{{PreviewDocumentBuilder.PreviewHost}}" ||
                   !/^\/[0-9a-f]{32}\/base\//i.test(location.pathname)) return;
+              const generation = {{generationJson}};
+              if (!location.pathname.toLowerCase().startsWith(`/${generation}/base/`)) return;
               const key = "__SKIN_MANAGER_COMPONENT_PICKER__";
               let picker = window[key];
               if (!picker) {
+                const mark = (owner) => {
+                  document.querySelectorAll("[data-skin-editor-picked]").forEach(item => item.removeAttribute("data-skin-editor-picked"));
+                  const part = owner?.getAttribute('data-skin-part');
+                  const surface = owner ? window.__SKIN_MANAGER_NATIVE_FILL__?.surfaceFor(owner, part) ?? owner : null;
+                  surface?.setAttribute("data-skin-editor-picked", "true");
+                };
+                const findPart = (event) => event.target instanceof Element ? event.target.closest("[data-skin-part]") : null;
+                document.addEventListener("pointerdown", (event) => {
+                  if (picker.enabled && event.button === 0 && findPart(event)) event.preventDefault();
+                }, true);
                 const handler = (event) => {
                   if (!picker.enabled) return;
-                  const target = event.target instanceof Element ? event.target.closest("[data-skin-part]") : null;
-                  const part = target?.getAttribute("data-skin-part");
+                  let target = findPart(event);
+                  let part = target?.getAttribute("data-skin-part");
+                  if (part === "composer.editor" || part === "composer.toolbar") {
+                    target = target.closest('[data-skin-part="composer"]');
+                    part = "composer";
+                  }
                   if (!target || !part) return;
                   event.preventDefault();
                   event.stopImmediatePropagation();
-                  document.querySelectorAll("[data-skin-editor-picked]").forEach(item => item.removeAttribute("data-skin-editor-picked"));
-                  target.setAttribute("data-skin-editor-picked", "true");
+                  mark(target);
                   window.chrome?.webview?.postMessage(`skin-manager-component|${picker.generation}|${part}`);
                 };
                 document.addEventListener("click", handler, true);
-                picker = window[key] = { enabled: false, generation: "", handler };
+                picker = window[key] = { enabled: false, generation: "", mark };
               }
               picker.enabled = {{enabledJson}};
-              picker.generation = {{generationJson}};
+              picker.generation = generation;
               const styleId = "skin-manager-component-picker-style";
               let style = document.getElementById(styleId);
               if (!style) {
@@ -711,9 +756,15 @@ public sealed class ThemePreviewRenderer : IDisposable
                 document.head.appendChild(style);
               }
               style.textContent = picker.enabled
-                ? `[data-skin-part] { cursor: crosshair !important; } [data-skin-editor-picked="true"] { outline: 2px solid {{accentCssColor}} !important; outline-offset: -2px !important; }`
+                ? `[data-skin-part] { cursor: crosshair !important; }
+                   [data-skin-editor-picked="true"] { outline: 2px solid #D9FB06 !important; outline-offset: -2px !important; }
+                   html[data-theme="light"] [data-skin-editor-picked="true"] { outline-color: #526700 !important; }`
                 : "";
-              if (!picker.enabled) document.querySelectorAll("[data-skin-editor-picked]").forEach(item => item.removeAttribute("data-skin-editor-picked"));
+              const selected = {{selectedJson}};
+              const owner = picker.enabled && selected
+                ? [...document.querySelectorAll(`[data-skin-part="${CSS.escape(selected)}"]`)].find(item => item.getClientRects().length > 0)
+                : null;
+              picker.mark(owner);
             })()
             """;
     }
@@ -1198,6 +1249,7 @@ public sealed class ThemePreviewRenderer : IDisposable
             parts[1].Equals(document.Generation, StringComparison.Ordinal) &&
             _componentSelectionMode && !_backgroundPositionMode && SelectableParts.Contains(parts[2]))
         {
+            _selectedComponent = parts[2];
             ComponentSelected?.Invoke(this, new PreviewComponentSelectedEventArgs(parts[2]));
             return;
         }
@@ -1325,6 +1377,8 @@ public sealed class ThemePreviewRenderer : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 }
+
+internal sealed record CanvasSurfaceStyle(string Background, double? Radius, double FillOpacity);
 
 public sealed class PreviewComponentSelectedEventArgs(string componentId) : EventArgs
 {

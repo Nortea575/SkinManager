@@ -10,7 +10,8 @@ internal static class NativeCaptionBackgroundTests
         string? skinChangeRuntimeScript = null,
         string? expectedChangedForDarkSymbolsBackground = null,
         string? expectedChangedForLightSymbolsBackground = null,
-        string? noCaptionRuntimeScript = null)
+        string? noCaptionRuntimeScript = null,
+        string? marketRuntimeTemplate = null)
     {
         var harness = HarnessTemplate.Replace(
             "__RUNTIME_SOURCE__",
@@ -21,7 +22,8 @@ internal static class NativeCaptionBackgroundTests
             .Replace("__SKIN_CHANGE_RUNTIME_SOURCE__", JsonSerializer.Serialize(skinChangeRuntimeScript), StringComparison.Ordinal)
             .Replace("__EXPECTED_CHANGED_FOR_DARK_SYMBOLS_BACKGROUND__", JsonSerializer.Serialize(expectedChangedForDarkSymbolsBackground), StringComparison.Ordinal)
             .Replace("__EXPECTED_CHANGED_FOR_LIGHT_SYMBOLS_BACKGROUND__", JsonSerializer.Serialize(expectedChangedForLightSymbolsBackground), StringComparison.Ordinal)
-            .Replace("__NO_CAPTION_RUNTIME_SOURCE__", JsonSerializer.Serialize(noCaptionRuntimeScript), StringComparison.Ordinal);
+            .Replace("__NO_CAPTION_RUNTIME_SOURCE__", JsonSerializer.Serialize(noCaptionRuntimeScript), StringComparison.Ordinal)
+            .Replace("__MARKET_RUNTIME_SOURCE__", JsonSerializer.Serialize(marketRuntimeTemplate), StringComparison.Ordinal);
         var path = Path.Combine(Path.GetTempPath(), $"skin-manager-caption-{Guid.NewGuid():N}.js");
         File.WriteAllText(path, harness);
         try
@@ -60,6 +62,7 @@ internal static class NativeCaptionBackgroundTests
         const expectedChangedForDarkSymbolsBackground = __EXPECTED_CHANGED_FOR_DARK_SYMBOLS_BACKGROUND__;
         const expectedChangedForLightSymbolsBackground = __EXPECTED_CHANGED_FOR_LIGHT_SYMBOLS_BACKGROUND__;
         const noCaptionRuntimeSource = __NO_CAPTION_RUNTIME_SOURCE__;
+        const marketRuntimeSource = __MARKET_RUNTIME_SOURCE__;
 
         class FakeElement {
           constructor(tagName) {
@@ -200,12 +203,14 @@ internal static class NativeCaptionBackgroundTests
         const app = createEnvironment();
         let oldRuntimeWasRemoved = false;
         app.window.__SKIN_MANAGER_RUNTIME__ = {
-          appearanceVersion: 3,
+          appearanceVersion: 4,
+          apply() { assert.fail("The previous injection implementation must be removed before applying the skin."); },
           remove() { oldRuntimeWasRemoved = true; },
         };
         vm.runInContext(runtimeSource, app.context);
-        assert.equal(oldRuntimeWasRemoved, true, "The new runtime removes a version 2 manager before starting.");
+        assert.equal(oldRuntimeWasRemoved, true, "The new runtime removes the previous injection implementation before starting.");
         assert.equal(app.window.__SKIN_MANAGER_RUNTIME__.appearanceVersion, 4);
+        assert.equal(app.window.__SKIN_MANAGER_RUNTIME__.injectionVersion, 1);
         const manager = app.window.__SKIN_MANAGER_RUNTIME__;
         const styleElement = manager.styleElement;
         assert.ok(styleElement?.isConnected, "A runtime with active CSS inserts its style element in the document head.");
@@ -259,6 +264,7 @@ internal static class NativeCaptionBackgroundTests
         assert.equal(caption.style.width, "40px", "Resize recomputes the right controls region from measured geometry.");
 
         vm.runInContext(runtimeSource, app.context);
+        assert.equal(app.window.__SKIN_MANAGER_RUNTIME__, manager, "Applying another package with the same runtime reuses its manager.");
         assert.equal(app.overlay.listenerCount("geometrychange"), 1, "Reusing the runtime does not duplicate overlay listeners.");
         assert.equal(app.window.listenerCount("resize"), 1, "Reusing the runtime does not duplicate resize listeners.");
         assert.equal(app.themeSubscribers.size, 1, "Reusing the runtime does not duplicate native-theme subscriptions.");
@@ -295,6 +301,16 @@ internal static class NativeCaptionBackgroundTests
           vm.runInContext(noCaptionRuntimeSource, noCaption.context);
           assert.equal(noCaption.captionElement(), null, "An inactive native skin package leaves the caption controls untouched.");
           noCaption.window.__SKIN_MANAGER_RUNTIME__?.remove?.();
+        }
+        if (marketRuntimeSource) {
+          const market = createEnvironment({ withOverlay: false, withBridge: false });
+          market.window.__SKIN_PREVIEW_RUNTIME_PACKAGE__ = { enabled: false, appearance: "system", styles: {}, images: {} };
+          vm.runInContext(marketRuntimeSource, market.context);
+          const marketManager = market.window.__SKIN_MANAGER_RUNTIME__;
+          assert.equal(typeof marketManager?.apply, "function", "The market viewer can compare and update a skin that has no overrides.");
+          assert.equal(marketManager.styleElement, null);
+          marketManager.remove();
+          assert.equal(market.window.__SKIN_MANAGER_RUNTIME__, undefined);
         }
         app.window.__SKIN_MANAGER_RUNTIME__?.remove?.();
         untrusted.window.__SKIN_MANAGER_RUNTIME__?.remove?.();

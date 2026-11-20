@@ -4,6 +4,13 @@ using SkinManager.Core;
 
 namespace SkinManager.Rendering;
 
+public sealed record PreviewRuntimePackage(
+    bool Enabled,
+    string Appearance,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, NativeSkinStylePayload>> Styles,
+    IReadOnlyDictionary<string, string> Images,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, NativeFillOpacity>>> PanelFillTargets);
+
 public static class SkinRuntimeCompiler
 {
     private static readonly JsonSerializerOptions RuntimeJsonOptions = new(JsonSerializerDefaults.Web);
@@ -17,14 +24,43 @@ public static class SkinRuntimeCompiler
         }
 
         var panelOpacity = userTransparency.HasValue ? (100 - userTransparency.Value) / 100 : (double?)null;
-        var imageData = new Dictionary<string, string>(StringComparer.Ordinal);
+        var runtime = CompilePackage(package, panelOpacity,
+            (_, imagePath, bytes) => $"data:{SkinPackageReader.GetImageMediaType(imagePath)};base64,{Convert.ToBase64String(bytes)}");
+        return BuildRuntimeSource(JsonSerializer.Serialize(runtime, RuntimeJsonOptions), keepEmptyPackage: false);
+    }
+
+    public static PreviewRuntimePackage BuildPreviewRuntimePackage(SkinPackage package, Func<string, string, byte[], string> imageReference)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        ArgumentNullException.ThrowIfNull(imageReference);
+
+        var panelFillTargets = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, NativeFillOpacity>>>(StringComparer.Ordinal);
+        var runtime = CompilePackage(package, panelOpacity: null, imageReference, panelFillTargets);
+        return new PreviewRuntimePackage(runtime.Enabled, runtime.Appearance, runtime.Styles, runtime.Images, panelFillTargets);
+    }
+
+    public static string BuildPreviewRuntimeTemplate() =>
+        BuildRuntimeSource("window.__SKIN_PREVIEW_RUNTIME_PACKAGE__", keepEmptyPackage: true);
+
+    public static string BuildRemoveScript() => "(() => { window.__SKIN_MANAGER_RUNTIME__?.remove?.(); })();";
+
+    private static RuntimePackage CompilePackage(
+        SkinPackage package,
+        double? panelOpacity,
+        Func<string, string, byte[], string> imageReference,
+        Dictionary<string, IReadOnlyDictionary<string, IReadOnlyDictionary<string, NativeFillOpacity>>>? panelFillTargets = null)
+    {
+        var images = new Dictionary<string, string>(StringComparer.Ordinal);
         var styles = new Dictionary<string, IReadOnlyDictionary<string, NativeSkinStylePayload>>(StringComparer.Ordinal);
 
         foreach (var appearance in new[] { SkinAppearance.Light, SkinAppearance.Dark })
         {
+            var appearanceKey = appearance == SkinAppearance.Light ? "light" : "dark";
             var scenes = new Dictionary<string, NativeSkinStylePayload>(StringComparer.Ordinal);
+            var sceneTargets = panelFillTargets is not null ? new Dictionary<string, IReadOnlyDictionary<string, NativeFillOpacity>>(StringComparer.Ordinal) : null;
             foreach (var scene in new[] { SkinScene.Home, SkinScene.Conversation })
             {
+                var sceneKey = scene == SkinScene.Home ? "home" : "conversation";
                 var resolved = SkinResolver.Resolve(package, appearance, scene, panelOpacity);
                 string? imageKey = null;
                 if (resolved.Background is { ImagePath: { } imagePath } background)
@@ -37,29 +73,32 @@ public static class SkinRuntimeCompiler
 
                     var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     imageKey = "sha256-" + hash;
-                    imageData.TryAdd(imageKey, $"data:{GetImageMediaType(imagePath)};base64,{Convert.ToBase64String(bytes)}");
+                    if (!images.ContainsKey(imageKey)) images.Add(imageKey, imageReference(imageKey, imagePath, bytes));
                 }
 
-                scenes[scene == SkinScene.Home ? "home" : "conversation"] = NativeSkinStyleBuilder.Build(resolved, imageKey);
+                scenes[sceneKey] = NativeSkinStyleBuilder.Build(resolved, imageKey);
+                if (sceneTargets is not null)
+                {
+                    var opacityTemplate = SkinResolver.Resolve(package, appearance, scene, panelOpacityOverride: 1);
+                    sceneTargets[sceneKey] = NativeSkinStyleBuilder.BuildFillOpacity(opacityTemplate);
+                }
             }
 
-            styles[appearance == SkinAppearance.Light ? "light" : "dark"] = scenes;
+            styles[appearanceKey] = scenes;
+            if (sceneTargets is not null) panelFillTargets!.Add(appearanceKey, sceneTargets);
         }
 
         var hasOverrides = package.Appearance != SkinAppearance.System || styles.Values
             .SelectMany(sceneStyles => sceneStyles.Values)
             .Any(payload => payload.Css.Length > 0 || payload.FillOpacity.Count > 0 || payload.Background is not null);
-        var runtime = new RuntimePackage(hasOverrides, package.Appearance.ToString().ToLowerInvariant(), styles, imageData);
-        var json = JsonSerializer.Serialize(runtime, RuntimeJsonOptions);
-        return RuntimeScriptTemplate
-            .Replace("__CODEX_ADAPTER_JSON__", CodexAdapter.RuntimeContractJson, StringComparison.Ordinal)
-            .Replace("__SKIN_FILL_ENGINE_SOURCE__", SkinFillEngine.Source, StringComparison.Ordinal)
-            .Replace("__SKIN_RUNTIME_PACKAGE_JSON__", json, StringComparison.Ordinal);
+        return new RuntimePackage(hasOverrides, package.Appearance.ToString().ToLowerInvariant(), styles, images);
     }
 
-    public static string BuildRemoveScript() => "(() => { window.__SKIN_MANAGER_RUNTIME__?.remove?.(); })();";
-
-    private static string GetImageMediaType(string imagePath) => SkinPackageReader.GetImageMediaType(imagePath);
+    private static string BuildRuntimeSource(string packageExpression, bool keepEmptyPackage) => RuntimeScriptTemplate
+        .Replace("__KEEP_EMPTY_PACKAGE__", keepEmptyPackage ? "true" : "false", StringComparison.Ordinal)
+        .Replace("__CODEX_ADAPTER_JSON__", CodexAdapter.RuntimeContractJson, StringComparison.Ordinal)
+        .Replace("__SKIN_FILL_ENGINE_SOURCE__", SkinFillEngine.Source, StringComparison.Ordinal)
+        .Replace("__SKIN_RUNTIME_PACKAGE_JSON__", packageExpression, StringComparison.Ordinal);
 
     private sealed record RuntimePackage(
         bool Enabled,
@@ -74,19 +113,18 @@ public static class SkinRuntimeCompiler
           __SKIN_FILL_ENGINE_SOURCE__
           const managerKey = "__SKIN_MANAGER_RUNTIME__";
           const existing = window[managerKey];
-          if (!runtimePackage.enabled) {
+          if (!runtimePackage.enabled && !__KEEP_EMPTY_PACKAGE__) {
             existing?.remove?.();
             return;
           }
           if (existing) {
-            if (existing.appearanceVersion === 4 && typeof existing.apply === "function") {
+            if (existing.appearanceVersion === 4 && existing.injectionVersion === 1 && typeof existing.apply === "function") {
               existing.apply(runtimePackage);
               return;
             }
             existing.remove?.();
           }
 
-          const fillEvents = ["pointerover", "pointerout", "pointerdown", "pointerup", "focus", "blur", "focusin", "focusout"];
           const observedAttributes = codex.runtimeObservedAttributes;
           const manager = {
             package: runtimePackage,
@@ -109,48 +147,30 @@ public static class SkinRuntimeCompiler
             activeKey: null,
             active: null,
             styleElement: null,
-            backgroundElement: null,
             captionBackgroundElement: null,
             nativeThemeVariant: null,
             nativeThemeUnsubscribe: null,
             windowControlsOverlay: null,
             windowControlsGeometryHandler: null,
             windowResizeHandler: null,
-            rootBackgroundOriginal: null,
             parts: new Map(),
             partOriginals: new Map(),
-            surfaces: new Set(),
-            bindings: new WeakMap(),
-            fillOriginals: new WeakMap(),
-            fillApplied: new WeakMap(),
-            ownerSurfaces: new Map(),
-            ownerHandlers: new Map(),
-            ownerFrames: new Map(),
-            nativeBackgroundCache: new Map(),
             blobUrls: new Map(),
             appearanceVersion: 4,
+            injectionVersion: 1,
           };
 
-          const fillEngine = createSkinFillEngine({
-            document,
-            getComputedStyle: (element) => getComputedStyle(element),
-            root: document.documentElement,
-            statePriority: codex.statePriority,
-            stateSelectors: codex.stateSelectors,
-            fillOriginals: manager.fillOriginals,
-            fillApplied: manager.fillApplied,
-            nativeBackgroundCache: manager.nativeBackgroundCache,
-            isBackgroundActive: () => document.documentElement.getAttribute("data-skin-background-active") === "true",
+          const getStyle = (element) => getComputedStyle(element);
+          const background = createSkinBackground({
+            document, codex, getComputedStyle: getStyle,
+            className: "skin-manager-runtime-background",
+            resolveImageUrl: (key) => manager.imageUrl(key),
           });
-          manager.currentState = fillEngine.currentState;
-          manager.matchesState = fillEngine.matchesState;
-          manager.readBackgroundColor = fillEngine.readInlineFill;
-          manager.sameInlineFill = fillEngine.sameInlineFill;
-          manager.isAppliedFill = fillEngine.isAppliedFill;
-          manager.restoreFill = fillEngine.restoreFill;
-          manager.parseColor = fillEngine.parseColor;
-          manager.nativeBackground = fillEngine.nativeBackground;
-          manager.applyFill = fillEngine.applyFill;
+          const fills = createSkinFillBindings({
+            document, codex, getComputedStyle: getStyle,
+            surfaceFor: (owner, part) => manager.surfaceFor(owner, part),
+            isBackgroundActive: background.isActive,
+          });
 
           const partSelectors = codex.partSelectors;
 
@@ -332,9 +352,9 @@ public static class SkinRuntimeCompiler
                 const target = mutation.target;
                 if (!isElement(target) || isManagerOwned(target)) continue;
                 if (mutation.attributeName === "style") {
-                  const binding = manager.bindings.get(target);
-                  if (!manager.isAppliedFill(target)) {
-                    if (binding) manager.scheduleOwnerFill(binding.owner);
+                  const binding = fills.bindings.get(target);
+                  if (!fills.isAppliedFill(target)) {
+                    if (binding) fills.scheduleOwnerFill(binding.owner);
                     manager.pendingNeedsRefresh = true;
                   }
                   continue;
@@ -355,8 +375,8 @@ public static class SkinRuntimeCompiler
                 }
                 if (mutation.attributeName === codex.composerVariantAttribute
                   && currentPart === "composer") manager.pendingRebindOwners.add(target);
-                const binding = manager.bindings.get(target);
-                if (binding) manager.scheduleOwnerFill(binding.owner);
+                const binding = fills.bindings.get(target);
+                if (binding) fills.scheduleOwnerFill(binding.owner);
                 manager.pendingNeedsRefresh = true;
               }
               manager.scheduleReconcile();
@@ -392,7 +412,7 @@ public static class SkinRuntimeCompiler
               manager.pendingRebindOwners.clear();
               if (manager.pendingNeedsRefresh) manager.refreshActive(false);
               manager.pendingNeedsRefresh = false;
-              if (manager.active?.background) manager.updateBackground();
+              if (manager.active?.background) background.sync(manager.active.background);
               if (manager.active && !manager.windowControlsOverlay) manager.installNativeCaptionBackground();
               manager.updateNativeCaptionBackground();
             });
@@ -587,87 +607,23 @@ public static class SkinRuntimeCompiler
             return owner;
           };
 
-          manager.bindOwner = (owner, part) => {
-            const config = manager.active?.fillOpacity?.[part];
-            if (!config) return;
-            const surface = manager.surfaceFor(owner, part);
-            if (!surface) return;
-            let surfaces = manager.ownerSurfaces.get(owner);
-            if (!surfaces) {
-              surfaces = new Set();
-              manager.ownerSurfaces.set(owner, surfaces);
-            }
-            surfaces.add(surface);
-            manager.surfaces.add(surface);
-            manager.bindings.set(surface, { owner, part });
-            manager.applyFill(surface, owner, config);
-            if (manager.hasStatefulFill(config)) manager.attachOwner(owner);
-          };
+          manager.bindOwner = (owner, part) =>
+            fills.bind(owner, part, manager.active?.fillOpacity?.[part]);
 
           manager.rebindOwner = (owner) => {
             const part = manager.parts.get(owner);
             if (!part) return;
-            manager.unbindOwner(owner);
             if (owner.isConnected) manager.bindOwner(owner, part);
-          };
-
-          manager.hasStatefulFill = (config) => Object.keys(config.states || {}).length > 0
-            || Object.keys(config.noFillStates || {}).length > 0
-            || Object.keys(config.backgroundStates || {}).length > 0;
-
-          manager.attachOwner = (owner) => {
-            if (manager.ownerHandlers.has(owner)) return;
-            const handler = () => manager.scheduleOwnerFill(owner);
-            for (const eventName of fillEvents) owner.addEventListener(eventName, handler, true);
-            manager.ownerHandlers.set(owner, handler);
-          };
-
-          manager.detachOwner = (owner) => {
-            const handler = manager.ownerHandlers.get(owner);
-            if (handler) {
-              for (const eventName of fillEvents) owner.removeEventListener(eventName, handler, true);
-              manager.ownerHandlers.delete(owner);
-            }
-            const frame = manager.ownerFrames.get(owner);
-            if (frame !== undefined) cancelAnimationFrame(frame);
-            manager.ownerFrames.delete(owner);
-            manager.ownerSurfaces.delete(owner);
-          };
-
-          manager.scheduleOwnerFill = (owner) => {
-            if (manager.ownerFrames.has(owner)) return;
-            const frame = requestAnimationFrame(() => {
-              manager.ownerFrames.delete(owner);
-              const surfaces = manager.ownerSurfaces.get(owner);
-              if (!surfaces) return;
-              for (const surface of surfaces) {
-                const binding = manager.bindings.get(surface);
-                const config = binding && manager.active?.fillOpacity?.[binding.part];
-                if (binding && config) manager.applyFill(surface, owner, config);
-              }
-            });
-            manager.ownerFrames.set(owner, frame);
-          };
-
-          manager.unbindOwner = (owner) => {
-            const surfaces = manager.ownerSurfaces.get(owner);
-            if (surfaces) {
-              for (const surface of surfaces) {
-                manager.restoreFill(surface);
-                manager.surfaces.delete(surface);
-                manager.bindings.delete(surface);
-              }
-            }
-            manager.detachOwner(owner);
+            else fills.unbind(owner);
           };
 
           manager.rebindAll = () => {
-            for (const owner of Array.from(manager.ownerSurfaces.keys())) manager.unbindOwner(owner);
+            fills.reset();
             for (const [owner, part] of manager.parts) manager.bindOwner(owner, part);
           };
 
           manager.releaseOwner = (owner) => {
-            manager.unbindOwner(owner);
+            fills.unbind(owner);
             manager.parts.delete(owner);
             const original = manager.partOriginals.get(owner);
             if (original === null) owner.removeAttribute("data-skin-part");
@@ -725,87 +681,6 @@ public static class SkinRuntimeCompiler
             if (manager.styleElement.textContent !== css) manager.styleElement.textContent = css;
           };
 
-          manager.setBackgroundActive = (active) => {
-            const root = document.documentElement;
-            if (!manager.rootBackgroundOriginal) {
-              manager.rootBackgroundOriginal = {
-                present: root.hasAttribute("data-skin-background-active"),
-                value: root.getAttribute("data-skin-background-active"),
-              };
-            }
-            if (active) root.setAttribute("data-skin-background-active", "true");
-            else root.removeAttribute("data-skin-background-active");
-          };
-
-          manager.updateBackground = () => {
-            const config = manager.active?.background;
-            let background = manager.backgroundElement;
-            if (!config) {
-              background?.remove();
-              manager.backgroundElement = null;
-              manager.setBackgroundActive(false);
-              return;
-            }
-            if (!background) {
-              background = document.createElement("div");
-              background.className = "skin-manager-runtime-background";
-              background.setAttribute("data-skin-manager-owned", "true");
-              background.setAttribute("aria-hidden", "true");
-              Object.assign(background.style, {
-                position: "fixed", inset: "0", zIndex: "0", pointerEvents: "none", overflow: "hidden",
-              });
-              manager.backgroundElement = background;
-            }
-            const shell = document.querySelector(partSelectors.window);
-            if (shell?.parentElement === document.body) {
-              if (background.parentElement !== document.body || background.nextSibling !== shell) document.body.insertBefore(background, shell);
-            } else if (background.parentElement !== document.body) {
-              document.body.prepend(background);
-            }
-            manager.setBackgroundActive(true);
-            const computedRoot = getComputedStyle(document.documentElement);
-            const fallback = codex.nativeBackgroundFallbackVariables.map((variable) => computedRoot.getPropertyValue(variable).trim()).find(Boolean)
-              || getComputedStyle(document.body).backgroundColor;
-            background.style.backgroundColor = config.color || fallback;
-
-            let image = background.querySelector(".skin-manager-image");
-            const imageUrl = config.imageUrl ? manager.imageUrl(config.imageUrl) : "";
-            if (imageUrl) {
-              if (!image) {
-                image = document.createElement("div");
-                image.className = "skin-manager-image";
-                image.setAttribute("data-skin-manager-owned", "true");
-                Object.assign(image.style, { position: "absolute", inset: "0", backgroundRepeat: "no-repeat" });
-                background.appendChild(image);
-              }
-              const imageBackground = `url(${JSON.stringify(imageUrl)})`;
-              if (image.style.backgroundImage !== imageBackground) image.style.backgroundImage = imageBackground;
-              image.style.backgroundSize = config.fit || "";
-              image.style.backgroundPosition = config.focusX !== null && config.focusY !== null
-                ? `${config.focusX * 100}% ${config.focusY * 100}%`
-                : config.focusX !== null ? `${config.focusX * 100}%`
-                : config.focusY !== null ? `center ${config.focusY * 100}%` : "";
-              image.style.opacity = config.opacity ?? "";
-            } else {
-              image?.remove();
-            }
-
-            let overlay = background.querySelector(".skin-manager-overlay");
-            if (config.overlayColor) {
-              if (!overlay) {
-                overlay = document.createElement("div");
-                overlay.className = "skin-manager-overlay";
-                overlay.setAttribute("data-skin-manager-owned", "true");
-                Object.assign(overlay.style, { position: "absolute", inset: "0" });
-                background.appendChild(overlay);
-              }
-              overlay.style.backgroundColor = config.overlayColor;
-              overlay.style.opacity = config.overlayOpacity ?? "";
-            } else {
-              overlay?.remove();
-            }
-          };
-
           manager.refreshActive = (force) => {
             if (!manager.started || manager.removed) return;
             manager.syncRootTheme();
@@ -818,10 +693,8 @@ public static class SkinRuntimeCompiler
             }
             manager.activeKey = key;
             manager.active = manager.package.styles?.[theme]?.[scene] || null;
-            manager.nativeBackgroundCache.clear();
             manager.syncActiveStyle();
-            manager.setBackgroundActive(!!manager.active?.background);
-            manager.updateBackground();
+            background.sync(manager.active?.background);
             manager.rebindAll();
             if (manager.active) manager.installNativeCaptionBackground();
             else manager.disposeNativeCaptionBackground();
@@ -840,7 +713,7 @@ public static class SkinRuntimeCompiler
             if (manager.readyHandler) document.removeEventListener("DOMContentLoaded", manager.readyHandler);
             if (manager.appearanceMedia && manager.appearanceHandler) manager.appearanceMedia.removeEventListener("change", manager.appearanceHandler);
             if (manager.reconcileFrame !== null) cancelAnimationFrame(manager.reconcileFrame);
-            for (const owner of Array.from(manager.ownerSurfaces.keys())) manager.unbindOwner(owner);
+            fills.reset();
             for (const [element] of manager.parts) {
               const original = manager.partOriginals.get(element);
               if (original === null) element.removeAttribute("data-skin-part");
@@ -849,14 +722,9 @@ public static class SkinRuntimeCompiler
             manager.parts.clear();
             manager.partOriginals.clear();
             manager.styleElement?.remove();
-            manager.backgroundElement?.remove();
-            if (manager.rootBackgroundOriginal && document.documentElement) {
-              if (manager.rootBackgroundOriginal.present) document.documentElement.setAttribute("data-skin-background-active", manager.rootBackgroundOriginal.value ?? "");
-              else document.documentElement.removeAttribute("data-skin-background-active");
-            }
+            background.remove();
             for (const url of manager.blobUrls.values()) URL.revokeObjectURL(url);
             manager.blobUrls.clear();
-            manager.nativeBackgroundCache.clear();
             if (window[managerKey] === manager) delete window[managerKey];
           };
 

@@ -1,4 +1,4 @@
-#define ProductVersion "1.1.4"
+#define ProductVersion "1.1.5-beta.1"
 
 [Setup]
 AppId={{6FBD8E7A-8A61-4DB8-BD4A-4F2E43110B67}
@@ -6,8 +6,8 @@ AppName=SkinManager
 AppVersion={#ProductVersion}
 AppVerName=SkinManager {#ProductVersion}
 AppPublisher=SkinManager
-VersionInfoVersion=1.1.4.0
-VersionInfoProductVersion=1.1.4.0
+VersionInfoVersion=1.1.5.0
+VersionInfoProductVersion=1.1.5.0
 VersionInfoProductTextVersion={#ProductVersion}
 VersionInfoDescription=SkinManager Setup
 ShowLanguageDialog=yes
