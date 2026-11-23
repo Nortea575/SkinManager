@@ -117,8 +117,21 @@ internal static class MarketUiChecks
             Check(marketWindow.TagBoxForTests.Visibility == Visibility.Visible,
                 "服务端返回可用标签后显示标签筛选");
 
+            await ResizeWindowForCaptureAsync(
+                marketWindow, marketWindow.MinWidth, marketWindow.MinHeight, "查看计数时将窗口缩到最小尺寸");
+            var countedRow = marketWindow.Rows.First(row => row.Id == "ayanami");
+            Check(countedRow.DownloadCountLabel == "下载量 · 2,048", "卡片下载量显示市场返回的服务器计数");
+            await WaitUntilAsync(() => FindVisualChildren<TextBlock>(marketWindow).Any(text =>
+                    text.IsVisible && text.ActualWidth > 0 && text.Text == countedRow.DownloadCountLabel),
+                "最小窗口网格卡片显示下载量");
             marketWindow.ListViewButtonForTests.IsChecked = true;
             await WaitUntilAsync(() => marketWindow.IsListView, "切换到列表视图");
+            await WaitUntilAsync(() => FindVisualChildren<TextBlock>(marketWindow).Any(text =>
+                    text.IsVisible && text.ActualWidth > 0 && text.Text == countedRow.DownloadCountLabel),
+                "最小窗口列表显示同一个下载量");
+            await SaveWindowScreenshotAsync(
+                marketWindow,
+                Path.Combine(screenshotDirectory, "皮肤市场-最小窗口-列表.png"));
             Check(marketWindow.Rows.Count == fixtures.Count && source.ZipRequestCount == 0,
                 "列表视图切换保留目录并且不下载 ZIP");
             marketWindow.GridViewButtonForTests.IsChecked = true;
@@ -128,6 +141,17 @@ internal static class MarketUiChecks
             var initialZipRequestCount = source.ZipRequestCount;
             marketWindow.OpenDetails(sayaRow);
             Check(marketWindow.IsDetailsVisible && !marketWindow.IsCatalogVisible, "打开市场原生详情页");
+            var detailCount = (TextBlock)marketWindow.FindName("DetailsDownloadCount")!;
+            await WaitUntilAsync(() => detailCount.IsVisible && detailCount.ActualWidth > 0 &&
+                    detailCount.Text == sayaRow.DownloadCountLabel,
+                "最小窗口详情显示所选皮肤的同一个服务器计数");
+            AppLocalization.SetLanguage(AppLanguage.English);
+            Check(detailCount.Text == $"Downloads · {sayaRow.Item.DownloadCount:N0}", "详情下载量即时切换为英文");
+            await SaveWindowScreenshotAsync(
+                marketWindow,
+                Path.Combine(screenshotDirectory, "Market-English-minimum-details.png"));
+            AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
+            await ResizeWindowForCaptureAsync(marketWindow, 1060, 740, "市场窗口恢复常规尺寸");
             Check(!marketWindow.DetailsDownloadButtonForTests.IsEnabled &&
                   sayaRow.CompatibilityLabel.Contains("需要管理器 99.0.0", StringComparison.Ordinal),
                 "详情页标出不兼容最低版本并禁用安装按钮");
@@ -383,6 +407,7 @@ internal static class MarketUiChecks
                     tags = new[] { new { id = isSaya ? 18 : 12, name = isSaya ? "深色" : "浅色" } },
                     likeCount = isSaya ? 23 : 11,
                     commentCount = isSaya ? 5 : 2,
+                    downloadCount = isSaya ? 789 : 2048,
                     likedByMe = false,
                     downloadUrl = $"https://blog.ancimen.top/?rest_route=/skin-manager/v1/skins/{package.Id}/download",
                     sha256 = Convert.ToHexString(SHA256.HashData(skin.PackageBytes)).ToLowerInvariant(),

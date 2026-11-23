@@ -133,9 +133,12 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
-                                   Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis" />
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
+                                       Foreground="{DynamicResource SecondaryText}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding DownloadCountLabel}" FontSize="11" Margin="0,2,0,0"
+                                       Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                        </StackPanel>
                         <Button Grid.Column="1" Content="{local:Loc '查看详情'}" Padding="10,6"
                                 Style="{StaticResource MarketSecondaryButton}" Click="OpenDetailsButton_Click"
                                 AutomationProperties.Name="{local:Loc '查看皮肤详情'}" />
@@ -229,9 +232,12 @@
                             <Button DockPanel.Dock="Right" Content="{local:Loc '查看详情'}" Padding="10,6" Margin="8,0,0,0"
                                     Style="{StaticResource MarketSecondaryButton}" Click="OpenDetailsButton_Click"
                                     AutomationProperties.Name="{local:Loc '查看皮肤详情'}" />
-                            <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
-                                       Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" />
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding AuthorAndSocialLabel}" FontSize="11"
+                                           Foreground="{DynamicResource SecondaryText}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding DownloadCountLabel}" FontSize="11" Margin="0,2,0,0"
+                                           Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" />
+                            </StackPanel>
                         </DockPanel>
                         <Grid Grid.Row="4" Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
@@ -565,8 +571,12 @@
                     <TextBlock x:Name="DetailsSummary" FontSize="12" Foreground="{DynamicResource SecondaryText}"
                                Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
-                <TextBlock x:Name="DetailsInstallState" Grid.Column="3" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{DynamicResource SecondaryText}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <TextBlock x:Name="DetailsInstallState" FontSize="12" FontWeight="SemiBold"
+                               Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right" />
+                    <TextBlock x:Name="DetailsDownloadCount" Margin="0,3,0,0" FontSize="12"
+                               Foreground="{DynamicResource SecondaryText}" HorizontalAlignment="Right" />
+                </StackPanel>
             </Grid>
 
             <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

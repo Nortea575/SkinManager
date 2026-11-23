@@ -22,7 +22,8 @@ public sealed record SkinMarketItem(
     string? DetailUrl = null,
     int LikeCount = 0,
     int CommentCount = 0,
-    bool LikedByMe = false)
+    bool LikedByMe = false,
+    long DownloadCount = 0)
 {
     public string EffectiveDescription => string.IsNullOrWhiteSpace(FullDescription) ? Description : FullDescription;
     public string? EffectiveThumbnailUrl => string.IsNullOrWhiteSpace(ThumbnailUrl) ? PreviewUrl : ThumbnailUrl;

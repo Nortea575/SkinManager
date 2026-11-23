@@ -106,6 +106,7 @@ internal static partial class Program
         entry["detailUrl"] = "https://blog.ancimen.top/skins/ayanami";
         entry["tags"] = new JsonArray(new JsonObject { ["id"] = 12, ["name"] = "轻量" });
         entry["likeCount"] = 37;
+        entry["downloadCount"] = 3_000_000_000L;
         entry["commentCount"] = 4;
         entry["likedByMe"] = true;
         root["availableTags"] = new JsonArray(
@@ -127,6 +128,7 @@ internal static partial class Program
             "读取皮肤标签和可用标签列表");
         Check(parsed.LikeCount == 37 && parsed.CommentCount == 4 && parsed.LikedByMe,
             "读取点赞与评论展示计数");
+        Check(parsed.DownloadCount == 3_000_000_000L, "读取超出 Int32 范围的服务器下载量");
         Check(parsed.EffectiveThumbnailUrl == "https://blog.ancimen.top/wp-content/uploads/ayanami-thumb.jpg" &&
               parsed.DetailUrl == "https://blog.ancimen.top/skins/ayanami",
             "读取封面缩略图与网站详情链接");
@@ -142,18 +144,23 @@ internal static partial class Program
             JsonResponse(CreateCatalogJson(item, page: 1, perPage: 12, total: 1, totalPages: 1))));
         var parsed = (await client.GetPageAsync()).Items.Single();
         Check(parsed.FullDescription == string.Empty && parsed.Submitter == string.Empty && parsed.Tags is { Count: 0 } &&
-              parsed.DetailUrl is null && parsed.LikeCount == 0 && parsed.CommentCount == 0 && !parsed.LikedByMe,
+              parsed.DetailUrl is null && parsed.LikeCount == 0 && parsed.CommentCount == 0 && !parsed.LikedByMe && parsed.DownloadCount == 0,
             "旧 schema v1 缺少新增字段时使用空值默认值");
     }
 
     private static async Task SkipMalformedOptionalCountsAsync(SkinPackage package, byte[] zipBytes)
     {
         var root = JsonNode.Parse(CreateCatalogJson(CreateItem(package, zipBytes), 1, 12, 1, 1))!.AsObject();
-        root["items"]!.AsArray()[0]!["likeCount"] = -1;
+        var item = root["items"]!.AsArray()[0]!.AsObject();
         using var client = new SkinMarketClient(new StubHandler(_ => JsonResponse(root.ToJsonString())));
-        var page = await client.GetPageAsync();
-        Check(page.Items.Count == 0 && page.Pagination is { Page: 1, PerPage: 12, Total: 1, TotalPages: 1 },
-            "跳过点赞计数为负的条目，保留目录原始分页");
+        foreach (var countField in new[] { "likeCount", "downloadCount" })
+        {
+            item[countField] = -1;
+            var page = await client.GetPageAsync();
+            Check(page.Items.Count == 0 && page.Pagination is { Page: 1, PerPage: 12, Total: 1, TotalPages: 1 },
+                $"跳过计数 {countField} 为负的条目，保留目录原始分页");
+            item.Remove(countField);
+        }
     }
 
     private static async Task PreserveDirectoryWithMalformedEntriesAsync(SkinPackage package, byte[] zipBytes)

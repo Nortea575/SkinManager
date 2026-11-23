@@ -563,7 +563,8 @@ public sealed partial class SkinMarketClient : IDisposable
             OptionalNullableString(element, "detailUrl", 2048),
             OptionalInt32(element, "likeCount"),
             OptionalInt32(element, "commentCount"),
-            OptionalBoolean(element, "likedByMe"));
+            OptionalBoolean(element, "likedByMe"),
+            ReadDownloadCount(element));
     }
 
     private static IReadOnlyList<SkinMarketTag> ReadTags(JsonElement element, string propertyName)
@@ -622,6 +623,22 @@ public sealed partial class SkinMarketClient : IDisposable
         }
 
         if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out var value) || value < 0)
+        {
+            throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 必须是非负整数。", name));
+        }
+
+        return value;
+    }
+
+    private static long ReadDownloadCount(JsonElement element)
+    {
+        const string name = "downloadCount";
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return 0;
+        }
+
+        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var value) || value < 0)
         {
             throw new InvalidDataException(AppLocalization.Format("市场目录中的 {0} 必须是非负整数。", name));
         }

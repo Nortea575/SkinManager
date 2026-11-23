@@ -92,6 +92,7 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
         string.IsNullOrWhiteSpace(Item.Author) ? AppLocalization.Get("作者未提供") : AppLocalization.Format("作者 {0}", Item.Author),
         LikeCount,
         CommentCount);
+    public string DownloadCountLabel => AppLocalization.Format("下载量 · {0:N0}", Item.DownloadCount);
     public string CompatibilityLabel => SkinMarketClient.IsManagerCompatible(
         Item.MinimumManagerVersion, managerVersion, out var message)
         ? AppLocalization.Get("兼容管理器")
@@ -251,7 +252,7 @@ internal sealed class SkinMarketRow(SkinMarketItem item, Version managerVersion)
         foreach (var propertyName in new[]
         {
             nameof(AppearanceLabel), nameof(SummaryLabel), nameof(Description), nameof(ShortDescription),
-            nameof(AuthorAndSocialLabel), nameof(CompatibilityLabel), nameof(DetailTechnical), nameof(UpdatedLabel),
+            nameof(AuthorAndSocialLabel), nameof(DownloadCountLabel), nameof(CompatibilityLabel), nameof(DetailTechnical), nameof(UpdatedLabel),
             nameof(InstallStatus), nameof(InstallStatusLabel), nameof(ThumbnailLabel), nameof(ThumbnailError),
             nameof(DownloadButtonText), nameof(OperationStatus)
         })
@@ -705,6 +706,7 @@ public partial class SkinMarketWindow : Window
         DetailsDescription.Text = row.Description;
         DetailsTechnical.Text = row.DetailTechnical;
         DetailsCounts.Text = row.AuthorAndSocialLabel;
+        DetailsDownloadCount.Text = row.DownloadCountLabel;
         DetailsAuthor.Text = string.IsNullOrWhiteSpace(row.Item.Author)
             ? AppLocalization.Get("作者：未提供")
             : AppLocalization.Format("作者：{0}", row.Item.Author);

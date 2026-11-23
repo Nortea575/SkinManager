@@ -102,6 +102,7 @@ internal sealed class MarketAccountSession : IAsyncDisposable
         string title,
         string message,
         string appVersion,
+        string? attachmentPath,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -109,7 +110,7 @@ internal sealed class MarketAccountSession : IAsyncDisposable
         SetBusy(true);
         try
         {
-            return await Client.SubmitFeedbackAsync(title, message, appVersion, cancellationToken);
+            return await Client.SubmitFeedbackAsync(title, message, appVersion, attachmentPath, cancellationToken);
         }
         catch (SkinMarketReauthenticationException)
         {

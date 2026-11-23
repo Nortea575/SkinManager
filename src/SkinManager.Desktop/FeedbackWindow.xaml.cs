@@ -1,6 +1,8 @@
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Win32;
 using SkinManager.Core;
 using SkinManager.Market;
 
@@ -10,6 +12,7 @@ public partial class FeedbackWindow : Window
 {
     private readonly MarketAccountSession _accountSession;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private string? _attachmentPath;
     private bool _isAccountBusy;
     private bool _isSending;
     private bool _sendSucceeded;
@@ -169,6 +172,7 @@ public partial class FeedbackWindow : Window
                 TitleBox.Text,
                 MessageBox.Text,
                 UpdateCoordinator.ReadCurrentVersionTag(),
+                _attachmentPath,
                 _lifetimeCancellation.Token);
             if (_isClosed)
             {
@@ -195,6 +199,47 @@ public partial class FeedbackWindow : Window
             _isSending = false;
             UpdateControls();
         }
+    }
+
+    private void PickAttachmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = AppLocalization.Get("选择附件"),
+            Filter = AppLocalization.Get("反馈附件 (*.png;*.jpg;*.jpeg;*.txt;*.log)|*.png;*.jpg;*.jpeg;*.txt;*.log"),
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            SelectAttachment(dialog.FileName);
+        }
+    }
+
+    internal void SelectAttachment(string path)
+    {
+        try
+        {
+            SkinMarketFeedbackRules.ValidateAttachment(path, new FileInfo(path).Length);
+            _attachmentPath = path;
+            ClearOperationStatus();
+            UpdateControls();
+        }
+        catch (InvalidDataException exception)
+        {
+            SetOperationStatus(exception.Message, isError: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetOperationStatus("无法读取附件，请重新选择文件。", isError: true);
+        }
+    }
+
+    private void RemoveAttachmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        _attachmentPath = null;
+        ClearOperationStatus();
+        UpdateControls();
+        PickAttachmentButton.Focus();
     }
 
     private bool ValidateFields()
@@ -389,6 +434,13 @@ public partial class FeedbackWindow : Window
         MessageBox.IsEnabled = !_isSending;
         TitleBox.IsReadOnly = _sendSucceeded;
         MessageBox.IsReadOnly = _sendSucceeded;
+        var hasAttachment = _attachmentPath is not null;
+        var canEditAttachment = !_isSending && !_sendSucceeded;
+        PickAttachmentButton.IsEnabled = canEditAttachment;
+        RemoveAttachmentButton.IsEnabled = canEditAttachment;
+        RemoveAttachmentButton.Visibility = hasAttachment ? Visibility.Visible : Visibility.Collapsed;
+        AttachmentNameText.Text = Path.GetFileName(_attachmentPath) ?? string.Empty;
+        LocalizedUiText.SetContent(PickAttachmentButton, hasAttachment ? "更换附件" : "选择附件");
         SubmitButton.IsEnabled = !_isSending && !_sendSucceeded && !accountBusy && account is not null &&
             !string.IsNullOrWhiteSpace(TitleBox.Text) &&
             !string.IsNullOrWhiteSpace(MessageBox.Text);

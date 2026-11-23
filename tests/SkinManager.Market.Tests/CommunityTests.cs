@@ -199,8 +199,43 @@ internal static partial class Program
         Check(result.Message == "反馈已发送" &&
               writeRequest.Method == HttpMethod.Post &&
               writeRequest.Query.Contains("rest_route=/skin-manager/v1/feedback", StringComparison.Ordinal) &&
-              writeRequest.Cookie == TestCookie && writeRequest.Nonce == TestNonce,
+              writeRequest.Cookie == TestCookie && writeRequest.Nonce == TestNonce && writeRequest.MediaType == "application/json",
             "反馈 POST 使用既有同源 rest_route、共享 Cookie/X-WP-Nonce 并读取本地化成功消息");
+
+        var attachmentName = $"反馈-{Guid.NewGuid():N}.LOG";
+        var attachmentPath = Path.Combine(Path.GetTempPath(), attachmentName);
+        try
+        {
+            var attachmentBytes = Encoding.UTF8.GetBytes("内部日志夹具\n反馈诊断数据");
+            await File.WriteAllBytesAsync(attachmentPath, attachmentBytes);
+            await client.SubmitFeedbackAsync(title, message, "1.1.5", attachmentPath, CancellationToken.None);
+            var multipartRequest = requests.Last();
+            var multipart = Encoding.UTF8.GetString(multipartRequest.Body);
+            Check(multipartRequest.MediaType == "multipart/form-data" && multipartRequest.Query == writeRequest.Query &&
+                  multipartRequest.Cookie == TestCookie && multipartRequest.Nonce == TestNonce &&
+                  ContainsMultipartValue(multipart, "title", title) && ContainsMultipartValue(multipart, "message", message) &&
+                  ContainsMultipartValue(multipart, "source", "skinmanager") && ContainsMultipartValue(multipart, "appVersion", "1.1.5"),
+                "带附件的反馈保留路由和会话，multipart 包含原始 UTF-8 文本及来源版本");
+            Check(ContainsMultipartField(multipart, "attachment") &&
+                  multipart.Contains($"filename=\"{attachmentName}\"", StringComparison.Ordinal) &&
+                  multipart.Contains("Content-Type: text/plain", StringComparison.Ordinal) &&
+                  multipartRequest.Body.AsSpan().IndexOf(attachmentBytes) >= 0,
+                "附件字段保留原文件名、类型和字节");
+
+            using (var oversized = File.OpenWrite(attachmentPath))
+            {
+                oversized.SetLength(SkinMarketFeedbackRules.MaxAttachmentBytes + 1);
+            }
+
+            await ThrowsAsync<InvalidDataException>(
+                () => client.SubmitFeedbackAsync(title, message, "1.1.5", attachmentPath, CancellationToken.None),
+                "反馈附件超过 5 MiB 时在客户端拒绝");
+            Check(ReferenceEquals(requests.Last(), multipartRequest), "无效附件不进入网络请求");
+        }
+        finally
+        {
+            File.Delete(attachmentPath);
+        }
 
         var postsBeforeInvalidInput = requests.Count(request => request.Method == HttpMethod.Post);
         await ThrowsAsync<ArgumentException>(
@@ -421,7 +456,8 @@ internal static partial class Program
             cookieValues?.SingleOrDefault(),
             nonceValues?.SingleOrDefault(),
             body,
-            Encoding.Latin1.GetString(body));
+            Encoding.Latin1.GetString(body),
+            request.Content?.Headers.ContentType?.MediaType);
     }
 
     private static bool ContainsMultipartField(string body, string name) =>
@@ -439,7 +475,8 @@ internal static partial class Program
         string? Cookie,
         string? Nonce,
         byte[] Body,
-        string BodyText);
+        string BodyText,
+        string? MediaType);
 
     private sealed class AsyncStubHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler

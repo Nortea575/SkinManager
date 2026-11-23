@@ -14,6 +14,7 @@ public sealed partial class SkinMarketClient
     private const int MaxBootstrapBytes = 4 * 1024 * 1024;
     private const int MaxCookieHeaderLength = 16 * 1024;
     private const int CommentsPerPage = 20;
+    private static readonly TimeSpan FeedbackAttachmentTimeout = TimeSpan.FromSeconds(90);
     private static readonly Uri DefaultMarketUri = new("https://blog.ancimen.top/?page_id=39");
     private static readonly Uri DefaultRegistrationUri = new("https://blog.ancimen.top/wp-login.php?action=register");
 
@@ -209,11 +210,19 @@ public sealed partial class SkinMarketClient
         return new SkinMarketCommentResult(comment, pending, message);
     }
 
+    public Task<SkinMarketFeedbackResult> SubmitFeedbackAsync(
+        string title,
+        string message,
+        string appVersion,
+        CancellationToken cancellationToken = default) =>
+        SubmitFeedbackAsync(title, message, appVersion, null, cancellationToken);
+
     public async Task<SkinMarketFeedbackResult> SubmitFeedbackAsync(
         string title,
         string message,
         string appVersion,
-        CancellationToken cancellationToken = default)
+        string? attachmentPath,
+        CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         ValidateFeedbackField(title, SkinMarketFeedbackRules.MaxTitleCharacters, "反馈标题", nameof(title));
@@ -221,31 +230,68 @@ public sealed partial class SkinMarketClient
         ArgumentException.ThrowIfNullOrWhiteSpace(appVersion);
 
         var session = CaptureRequiredSession();
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        FileStream? attachmentStream = null;
+        if (attachmentPath is not null)
         {
-            title,
-            message,
-            source = "skinmanager",
-            appVersion
-        });
-        using var content = new ByteArrayContent(payload);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
-        using var document = await SendCommunityJsonAsync(
-            HttpMethod.Post,
-            "/skin-manager/v1/feedback",
-            query: null,
-            content,
-            session,
-            cancellationToken,
-            treatForbiddenAsReauthentication: true).ConfigureAwait(false);
-
-        var root = document.RootElement;
-        if (!RequiredBoolean(root, "success"))
-        {
-            throw new InvalidDataException(AppLocalization.Get("市场服务器没有确认反馈已发送。"));
+            try
+            {
+                attachmentStream = File.OpenRead(attachmentPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidDataException(AppLocalization.Get("无法读取附件，请重新选择文件。"), exception);
+            }
         }
 
-        return new SkinMarketFeedbackResult(CommunityRequiredString(root, "message", 500));
+        using var attachment = attachmentStream;
+        const string source = "skinmanager";
+        HttpContent content;
+        if (attachment is null)
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new { title, message, source, appVersion });
+            content = new ByteArrayContent(payload);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        }
+        else
+        {
+            var fileName = Path.GetFileName(attachment.Name);
+            var mediaType = SkinMarketFeedbackRules.ValidateAttachment(fileName, attachment.Length);
+            var multipart = new MultipartFormDataContent { HeaderEncodingSelector = static (_, _) => Encoding.UTF8 };
+            multipart.Add(new StringContent(title, Encoding.UTF8), "title");
+            multipart.Add(new StringContent(message, Encoding.UTF8), "message");
+            multipart.Add(new StringContent(source, Encoding.UTF8), "source");
+            multipart.Add(new StringContent(appVersion, Encoding.UTF8), "appVersion");
+
+            var fileContent = new StreamContent(attachment);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+            // Use a UTF-8 filename as browser forms do so PHP sees the original name and extension.
+            var quotedFileName = fileName.Replace("\\", "%5C").Replace("\"", "%22").Replace("\r", "%0D").Replace("\n", "%0A");
+            fileContent.Headers.TryAddWithoutValidation("Content-Disposition",
+                $"form-data; name=\"attachment\"; filename=\"{quotedFileName}\"");
+            multipart.Add(fileContent);
+            content = multipart;
+        }
+
+        using (content)
+        {
+            using var document = await SendCommunityJsonAsync(
+                HttpMethod.Post,
+                "/skin-manager/v1/feedback",
+                query: null,
+                content,
+                session,
+                cancellationToken,
+                timeout: attachment is null ? null : FeedbackAttachmentTimeout,
+                treatForbiddenAsReauthentication: true).ConfigureAwait(false);
+
+            var root = document.RootElement;
+            if (!RequiredBoolean(root, "success"))
+            {
+                throw new InvalidDataException(AppLocalization.Get("市场服务器没有确认反馈已发送。"));
+            }
+
+            return new SkinMarketFeedbackResult(CommunityRequiredString(root, "message", 500));
+        }
     }
 
     public async Task<SkinMarketSubmissionResult> SubmitSkinAsync(
@@ -875,6 +921,28 @@ public static class SkinMarketFeedbackRules
 {
     public const int MaxTitleCharacters = 120;
     public const int MaxMessageCharacters = 10000;
+    public const long MaxAttachmentBytes = 5 * 1024 * 1024;
+
+    public static string ValidateAttachment(string fileName, long length)
+    {
+        if (length <= 0)
+        {
+            throw new InvalidDataException(AppLocalization.Get("附件为空，请选择其他文件。"));
+        }
+
+        if (length > MaxAttachmentBytes)
+        {
+            throw new InvalidDataException(AppLocalization.Get("反馈附件不能超过 5 MiB。"));
+        }
+
+        return Path.GetExtension(fileName).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".txt" or ".log" => "text/plain",
+            _ => throw new InvalidDataException(AppLocalization.Get("附件格式不支持，请选择 PNG、JPG、JPEG、TXT 或 LOG 文件。"))
+        };
+    }
 
     public static int CountUnicodeCharacters(string value)
     {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.5 · 2026-11-23
+
+- Skin market cards and detail pages show how many times each skin has been downloaded.
+- Feedback submitted from the app or website can include one PNG or JPEG screenshot or one TXT or LOG file up to 5 MiB.
+
 ## 1.1.5-beta.2 · 2026-11-21
 
 - The skin market shows a confirmation when a submission succeeds.

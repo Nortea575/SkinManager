@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using SkinManager.Core;
 using SkinManager.Desktop;
@@ -89,6 +90,30 @@ internal static class FeedbackUiChecks
                 feedbackWindow,
                 Path.Combine(screenshotDirectory, "Feedback-English-day.png"));
 
+            var pickAttachment = (Button)feedbackWindow.FindName("PickAttachmentButton")!;
+            var removeAttachment = (Button)feedbackWindow.FindName("RemoveAttachmentButton")!;
+            var attachmentText = (TextBlock)feedbackWindow.FindName("AttachmentNameText")!;
+            var attachmentName = "截图诊断记录-Example-feedback-log-2026-11-23.log";
+            var attachmentPath = Path.Combine(testRoot, attachmentName);
+            await File.WriteAllTextAsync(attachmentPath, "Attachment contents");
+            feedbackWindow.Width = feedbackWindow.MinWidth;
+            feedbackWindow.Height = feedbackWindow.MinHeight;
+            feedbackWindow.SelectAttachment(attachmentPath);
+            await feedbackWindow.Dispatcher.InvokeAsync(feedbackWindow.UpdateLayout, DispatcherPriority.Render);
+            Check(pickAttachment.Content?.ToString() == "Replace attachment" &&
+                  removeAttachment.Content?.ToString() == "Remove attachment" &&
+                  removeAttachment.IsVisible && attachmentText.Text == attachmentName &&
+                  attachmentText.ActualWidth > 0 && feedbackWindow.SubmitButtonForTests.IsVisible,
+                "最小窗口显示选中的附件及英文操作，底部发送仍可用");
+            await Program.SaveWindowScreenshotAsync(
+                feedbackWindow,
+                Path.Combine(screenshotDirectory, "Feedback-English-day-attachment-minimum.png"));
+            removeAttachment.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check(pickAttachment.Content?.ToString() == "Choose attachment" &&
+                  !removeAttachment.IsVisible && string.IsNullOrEmpty(attachmentText.Text) &&
+                  feedbackWindow.TitleBoxForTests.Text == draftTitle && feedbackWindow.MessageBoxForTests.Text == draftMessage,
+                "移除附件恢复空选项且保留反馈草稿");
+
             AppLocalization.SetLanguage(AppLanguage.SimplifiedChinese);
 
             feedbackWindow.Width = 560;
@@ -109,6 +134,7 @@ internal static class FeedbackUiChecks
                   feedbackWindow.LoginButtonForTests.IsVisible &&
                   feedbackWindow.CloseButtonForTests.IsVisible &&
                   feedbackWindow.SubmitButtonForTests.IsVisible &&
+                  feedbackWindow.MessageBoxForTests.ActualHeight <= LayoutInformation.GetLayoutSlot(feedbackWindow.MessageBoxForTests).Height + 1 &&
                   feedbackWindow.CloseButtonForTests.ActualHeight > 0 &&
                   feedbackWindow.SubmitButtonForTests.ActualHeight > 0,
                 "最小尺寸错误状态仍显示账号提示与底部操作按钮");

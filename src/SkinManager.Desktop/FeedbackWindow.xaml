@@ -65,14 +65,31 @@
                            FontSize="11" Foreground="{DynamicResource SecondaryText}"
                            AutomationProperties.Name="{local:Loc '反馈内容输入框'}" />
             </Grid>
-            <TextBox x:Name="MessageBox" Grid.Row="1" MinHeight="130" Padding="10,8"
+            <TextBox x:Name="MessageBox" Grid.Row="1" Padding="10,8"
                      VerticalContentAlignment="Top"
                      AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                      MaxLength="20000" ToolTip="{local:Loc '请描述你的建议或遇到的问题。'}"
                      AutomationProperties.Name="{local:Loc '反馈内容输入框'}"
                      TextChanged="MessageBox_TextChanged" />
-            <TextBlock Grid.Row="2" Text="{local:Loc '暂不支持附件。'}" FontSize="11"
-                       Foreground="{DynamicResource SecondaryText}" Margin="0,5,0,0" />
+            <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                <TextBlock Text="{local:Loc '附件（可选）'}" FontSize="13" FontWeight="SemiBold" />
+                <Grid Margin="0,5,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="PickAttachmentButton" Content="{local:Loc '选择附件'}" Padding="10,5"
+                            Click="PickAttachmentButton_Click" />
+                    <TextBlock x:Name="AttachmentNameText" Grid.Column="1" Margin="10,0" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    <Button x:Name="RemoveAttachmentButton" Grid.Column="2" Content="{local:Loc '移除附件'}"
+                            Padding="10,5" Click="RemoveAttachmentButton_Click" Visibility="Collapsed" />
+                </Grid>
+                <TextBlock Text="{local:Loc '支持 PNG、JPG、JPEG、TXT、LOG，单个文件最多 5 MiB。'}" FontSize="11"
+                           Foreground="{DynamicResource SecondaryText}" Margin="0,5,0,0" TextWrapping="Wrap" />
+            </StackPanel>
         </Grid>
 
         <Border Grid.Row="6" Background="{DynamicResource PanelSurface}"
